@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/i582/cfmt/cmd/cfmt"
@@ -71,6 +72,21 @@ func NewSession(conn net.Conn) *Session {
 func (s *Session) WriteString(text string) error {
 	rendered := cfmt.Sprint(text)
 	return s.WriteRaw([]byte(rendered))
+}
+
+// WriteWrapped renders cfmt tags and reflows the result to the session's
+// current width before writing. Output newlines are emitted as CRLF so
+// telnet clients render them correctly. A width of 0 falls back to
+// WriteString without reflowing.
+func (s *Session) WriteWrapped(text string) error {
+	if s.Width <= 0 {
+		return s.WriteString(text)
+	}
+	rendered := cfmt.Sprint(text)
+	wrapped := WrapText(rendered, s.Width)
+	// WrapText emits LF-only line breaks; convert to CRLF for the wire.
+	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
+	return s.WriteRaw([]byte(wrapped))
 }
 
 // WriteRaw writes the bytes verbatim, with no template rendering.

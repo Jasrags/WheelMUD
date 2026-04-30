@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-WheelMUD is an early-stage MUD server written in Go (1.24). It listens on TCP `:2323`, performs telnet option negotiation, and provides a simple line-based command loop. There is no persistence, world model, or auth yet — the codebase is currently focused on the telnet/ANSI transport layer.
+WheelMUD is an early-stage MUD server written in Go (1.24). It listens on TCP `:2323`, performs telnet option negotiation, and runs a per-connection line-based command loop driven by a registry/mode-stack dispatcher. There is no persistence, world model, or auth yet — the codebase is focused on the telnet/ANSI transport layer and the command-input plumbing on top of it.
+
+`ROADMAP.md` at the repo root tracks what's done vs. pending across the major MUD subsystems and is the source of truth for "what's next."
 
 ## Common commands
 
@@ -12,7 +14,7 @@ WheelMUD is an early-stage MUD server written in Go (1.24). It listens on TCP `:
 make build/server      # go build -o /tmp/bin/server cmd/server/main.go
 make run/server        # build then run the binary
 make run/live/server   # hot reload via cosmtrek/air (runs go mod tidy first)
-go test ./...          # no tests exist yet, but this is the standard entrypoint
+go test -race ./...    # full test suite with race detector
 docker compose up      # build + run, exposes :2323
 ```
 
@@ -20,25 +22,31 @@ Connect with: `telnet localhost 2323` (or `nc localhost 2323`).
 
 ## Architecture
 
-Two binaries' worth of code live here, but only one is wired up:
+- **`cmd/server/main.go`** — entrypoint. Accepts TCP connections, constructs a `telnet.Session` per connection, builds the command registry, pushes the initial `Game` mode, and hands the session to `telnet.RunSession`.
 
-- **`cmd/server/main.go`** — entrypoint. Accepts TCP connections, constructs a `telnet.Session` per connection, runs `NegotiateTelnet` + `RequestTerminalType`, then enters a byte-at-a-time read loop in `handleConnection`. The read loop is the protocol parser: it dispatches `IAC` sequences (including `SB ... SE` subnegotiation) to `telnet.HandleSubnegotiation`, swallows inbound ANSI escapes, accumulates printable bytes into `Session.InputBuffer`, and on CR/LF calls `processCommand`. **The protocol parser currently lives in main.go, not in the telnet package** — keep this in mind when extending; moving it into `telnet/` is a natural refactor but hasn't been done.
-
-- **`telnet/`** — protocol primitives.
-  - `session.go`: `Session` struct (conn, terminal type, width/height, input buffer, password-mode flag, color level). `WriteString` runs output through `cfmt.Sprint` so `{{text}}::style` tags get rendered.
-  - `iac.go`: telnet IAC/option constants, `NegotiateTelnet`, `RequestTerminalType`, `HandleSubnegotiation` (handles `TERM_TYPE` and `NAWS`), and `DescribeByte`/`DescribeIAC` for logging.
-  - `color.go`: ANSI SGR constants and color-level enum (`ColorLevelNone`/`Basic`/`16`/`256`). `DetectColorLevel(term)` maps terminal type strings to a level.
+- **`telnet/`** — protocol primitives and per-connection driver.
+  - `session.go`: `Session` struct (conn, terminal type, width/height, input buffer, password-mode flag, color level, write mutex, mode stack). `WriteString` renders cfmt tags; `WriteWrapped` additionally reflows the result via `WrapText` to `Session.Width`. All writes serialize on `writeMu`.
+  - `server.go`: `RunSession` plus the byte parser (`readLoop`, `dispatchByte`, `bufferInput`, `handleLineBreak`, `handleBackspace`, `handleTab`) and the per-session dispatcher goroutine (`runDispatcher`).
+  - `iac.go`: telnet IAC/option constants, `NegotiateTelnet`, `RequestTerminalType`, `ReadIAC` (handles escaped `IAC IAC` as a literal data byte, standalone `GA`/`NOP`/`AYT`/etc. as no-ops, full WILL/WONT/DO/DONT negotiation, and bounded subnegotiation), `HandleSubnegotiation` (`TERM_TYPE`, `NAWS`), and `DescribeByte`/`DescribeIAC`.
+  - `color.go`: ANSI SGR constants, color-level enum (`None`/`Basic`/`16`/`256`/`TrueColor`), `DetectColorLevel(term)`, `SGR(...)` helper, and `RenderRGBFG`/`RenderRGBBG` that downsample 24-bit color to the session's advertised level.
+  - `wrap.go`: `WrapText` — ANSI-aware word wrap that treats CSI/OSC escapes as zero-width, drops bare CRs, and overflows tokens longer than `width` rather than splitting them.
+  - `command.go`, `mode.go`, `completion.go`: command registry with alias + prefix lookup, `Mode` interface and `Session.PushMode`/`PopMode`/`ReplaceMode`, and verb-only tab completion. `Game` mode in `internal/mode/game.go` wraps the registry.
   - `ascii.go`: ASCII control-character constants used by the input parser (BS/DEL/etc.).
-  - `server.go`, `telnet.go`, `ansi.go`: stubs / minimal constants — placeholders for future refactor.
 
-- **`color/`** — a *separate*, unused color renderer with its own `{tag}` regex-based templating and truecolor support. Currently the project uses `i582/cfmt` (via `Session.WriteString`) for color output instead. If you touch color rendering, decide intentionally which of the two systems to extend; do not duplicate work across both.
+- **`internal/cmd/`** — concrete commands registered in `main.go::buildRegistry` (`quit`, `who`, `help`, `togglepassword`).
 
 ### Things to watch when editing
 
-- `main.go` contains a large block of commented-out duplicates of functions that now live in `telnet/iac.go` (`negotiateTelnet`, `handleSubnegotiation`, `detectColorLevel`, `describeIAC`, `describeByte`). Treat them as historical noise — delete rather than revive.
-- The input loop assumes the byte after `IAC` is either `SB` or a 2-byte negotiation (`WILL/WONT/DO/DONT + opt`). It does not handle `IAC IAC` (literal 0xFF) or standalone commands like `IAC GA`.
-- `Session.WriteString` writes directly to the connection — there is no output buffering or write lock. Concurrent writes from multiple goroutines on the same session would race.
-- Logging uses `slog` with `LevelDebug` set globally in `main.go`; output is verbose by design during protocol bring-up.
+- The protocol parser lives in `telnet/server.go` (the older note about it living in `main.go` is obsolete).
+- `Session.InputBuffer` is owned by the read goroutine inside `RunSession`. Do not mutate it from another goroutine, including the dispatcher.
+- `Session.WriteRaw` is the only safe write path; it holds `writeMu`. New helpers should layer on top of it rather than calling `Conn.Write` directly.
+- `Mode.Handle` is invoked synchronously by `runDispatcher`; a slow handler stalls input for that session. If a Handle implementation needs blocking I/O, plumb a `context.Context` through (tracked in the deferred-work memory).
+- `Command.Auth` (`AuthLevel`) is stored but not enforced yet — the check waits for the login/account subsystem.
+- Logging uses `slog` at `LevelDebug` set globally in `main.go`; verbose by design during protocol bring-up.
+
+## Tests
+
+`go test -race ./...` covers the registry, mode dispatcher, completion handler, IAC parser, color helpers, and word wrap. New telnet-package tests reuse `newPipeSession(t)` from `telnet/command_test.go` to get a `Session` backed by `net.Pipe`.
 
 ## Module path
 

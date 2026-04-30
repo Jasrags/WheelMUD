@@ -1,0 +1,36 @@
+Codemap generation report
+Generated: 2026-04-30
+Mode: first-pass (no prior codemaps)
+
+Output written to docs/CODEMAPS/:
+  architecture.md   ~700 tokens   layers, lifecycle, input→command path
+  telnet.md         ~900 tokens   protocol, registry, mode stack, rendering
+  commands.md       ~450 tokens   catalog + how to add a command
+  data.md           ~150 tokens   placeholder; no persistence layer yet
+  dependencies.md   ~250 tokens   go.mod, build/runtime tooling, gaps
+
+Project shape
+  Type:        single Go binary (MUD server)
+  Entry:       cmd/server/main.go
+  Source dirs: telnet/ (10 files), internal/cmd/ (5), internal/mode/ (1)
+  LOC:         ~3.3k Go (incl. ~1.3k test)
+  Tests:       go test -race ./... — telnet/ package only
+  Module:      github.com/Jasrags/WheelMUD (go 1.24)
+
+Notes / staleness flags
+  - No frontend.md generated — there is no UI surface; the user-facing
+    catalog lives in commands.md instead.
+  - data.md is a placeholder; revisit once persistence lands (ROADMAP §7).
+  - dependencies.md will grow rows for DB driver, password hashing, and
+    width-aware text once those land.
+  - Source of truth for "what's next" is ROADMAP.md at the repo root and
+    the auto-memory entries:
+      command_input_followups.md
+      code_review_open_items.md
+      terminal_rendering_followups.md
+
+Architecture changes since last scan: n/a (first scan)
+New deps: n/a (first scan)
+
+Re-run trigger: after the next major slice lands (e.g. login mode,
+persistence, world model) — diff codemaps and update accordingly.

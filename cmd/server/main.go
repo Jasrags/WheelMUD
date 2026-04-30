@@ -60,7 +60,7 @@ func main() {
 
 func buildRegistry() (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
-	if err := r.Register(cmd.Quit, cmd.Who, cmd.TogglePassword); err != nil {
+	if err := r.Register(cmd.Quit, cmd.Who, cmd.TogglePassword, cmd.Colors); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
