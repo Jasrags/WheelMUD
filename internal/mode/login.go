@@ -1,0 +1,180 @@
+package mode
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/Jasrags/WheelMUD/internal/auth"
+	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/telnet"
+)
+
+// LockoutThreshold is the number of failed attempts that trigger a
+// temporary account lock. Tune via Login struct fields if needed.
+const LockoutThreshold = 5
+
+// LockoutDuration is how long an account stays locked after the
+// threshold is hit.
+const LockoutDuration = 15 * time.Minute
+
+// loginStep names the current question the user is answering.
+type loginStep int
+
+const (
+	stepUsername loginStep = iota
+	stepPassword
+)
+
+// Login handles authentication. The state machine is two-step
+// (username → password); on success it bumps the session's AuthLevel
+// and replaces itself with the next mode (typically Game). Each
+// connection gets its own *Login because the captured username is
+// per-session.
+type Login struct {
+	accounts repo.AccountRepo
+	next     telnet.Mode // mode to ReplaceMode into on success
+	now      func() time.Time
+
+	// lockoutThreshold and lockoutDuration are mutable so tests can
+	// shrink them. Production callers leave the defaults.
+	lockoutThreshold int
+	lockoutDuration  time.Duration
+
+	step     loginStep
+	username string
+	account  *repo.Account // resolved after step 1; nil when no such user
+}
+
+// NewLogin returns a fresh Login bound to accounts. next is the mode to
+// switch to after successful authentication (typically the Game mode).
+func NewLogin(accounts repo.AccountRepo, next telnet.Mode) *Login {
+	return &Login{
+		accounts:         accounts,
+		next:             next,
+		now:              time.Now,
+		lockoutThreshold: LockoutThreshold,
+		lockoutDuration:  LockoutDuration,
+		step:             stepUsername,
+	}
+}
+
+func (l *Login) Prompt(_ *telnet.Session) string {
+	switch l.step {
+	case stepUsername:
+		return "Username (or 'new' to create an account): "
+	case stepPassword:
+		return "Password: "
+	}
+	return ""
+}
+
+func (l *Login) OnEnter(s *telnet.Session) error {
+	s.InPasswordMode = false
+	s.AuthLevel = telnet.AuthGuest
+	return nil
+}
+
+func (l *Login) OnExit(s *telnet.Session) error {
+	// Defensive: ensure password masking doesn't leak into the next mode.
+	s.InPasswordMode = false
+	return nil
+}
+
+func (l *Login) Handle(ctx context.Context, s *telnet.Session, line string) error {
+	switch l.step {
+	case stepUsername:
+		return l.handleUsername(ctx, s, line)
+	case stepPassword:
+		return l.handlePassword(ctx, s, line)
+	}
+	return nil
+}
+
+func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line string) error {
+	username := strings.TrimSpace(line)
+	if username == "" {
+		return nil
+	}
+	if strings.EqualFold(username, "new") {
+		// Hand off to account-create mode. Login is replaced; if create
+		// is canceled, the user reconnects.
+		return s.ReplaceMode(NewCreate(l.accounts, l.next))
+	}
+
+	// Resolve the account up front so we can check lockout *before*
+	// burning bcrypt cycles. Whether the account exists must NOT alter
+	// the prompt or response — see handlePassword for the symmetric
+	// no-such-user path.
+	a, err := l.accounts.FindByUsername(ctx, username)
+	switch {
+	case err == nil:
+		l.account = &a
+	case errors.Is(err, repo.ErrAccountNotFound):
+		l.account = nil
+	default:
+		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
+	}
+
+	l.username = username
+	l.step = stepPassword
+	s.InPasswordMode = true
+	return nil
+}
+
+func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line string) error {
+	s.InPasswordMode = false
+
+	if l.account == nil {
+		// No such user. Sleep-equivalent: still write a uniform failure
+		// so timing differences from the not-found short-circuit aren't
+		// trivially observable. (We accept a small enumeration window;
+		// see auth_followups.md.)
+		return l.fail(s, "")
+	}
+
+	if l.account.IsLockedAt(l.now()) {
+		// Locked accounts skip the verify step entirely (saves bcrypt
+		// CPU for repeated probes). Be explicit so users with a valid
+		// password understand why they can't log in.
+		return l.fail(s, "Account temporarily locked. Try again later.")
+	}
+
+	if !auth.Verify(l.account.PasswordHash, line) {
+		newCount := l.account.FailedLoginCount + 1
+		var lockedUntil time.Time
+		var msg string
+		if newCount >= l.lockoutThreshold {
+			lockedUntil = l.now().Add(l.lockoutDuration)
+			msg = "Too many failures. Account temporarily locked."
+		}
+		// Best-effort: a DB error here is logged via the wrapped error
+		// path but should not block the login response.
+		_ = l.accounts.RecordLoginFailure(ctx, l.account.ID, lockedUntil)
+		return l.fail(s, msg)
+	}
+
+	// Success.
+	if err := l.accounts.RecordLoginSuccess(ctx, l.account.ID, l.now()); err != nil {
+		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
+	}
+	s.AuthLevel = telnet.AuthPlayer
+	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
+		return err
+	}
+	return s.ReplaceMode(l.next)
+}
+
+// fail resets to the username step and writes a uniform failure
+// message. extra is an optional second line (e.g. lockout notice).
+func (l *Login) fail(s *telnet.Session, extra string) error {
+	l.step = stepUsername
+	l.account = nil
+	l.username = ""
+	out := "Login failed.\r\n"
+	if extra != "" {
+		out += extra + "\r\n"
+	}
+	return s.WriteRaw([]byte(out))
+}

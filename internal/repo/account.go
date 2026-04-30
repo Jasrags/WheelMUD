@@ -27,6 +27,13 @@ type Account struct {
 	LockedUntil      *time.Time
 }
 
+// IsLockedAt reports whether the account is in a lockout window at t.
+// Login mode calls this *before* invoking auth.Verify so we don't burn
+// bcrypt CPU on a known-locked account.
+func (a Account) IsLockedAt(t time.Time) bool {
+	return a.LockedUntil != nil && t.Before(*a.LockedUntil)
+}
+
 // AccountRepo is the persistence boundary login mode talks to. The
 // in-memory fake (NewMemoryAccountRepo) and the SQLite implementation
 // (NewSQLiteAccountRepo) both satisfy it.

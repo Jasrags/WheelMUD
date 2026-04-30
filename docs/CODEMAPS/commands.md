@@ -23,7 +23,6 @@ Mode wiring: `mode.NewGame(r)` is pushed in `handleConnection` as the initial (a
 |---|---|---|---|
 | `quit` | — | `internal/cmd/quit.go` | Closes the session. `Run` writes goodbye, closes `Conn`, returns `ErrSessionEnded` so the dispatcher stops without a prompt. |
 | `who` | — | `internal/cmd/who.go` | Placeholder roster; lists only the caller's `RemoteAddress`. Real roster waits on accounts/sessions. |
-| `togglepassword` | `tp` | `internal/cmd/togglepassword.go` | Toggles `Session.InPasswordMode` (debug). Will be replaced by a `passwordMode` once login mode lands. |
 | `colors` | `colortest`, `palette` | `internal/cmd/colors.go` | Prints terminal info, 16-color palette, xterm-256 cube + grayscale, RGB ramp via `RenderRGBBG` (so the downsampling path is exercised), and style samples via `SGR`. |
 | `help` | — | `internal/cmd/help.go` | `help` lists registered commands; `help <verb>` prints `Help`/`Long`. Built via `NewHelp(r)` so it sees the live registry. |
 

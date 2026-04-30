@@ -96,7 +96,11 @@ constants and helpers in `telnet/iac.go`.
       `internal/db/migrations/0001_create_accounts.sql`)
 - [x] Password hashing — `internal/auth.Hash` / `Verify` via `bcrypt`,
       enforcing 8-rune min / 72-byte max
-- [ ] Login / logout flow as a Mode (replaces legacy `togglepassword`)
+- [x] Login mode — `internal/mode.Login` with username/password steps,
+      lockout after 5 failures, mode-driven echo masking; replaces
+      legacy `togglepassword`
+- [x] Account-create mode — `internal/mode.Create` reachable via "new"
+      from login; ASCII-only username policy, password confirmation
 - [ ] Mode-aware echo masking (push a `passwordMode` rather than toggling a flag
       on `Session`)
 - [ ] Character model attached to account (1:N)

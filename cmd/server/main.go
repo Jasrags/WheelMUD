@@ -23,9 +23,14 @@ const (
 // server bundles the long-lived dependencies a connection needs. New
 // dependencies (e.g. character repo, scheduler) belong here so the
 // connection-handler signature stays stable.
+//
+// newInitial is a factory because login mode carries per-connection
+// substate (current step, captured username) and must not be shared
+// across sessions. Stateless modes (Game) can be reused; the factory
+// just returns the same pointer.
 type server struct {
-	accounts repo.AccountRepo
-	initial  telnet.Mode // pushed onto every new session; today: gameMode
+	accounts   repo.AccountRepo
+	newInitial func() telnet.Mode
 }
 
 func main() {
@@ -50,9 +55,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	accounts := repo.NewSQLiteAccountRepo(conn)
+	gameMode := mode.NewGame(registry)
 	srv := &server{
-		accounts: repo.NewSQLiteAccountRepo(conn),
-		initial:  mode.NewGame(registry),
+		accounts: accounts,
+		newInitial: func() telnet.Mode {
+			return mode.NewLogin(accounts, gameMode)
+		},
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -97,7 +106,7 @@ func closeDB(conn *sql.DB) {
 
 func buildRegistry() (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
-	if err := r.Register(cmd.Quit, cmd.Who, cmd.TogglePassword, cmd.Colors); err != nil {
+	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
@@ -115,11 +124,12 @@ func (srv *server) handleConnection(s *telnet.Session) {
 		return
 	}
 
-	if err := s.PushMode(srv.initial); err != nil {
+	initial := srv.newInitial()
+	if err := s.PushMode(initial); err != nil {
 		slog.Error("Failed to enter initial mode", "remote", s.RemoteAddress, "error", err)
 		return
 	}
-	if err := s.WriteRaw([]byte(srv.initial.Prompt(s))); err != nil {
+	if err := s.WriteRaw([]byte(initial.Prompt(s))); err != nil {
 		return
 	}
 

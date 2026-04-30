@@ -2,7 +2,7 @@
 
 # Architecture
 
-WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model; there is no persistence, world state, or auth yet — the surface area is the telnet/ANSI transport plus a command-registry/mode-stack input pipeline.
+WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model; SQLite-backed accounts and login/account-create modes are wired, but there is no world state yet — the surface area is the telnet/ANSI transport, a command-registry/mode-stack input pipeline, and the auth layer (accounts + bcrypt + mode-driven login flow).
 
 ## Layers
 
@@ -33,7 +33,8 @@ WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a gorout
 ```
 main ─► open SQLite (db.Open runs embedded migrations)
      ─► build Registry (commands)
-     ─► server{ accounts: SQLiteAccountRepo, initial: Game(registry) }
+     ─► server{ accounts: SQLiteAccountRepo,
+                 newInitial: () => Login(accounts, Game(registry)) }
      ─► net.Listen → Accept loop ─► srv.handleConnection per conn
 ```
 
@@ -62,7 +63,7 @@ TCP byte ─► dispatchByte ─► bufferInput ─► CR/LF ─► inbox ─►
                                                   Lookup(verb) ─► Command.Run(*Context)
 ```
 
-Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced before `Run`. `Command.Auth` is stored but not enforced (waits for accounts).
+Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced before `Run`. `Command.Auth` is checked against `Session.AuthLevel`; denials render as `"Unknown command"` so privileged verbs can't be enumerated.
 
 ## Tab completion
 
@@ -70,8 +71,7 @@ Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced befo
 
 ## What's missing on purpose
 
-- No persistence layer — a future `data.md` will exist once a repo lands.
-- No accounts / characters — `AuthLevel` stub waits in `Command`.
+- No character model yet — login/create handle accounts only; characters land in a later slice.
 - No game loop / tick scheduler.
 - No world model (rooms, items, mobs).
 - See `ROADMAP.md` for the full ledger.
