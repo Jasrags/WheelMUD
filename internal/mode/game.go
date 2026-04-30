@@ -26,12 +26,13 @@ func (g *Game) OnExit(_ *telnet.Session) error  { return nil }
 
 // Complete satisfies telnet.Completer for verb completion. Argument
 // completion is deferred — once the buffer contains whitespace we return
-// nil, which the Tab handler renders as a bell.
+// nil, which the Tab handler renders as a bell. Registry.Prefix already
+// lowercases its argument, so we pass `buffer` through verbatim.
 func (g *Game) Complete(_ *telnet.Session, buffer string) []telnet.Candidate {
 	if strings.ContainsAny(buffer, " \t") {
 		return nil
 	}
-	cmds := g.Registry.Prefix(strings.ToLower(buffer))
+	cmds := g.Registry.Prefix(buffer)
 	if len(cmds) == 0 {
 		return nil
 	}
