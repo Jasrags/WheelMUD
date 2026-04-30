@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"testing"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
@@ -40,10 +41,16 @@ var cost atomic.Int32
 
 func init() { cost.Store(int32(bcrypt.DefaultCost)) }
 
-// SetCost overrides the bcrypt cost. Intended for tests only.
-// Returns the previous value so tests can restore it via t.Cleanup.
+// SetCost overrides the bcrypt cost. Intended for tests only — calls
+// from a non-test binary are silently ignored (the production cost is
+// preserved) so a misbehaving import or future scripting layer cannot
+// weaken hashing at runtime. Returns the previous value so tests can
+// restore it via t.Cleanup.
 func SetCost(c int) int {
 	prev := cost.Load()
+	if !testing.Testing() {
+		return int(prev)
+	}
 	cost.Store(int32(c))
 	return int(prev)
 }
