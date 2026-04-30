@@ -11,6 +11,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -26,6 +27,7 @@ type loginFixture struct {
 	peer     net.Conn
 	repo     *repo.MemoryAccountRepo
 	chars    *repo.MemoryCharacterRepo
+	sessions *session.Registry
 	login    *Login
 	game     *stubMode
 	captured *safeBuf
@@ -61,7 +63,8 @@ func newLoginFixtureChars(t *testing.T, charNames []string) *loginFixture {
 	}
 
 	game := &stubMode{name: "game"}
-	login := NewLogin(ar, cr, game)
+	sessions := session.NewRegistry()
+	login := NewLogin(ar, cr, sessions, game)
 
 	s := telnet.NewSession(server)
 	if err := s.PushMode(login); err != nil {
@@ -71,7 +74,7 @@ func newLoginFixtureChars(t *testing.T, charNames []string) *loginFixture {
 	captured := &safeBuf{}
 	drainPeer(t, client, captured)
 
-	return &loginFixture{t: t, session: s, peer: client, repo: ar, chars: cr, login: login, game: game, captured: captured}
+	return &loginFixture{t: t, session: s, peer: client, repo: ar, chars: cr, sessions: sessions, login: login, game: game, captured: captured}
 }
 
 func (f *loginFixture) feed(line string) {
@@ -235,6 +238,89 @@ func TestLogin_LockoutDuringPasswordStepIsHonored(t *testing.T) {
 	}
 	if !strings.Contains(f.captured.String(), "locked") {
 		t.Fatalf("expected lockout message: %q", f.captured.String())
+	}
+}
+
+func TestLogin_KicksPriorSessionForSameAccount(t *testing.T) {
+	// Two sessions for the same account; the second login must close
+	// the first.
+	f1 := newLoginFixture(t)
+
+	// Build a second session that shares the same registry / repos.
+	server2, client2 := net.Pipe()
+	t.Cleanup(func() { server2.Close(); client2.Close() })
+	s2 := telnet.NewSession(server2)
+	captured2 := &safeBuf{}
+	drainPeer(t, client2, captured2)
+	login2 := NewLogin(f1.repo, f1.chars, f1.sessions, f1.game)
+	if err := s2.PushMode(login2); err != nil {
+		t.Fatalf("push login2: %v", err)
+	}
+
+	// Log in on session 1.
+	f1.feed("alice")
+	f1.feed("correct-horse")
+	if f1.session.AuthLevel != telnet.AuthPlayer {
+		t.Fatal("first login did not authenticate")
+	}
+	if f1.sessions.Lookup(f1.session.AccountID) != f1.session {
+		t.Fatal("registry did not bind first session")
+	}
+
+	// Log in on session 2 — should kick session 1.
+	if err := login2.Handle(context.Background(), s2, "alice"); err != nil {
+		t.Fatalf("session2 username: %v", err)
+	}
+	if err := login2.Handle(context.Background(), s2, "correct-horse"); err != nil {
+		t.Fatalf("session2 password: %v", err)
+	}
+
+	if f1.sessions.Lookup(s2.AccountID) != s2 {
+		t.Fatal("registry did not switch to second session")
+	}
+
+	// Drain a beat for the kick notice + Conn.Close to fire on session 1.
+	time.Sleep(50 * time.Millisecond)
+	if !strings.Contains(f1.captured.String(), "logged in elsewhere") {
+		t.Fatalf("first session did not receive kick notice: %q", f1.captured.String())
+	}
+}
+
+func TestLogin_FailedLoginDoesNotDisturbExistingSession(t *testing.T) {
+	f1 := newLoginFixture(t)
+	f1.feed("alice")
+	f1.feed("correct-horse")
+	if f1.session.AuthLevel != telnet.AuthPlayer {
+		t.Fatal("first login did not authenticate")
+	}
+	priorBaseline := f1.captured.String()
+
+	// Second session attempts and fails.
+	server2, client2 := net.Pipe()
+	t.Cleanup(func() { server2.Close(); client2.Close() })
+	s2 := telnet.NewSession(server2)
+	captured2 := &safeBuf{}
+	drainPeer(t, client2, captured2)
+	login2 := NewLogin(f1.repo, f1.chars, f1.sessions, f1.game)
+	if err := s2.PushMode(login2); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if err := login2.Handle(context.Background(), s2, "alice"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if err := login2.Handle(context.Background(), s2, "wrong"); err != nil {
+		t.Fatalf("pass: %v", err)
+	}
+
+	// Registry must still point at the original session; original
+	// must NOT have received a kick notice.
+	if f1.sessions.Lookup(f1.session.AccountID) != f1.session {
+		t.Fatal("failed login disturbed the existing binding")
+	}
+	time.Sleep(50 * time.Millisecond)
+	delta := strings.TrimPrefix(f1.captured.String(), priorBaseline)
+	if strings.Contains(delta, "logged in elsewhere") {
+		t.Fatalf("failed login leaked kick notice: %q", delta)
 	}
 }
 

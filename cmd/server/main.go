@@ -12,6 +12,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -31,6 +32,7 @@ const (
 type server struct {
 	accounts   repo.AccountRepo
 	characters repo.CharacterRepo
+	sessions   *session.Registry
 	newInitial func() telnet.Mode
 }
 
@@ -58,12 +60,14 @@ func main() {
 
 	accounts := repo.NewSQLiteAccountRepo(conn)
 	characters := repo.NewSQLiteCharacterRepo(conn)
+	sessions := session.NewRegistry()
 	gameMode := mode.NewGame(registry)
 	srv := &server{
 		accounts:   accounts,
 		characters: characters,
+		sessions:   sessions,
 		newInitial: func() telnet.Mode {
-			return mode.NewLogin(accounts, characters, gameMode)
+			return mode.NewLogin(accounts, characters, sessions, gameMode)
 		},
 	}
 
@@ -120,6 +124,15 @@ func buildRegistry() (*telnet.Registry, error) {
 
 func (srv *server) handleConnection(s *telnet.Session) {
 	defer s.Conn.Close()
+	// Compare-and-delete unbind: if a newer login took over our
+	// account, our binding has already been replaced and Unbind is a
+	// no-op. Sessions that never authenticated have AccountID == 0
+	// and the registry has no entry to remove.
+	defer func() {
+		if s.AccountID != 0 {
+			srv.sessions.Unbind(s.AccountID, s)
+		}
+	}()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
 
 	if err := writeBanner(s); err != nil {

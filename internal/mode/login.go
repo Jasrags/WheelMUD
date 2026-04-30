@@ -3,11 +3,13 @@ package mode
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -36,6 +38,7 @@ const (
 type Login struct {
 	accounts   repo.AccountRepo
 	characters repo.CharacterRepo
+	sessions   *session.Registry
 	game       telnet.Mode
 	now        func() time.Time
 
@@ -50,12 +53,16 @@ type Login struct {
 }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
-// game is the in-world mode to promote successful logins into (after
-// CharacterSelect / CharacterCreate decisions land).
-func NewLogin(accounts repo.AccountRepo, characters repo.CharacterRepo, game telnet.Mode) *Login {
+// sessions enforces the single-session-per-account policy: a successful
+// login disconnects the prior session for the same account. Pass a
+// non-nil registry; tests that don't care about multi-session can pass
+// session.NewRegistry().
+// game is the in-world mode to promote successful logins into.
+func NewLogin(accounts repo.AccountRepo, characters repo.CharacterRepo, sessions *session.Registry, game telnet.Mode) *Login {
 	return &Login{
 		accounts:         accounts,
 		characters:       characters,
+		sessions:         sessions,
 		game:             game,
 		now:              time.Now,
 		lockoutThreshold: LockoutThreshold,
@@ -104,7 +111,7 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 	if strings.EqualFold(username, "new") {
 		// Hand off to account-create mode. Login is replaced; if create
 		// is canceled, the user reconnects.
-		return s.ReplaceMode(NewCreate(l.accounts, l.characters, l.game))
+		return s.ReplaceMode(NewCreate(l.accounts, l.characters, l.sessions, l.game))
 	}
 
 	// Resolve the account up front so we can check lockout *before*
@@ -180,6 +187,17 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	}
 	s.AccountID = l.account.ID
 	s.AuthLevel = telnet.AuthPlayer
+	// Single-session-per-account: bind this session in the registry
+	// and disconnect any prior occupant. The previous session's read
+	// loop will EOF on Conn.Close and tear down via the existing path.
+	if prev := l.sessions.Bind(l.account.ID, s); prev != nil && prev != s {
+		if err := prev.WriteRaw([]byte("\r\nDisconnected: logged in elsewhere.\r\n")); err != nil {
+			slog.Debug("kick notice write failed", "remote", prev.RemoteAddress, "error", err)
+		}
+		if err := prev.Conn.Close(); err != nil {
+			slog.Debug("kick close failed", "remote", prev.RemoteAddress, "error", err)
+		}
+	}
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}

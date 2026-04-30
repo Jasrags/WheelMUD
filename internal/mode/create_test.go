@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -36,7 +37,8 @@ func newCreateFixture(t *testing.T, seed ...repo.Account) *createFixture {
 		}
 	}
 	game := &stubMode{name: "game"}
-	c := NewCreate(ar, cr, game)
+	sessions := session.NewRegistry()
+	c := NewCreate(ar, cr, sessions, game)
 
 	s := telnet.NewSession(server)
 	if err := s.PushMode(c); err != nil {

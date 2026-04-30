@@ -3,11 +3,13 @@ package mode
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"unicode"
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -34,6 +36,7 @@ const (
 type Create struct {
 	accounts   repo.AccountRepo
 	characters repo.CharacterRepo
+	sessions   *session.Registry
 	game       telnet.Mode
 
 	step     createStep
@@ -42,9 +45,10 @@ type Create struct {
 }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
-// to postAuth after the account is persisted.
-func NewCreate(accounts repo.AccountRepo, characters repo.CharacterRepo, game telnet.Mode) *Create {
-	return &Create{accounts: accounts, characters: characters, game: game}
+// to postAuth after the account is persisted; sessions enforces the
+// single-session-per-account policy.
+func NewCreate(accounts repo.AccountRepo, characters repo.CharacterRepo, sessions *session.Registry, game telnet.Mode) *Create {
+	return &Create{accounts: accounts, characters: characters, sessions: sessions, game: game}
 }
 
 func (c *Create) Prompt(_ *telnet.Session) string {
@@ -135,6 +139,15 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 
 	s.AccountID = a.ID
 	s.AuthLevel = telnet.AuthPlayer
+	// Single-session-per-account: bind and disconnect any prior
+	// occupant. New accounts shouldn't have prior sessions, but this
+	// keeps the bind/unbind path uniform.
+	if prev := c.sessions.Bind(a.ID, s); prev != nil && prev != s {
+		if err := prev.WriteRaw([]byte("\r\nDisconnected: logged in elsewhere.\r\n")); err != nil {
+			slog.Debug("kick notice write failed", "remote", prev.RemoteAddress, "error", err)
+		}
+		_ = prev.Conn.Close()
+	}
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
