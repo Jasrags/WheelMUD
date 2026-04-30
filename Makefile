@@ -13,3 +13,9 @@ run/live/server:
 		--build.exclude_dir "" \
 		--build.include_ext "go, tpl, tmpl, html, css, scss, js, ts, sql, jpeg, jpg, gif, png, bmp, svg, webp, ico" \
 		--misc.clean_on_exit "true"
+
+.PHONY: zip
+zip:
+	zip -r /tmp/project.zip . \
+		-x "*.git*" "*.git/**" "project.zip" "*.env" "*.env.*" \
+		"node_modules/*" "tmp/*" "/tmp/*"
