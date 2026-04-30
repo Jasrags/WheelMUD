@@ -15,14 +15,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// MinPasswordLen is the lower bound enforced by Hash. Tune up here when
-// password policy lands; do not duplicate the check in callers.
+// MinPasswordLen is the lower bound enforced by Hash, counted in
+// user-perceptible runes (so an 8-character password is always 8 chars
+// regardless of UTF-8 byte length). Tune up here when password policy
+// lands; do not duplicate the check in callers.
 const MinPasswordLen = 8
 
-// MaxPasswordLen guards against bcrypt's own 72-byte input limit. Inputs
+// MaxPasswordLen guards against bcrypt's own 72-byte input limit. The
+// unit is bytes (not runes) because bcrypt's ceiling is bytes; inputs
 // past 72 bytes are silently truncated by bcrypt itself, which would
-// mask differences in long passwords; reject early with a clear error
-// instead.
+// mask differences in long passwords. The asymmetry with
+// MinPasswordLen (runes) is intentional.
 const MaxPasswordLen = 72
 
 var (
