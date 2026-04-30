@@ -29,3 +29,8 @@ project.zip
 
 # Project-local Claude Code settings
 .claude/
+
+# SQLite database files (default DB_DSN is wheelmud.db; WAL mode adds -wal/-shm)
+*.db
+*.db-wal
+*.db-shm

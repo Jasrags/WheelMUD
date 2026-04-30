@@ -28,10 +28,19 @@ WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a gorout
 
 `telnet/` knows nothing about specific commands. `internal/cmd/` and `internal/mode/` import `telnet`, never the reverse.
 
+## Boot
+
+```
+main ─► open SQLite (db.Open runs embedded migrations)
+     ─► build Registry (commands)
+     ─► server{ accounts: SQLiteAccountRepo, initial: Game(registry) }
+     ─► net.Listen → Accept loop ─► srv.handleConnection per conn
+```
+
 ## Per-connection lifecycle
 
 ```
-Accept ─► NewSession ─► writeBanner ─► PushMode(Game) ─► RunSession
+Accept ─► NewSession ─► writeBanner ─► PushMode(srv.initial) ─► RunSession
                                                             │
                                           ┌─────────────────┴──────────────────┐
                                           ▼                                    ▼

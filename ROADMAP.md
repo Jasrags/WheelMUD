@@ -230,6 +230,7 @@ constants and helpers in `telnet/iac.go`.
 ## 20. Configuration
 
 - [x] `LISTEN_ADDR` env var
+- [x] `DB_DSN` env var (default `wheelmud.db`; `:memory:` supported)
 - [ ] Config file (TOML/YAML) for ports, paths, feature flags
 - [ ] Per-environment overrides (dev/stage/prod)
 - [ ] Secrets via env, never committed

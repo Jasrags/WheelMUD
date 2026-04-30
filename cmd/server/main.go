@@ -1,17 +1,32 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net"
 	"os"
 
 	"github.com/Jasrags/WheelMUD/internal/cmd"
+	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/mode"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-const defaultListenAddr = ":2323"
+const (
+	defaultListenAddr = ":2323"
+	defaultDBDSN      = "wheelmud.db"
+)
+
+// server bundles the long-lived dependencies a connection needs. New
+// dependencies (e.g. character repo, scheduler) belong here so the
+// connection-handler signature stays stable.
+type server struct {
+	accounts repo.AccountRepo
+	initial  telnet.Mode // pushed onto every new session; today: gameMode
+}
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
@@ -19,17 +34,26 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	addr := os.Getenv("LISTEN_ADDR")
-	if addr == "" {
-		addr = defaultListenAddr
+	addr := envOr("LISTEN_ADDR", defaultListenAddr)
+	dsn := envOr("DB_DSN", defaultDBDSN)
+
+	conn, err := db.Open(context.Background(), dsn)
+	if err != nil {
+		slog.Error("Failed to open database", "dsn", dsn, "error", err)
+		os.Exit(1)
 	}
+	defer closeDB(conn)
 
 	registry, err := buildRegistry()
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
 	}
-	gameMode := mode.NewGame(registry)
+
+	srv := &server{
+		accounts: repo.NewSQLiteAccountRepo(conn),
+		initial:  mode.NewGame(registry),
+	}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -38,23 +62,36 @@ func main() {
 	}
 	defer ln.Close()
 
-	slog.Info("Server started", "address", addr)
+	slog.Info("Server started", "address", addr, "db", dsn)
 
 	for {
-		conn, err := ln.Accept()
+		c, err := ln.Accept()
 		if err != nil {
 			slog.Error("Failed to accept connection", "error", err)
 			continue
 		}
 
-		session := telnet.NewSession(conn)
+		session := telnet.NewSession(c)
 		if session == nil {
-			slog.Error("Failed to create telnet session", "remote", conn.RemoteAddr().String())
-			conn.Close()
+			slog.Error("Failed to create telnet session", "remote", c.RemoteAddr().String())
+			c.Close()
 			continue
 		}
 
-		go handleConnection(session, gameMode)
+		go srv.handleConnection(session)
+	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func closeDB(conn *sql.DB) {
+	if err := conn.Close(); err != nil {
+		slog.Warn("DB close error", "error", err)
 	}
 }
 
@@ -69,7 +106,7 @@ func buildRegistry() (*telnet.Registry, error) {
 	return r, nil
 }
 
-func handleConnection(s *telnet.Session, initialMode telnet.Mode) {
+func (srv *server) handleConnection(s *telnet.Session) {
 	defer s.Conn.Close()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
 
@@ -78,11 +115,11 @@ func handleConnection(s *telnet.Session, initialMode telnet.Mode) {
 		return
 	}
 
-	if err := s.PushMode(initialMode); err != nil {
+	if err := s.PushMode(srv.initial); err != nil {
 		slog.Error("Failed to enter initial mode", "remote", s.RemoteAddress, "error", err)
 		return
 	}
-	if err := s.WriteRaw([]byte(initialMode.Prompt(s))); err != nil {
+	if err := s.WriteRaw([]byte(srv.initial.Prompt(s))); err != nil {
 		return
 	}
 

@@ -22,7 +22,7 @@ Connect with: `telnet localhost 2323` (or `nc localhost 2323`).
 
 ## Architecture
 
-- **`cmd/server/main.go`** — entrypoint. Accepts TCP connections, constructs a `telnet.Session` per connection, builds the command registry, pushes the initial `Game` mode, and hands the session to `telnet.RunSession`.
+- **`cmd/server/main.go`** — entrypoint. Reads `LISTEN_ADDR` (default `:2323`) and `DB_DSN` (default `wheelmud.db`), opens the SQLite database via `internal/db.Open` (runs embedded migrations), builds the command registry and a `server` struct holding long-lived deps (`accounts repo.AccountRepo`, `initial telnet.Mode`), then accepts TCP connections. Each connection gets a `telnet.Session`, has the initial mode pushed, and is handed to `telnet.RunSession`. New long-lived dependencies (character repo, scheduler, etc.) belong on the `server` struct so the connection-handler signature stays stable.
 
 - **`telnet/`** — protocol primitives and per-connection driver.
   - `session.go`: `Session` struct (conn, terminal type, width/height, input buffer, password-mode flag, color level, write mutex, mode stack). `WriteString` renders cfmt tags; `WriteWrapped` additionally reflows the result via `WrapText` to `Session.Width`. All writes serialize on `writeMu`.

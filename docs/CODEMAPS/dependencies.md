@@ -35,6 +35,13 @@ The telnet protocol, ANSI handling, command registry, mode stack, completion col
 
 None. The server has no outbound network calls, no DB, no cache, no queue, no auth provider. The single inbound surface is TCP `:2323` (default; override via `LISTEN_ADDR`).
 
+## Configuration (env vars)
+
+| Var | Default | Purpose |
+|---|---|---|
+| `LISTEN_ADDR` | `:2323` | TCP listen address. Use `127.0.0.1:0` for ephemeral port (smoke tests). |
+| `DB_DSN` | `wheelmud.db` | SQLite DSN. `:memory:` for ephemeral; file paths are relative to CWD. WAL mode adds `*-wal` / `*-shm` siblings — gitignored. |
+
 ## Build / runtime tooling
 
 | Tool | Where | Purpose |
