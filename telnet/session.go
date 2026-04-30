@@ -99,7 +99,9 @@ func (s *Session) WriteRaw(b []byte) error {
 	return nil
 }
 
-// PushMode adds m to the top of the mode stack and calls m.OnEnter.
+// PushMode adds m to the top of the mode stack and calls m.OnEnter. If
+// OnEnter returns an error the push is rolled back so the stack stays
+// consistent (the caller treats a failed push as "not on the stack").
 func (s *Session) PushMode(m Mode) error {
 	if m == nil {
 		return errors.New("telnet: PushMode(nil)")
@@ -107,7 +109,17 @@ func (s *Session) PushMode(m Mode) error {
 	s.modeMu.Lock()
 	s.modes = append(s.modes, m)
 	s.modeMu.Unlock()
-	return m.OnEnter(s)
+	if err := m.OnEnter(s); err != nil {
+		s.modeMu.Lock()
+		// Defensive: only trim if our mode is still on top — a concurrent
+		// Pop could have already removed it.
+		if n := len(s.modes); n > 0 && s.modes[n-1] == m {
+			s.modes = s.modes[:n-1]
+		}
+		s.modeMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // PopMode removes the top mode and calls its OnExit. Returns ErrNoMode if
