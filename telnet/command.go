@@ -9,8 +9,11 @@ import (
 	"sync"
 )
 
-// AuthLevel marks the privilege a command requires. Stored on commands today
-// but not enforced until user / login subsystems land.
+// AuthLevel marks the privilege a command requires. Registry.Dispatch
+// rejects a command whose Auth exceeds Session.AuthLevel with the same
+// "Unknown command" response as a missing verb, so the prompt cannot be
+// used to enumerate privileged commands. Sessions start at AuthGuest;
+// login mode is what bumps the level.
 type AuthLevel uint8
 
 const (
