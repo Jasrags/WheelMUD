@@ -2,7 +2,7 @@
 
 # Architecture
 
-WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters), and the first slice of the world model has landed — rooms, exits, items, and mobs as read-only seeded aggregates plus `look` and `n/s/e/w/u/d` movement that persists across reconnects.
+WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters); the world layer ships rooms/exits/items/mobs as YAML-authored aggregates loaded into SQLite at boot, with `look` and `n/s/e/w/u/d` movement that persists across reconnects.
 
 ## Layers
 
@@ -19,6 +19,10 @@ WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a gorout
 │ internal/repo/             Account + Character + Room/Exit/Item/  │
 │                             Mob repos (sqlite + memory impls;     │
 │                             shared contract tests)                │
+│ internal/world/            YAML loader: parse → validate → tx-    │
+│                             sync into rooms/exits/items/mobs.     │
+│                             //go:embed default world; WORLD_DIR   │
+│                             env var overrides for builders.       │
 │ internal/session/          Process-level session.Registry         │
 ├───────────────────────────────────────────────────────────────────┤
 │ internal/db/               SQLite Open + embedded migrations      │
@@ -44,6 +48,11 @@ Dependency direction (no cycles): `cmd/server` → `internal/{mode,cmd,session,r
 main ─► db.Open(DB_DSN)                           runs embedded migrations
      ─► repo.NewSQLite{Account,Character,Room,    wraps *sql.DB
                        Exit,Item,Mob}Repo
+     ─► world.LoadAndSync(ctx, conn,              parses YAML, validates,
+                          world.SourceFS())        tx-inserts rooms/exits/
+                                                   items/mobs (no-op if
+                                                   already loaded). Aborts
+                                                   boot on validation fail.
      ─► session.NewRegistry()                     process-level
      ─► buildRegistry(rooms, exits, items, mobs,  closures over world repos
                       characters)                  for look + move family
@@ -122,7 +131,7 @@ Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced befo
 ## What's missing on purpose
 
 - No game loop / tick scheduler (§8 of ROADMAP).
-- World model is read-only and tiny — 3 seeded rooms, no authoring loader, no spawn/despawn lifecycle, no item/mob template-vs-instance split (§9).
+- World loader is boot-time only — no hot-reload yet (§7), no spawn/despawn lifecycle, no item/mob template-vs-instance split (§9).
 - No combat, skills, economy, quests, OLC, channels.
 - No `who`-across-the-server — needs `session.Registry.Snapshot` iteration; currently shows only the caller.
 - See `ROADMAP.md` for the full ledger.

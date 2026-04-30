@@ -38,6 +38,26 @@ func (r *SQLiteExitRepo) ListFrom(ctx context.Context, fromRoomID int64) ([]Exit
 	return out, rows.Err()
 }
 
+func (r *SQLiteExitRepo) Create(ctx context.Context, e Exit) (Exit, error) {
+	res, err := r.db.ExecContext(ctx,
+		`INSERT INTO exits(from_room_id, to_room_id, direction)
+		 VALUES (?, ?, ?)`,
+		e.FromRoomID, e.ToRoomID, e.Direction,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return Exit{}, ErrDuplicateExit
+		}
+		return Exit{}, fmt.Errorf("insert exit: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Exit{}, fmt.Errorf("last insert id: %w", err)
+	}
+	e.ID = id
+	return e, nil
+}
+
 func (r *SQLiteExitRepo) FindByDirection(ctx context.Context, fromRoomID int64, direction string) (Exit, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, from_room_id, to_room_id, direction

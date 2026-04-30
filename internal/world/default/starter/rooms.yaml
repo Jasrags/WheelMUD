@@ -1,0 +1,29 @@
+- id: plaza.fountain
+  starter: true
+  name: Town Plaza
+  short: A bustling town plaza.
+  long: |
+    Cobblestones radiate from a worn fountain in the centre of the plaza.
+    Roads run away to the north and south, and townsfolk come and go
+    without sparing you a second glance.
+  exits:
+    n: plaza.north_road
+    s: plaza.south_road
+
+- id: plaza.north_road
+  name: North Road
+  short: A quiet stretch of road north of the plaza.
+  long: |
+    The road narrows as it leaves the plaza, hemmed in by leaning timber
+    houses. A faint smell of bread drifts from somewhere up ahead.
+  exits:
+    s: plaza.fountain
+
+- id: plaza.south_road
+  name: South Road
+  short: A dusty road heading south from the plaza.
+  long: |
+    Wagon ruts cut deep into the dry earth here. The plaza's noise
+    dwindles to a hum behind you.
+  exits:
+    n: plaza.fountain

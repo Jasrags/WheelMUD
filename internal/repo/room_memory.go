@@ -7,24 +7,42 @@ import (
 )
 
 // MemoryRoomRepo is an in-memory RoomRepo for tests. Concurrent-safe.
-// Pre-seeded via Insert; there is no public Create method until the world
-// loader lands (intentionally mirrors the seed-only state of the SQLite
-// repo's interface today).
 type MemoryRoomRepo struct {
 	mu    sync.Mutex
 	byID  map[int64]*Room
+	byExt map[string]*Room
 	maxID int64
 }
 
 func NewMemoryRoomRepo() *MemoryRoomRepo {
-	return &MemoryRoomRepo{byID: make(map[int64]*Room)}
+	return &MemoryRoomRepo{
+		byID:  make(map[int64]*Room),
+		byExt: make(map[string]*Room),
+	}
 }
 
-// Insert adds a room directly. Test fixtures use this to seed the map.
-// If r.ID is zero an id is auto-assigned starting at 1.
+// Insert adds a room directly without ExternalID validation. Test
+// fixtures use this; production code (the YAML loader) goes through
+// Create.
 func (r *MemoryRoomRepo) Insert(room Room) Room {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.insertLocked(room)
+}
+
+func (r *MemoryRoomRepo) Create(_ context.Context, room Room) (Room, error) {
+	if room.ExternalID == "" {
+		return Room{}, ErrInvalidExternalID
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.byExt[room.ExternalID]; exists {
+		return Room{}, ErrDuplicateExternalID
+	}
+	return r.insertLocked(room), nil
+}
+
+func (r *MemoryRoomRepo) insertLocked(room Room) Room {
 	if room.ID == 0 {
 		r.maxID++
 		room.ID = r.maxID
@@ -36,6 +54,9 @@ func (r *MemoryRoomRepo) Insert(room Room) Room {
 	}
 	stored := room
 	r.byID[room.ID] = &stored
+	if room.ExternalID != "" {
+		r.byExt[room.ExternalID] = &stored
+	}
 	return stored
 }
 
@@ -43,6 +64,16 @@ func (r *MemoryRoomRepo) FindByID(_ context.Context, id int64) (Room, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	room, ok := r.byID[id]
+	if !ok {
+		return Room{}, ErrRoomNotFound
+	}
+	return *room, nil
+}
+
+func (r *MemoryRoomRepo) FindByExternalID(_ context.Context, externalID string) (Room, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room, ok := r.byExt[externalID]
 	if !ok {
 		return Room{}, ErrRoomNotFound
 	}

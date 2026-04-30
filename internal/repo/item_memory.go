@@ -12,16 +12,36 @@ import (
 type MemoryItemRepo struct {
 	mu    sync.Mutex
 	items []Item
+	byExt map[string]struct{}
 	maxID int64
 }
 
-func NewMemoryItemRepo() *MemoryItemRepo { return &MemoryItemRepo{} }
+func NewMemoryItemRepo() *MemoryItemRepo {
+	return &MemoryItemRepo{byExt: make(map[string]struct{})}
+}
 
-// Insert adds an item directly. Test fixtures use this to populate
-// rooms. If i.ID is zero an id is auto-assigned.
+// Insert adds an item directly without ExternalID validation. Test
+// fixtures use this; production code (the YAML loader) goes through
+// Create.
 func (r *MemoryItemRepo) Insert(i Item) Item {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.insertLocked(i)
+}
+
+func (r *MemoryItemRepo) Create(_ context.Context, i Item) (Item, error) {
+	if i.ExternalID == "" {
+		return Item{}, ErrInvalidExternalID
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, dup := r.byExt[i.ExternalID]; dup {
+		return Item{}, ErrDuplicateExternalID
+	}
+	return r.insertLocked(i), nil
+}
+
+func (r *MemoryItemRepo) insertLocked(i Item) Item {
 	if i.ID == 0 {
 		r.maxID++
 		i.ID = r.maxID
@@ -35,6 +55,9 @@ func (r *MemoryItemRepo) Insert(i Item) Item {
 		i.CreatedAt = time.Now().UTC()
 	}
 	r.items = append(r.items, i)
+	if i.ExternalID != "" {
+		r.byExt[i.ExternalID] = struct{}{}
+	}
 	return i
 }
 

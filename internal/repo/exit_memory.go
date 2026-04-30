@@ -15,11 +15,26 @@ type MemoryExitRepo struct {
 
 func NewMemoryExitRepo() *MemoryExitRepo { return &MemoryExitRepo{} }
 
-// Insert adds an exit directly. Test fixtures use this to seed the
-// connectivity graph. If e.ID is zero an id is auto-assigned.
+// Insert adds an exit directly without uniqueness checks. Test fixtures
+// use this; production code (the YAML loader) goes through Create.
 func (r *MemoryExitRepo) Insert(e Exit) Exit {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.insertLocked(e)
+}
+
+func (r *MemoryExitRepo) Create(_ context.Context, e Exit) (Exit, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.exits {
+		if existing.FromRoomID == e.FromRoomID && existing.Direction == e.Direction {
+			return Exit{}, ErrDuplicateExit
+		}
+	}
+	return r.insertLocked(e), nil
+}
+
+func (r *MemoryExitRepo) insertLocked(e Exit) Exit {
 	if e.ID == 0 {
 		r.maxID++
 		e.ID = r.maxID

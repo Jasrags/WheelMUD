@@ -139,7 +139,18 @@ constants and helpers in `telnet/iac.go`.
       populated in `promoteToGame` and persisted across reconnects via
       `CharacterRepo.RecordRoom`. `look`, `n/s/e/w/u/d` commands wired into
       Game mode (`internal/cmd/look.go`, `internal/cmd/move.go`).
-- [ ] World data on disk (YAML/JSON area files) with a loader
+- [x] World data on disk (YAML/JSON area files) with a loader —
+      `internal/world` package: `gopkg.in/yaml.v3` parsing, strict
+      cross-reference validation (unique ids, exactly-one starter, valid
+      directions, all refs resolve), one-shot transactional sync into
+      the SQLite world tables. Default world embedded via
+      `//go:embed all:default` at `internal/world/default/`;
+      `WORLD_DIR` env var overrides with a real filesystem path.
+      Loader is no-op when world tables already have rows
+      (`0006_world_external_id.sql` wipes the SQL seed and adds
+      `external_id` columns to rooms/items/mobs so reloads pick up
+      changes via DB wipe). Starter room pinned to id=1 to preserve
+      `repo.StarterRoomID`.
 - [ ] Hot-reload of area files without restart
 - [ ] Periodic + shutdown autosave
 - [ ] Backup rotation

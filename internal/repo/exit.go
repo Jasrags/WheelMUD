@@ -27,8 +27,8 @@ type Exit struct {
 	Direction  string // one of DirNorth..DirDown
 }
 
-// ExitRepo is the persistence boundary the look / move commands use to
-// resolve room connectivity.
+// ExitRepo is the persistence boundary the look / move commands and the
+// YAML world loader use to resolve room connectivity.
 type ExitRepo interface {
 	// ListFrom returns every exit leaving fromRoomID, sorted by direction.
 	// An empty result is not an error.
@@ -36,6 +36,12 @@ type ExitRepo interface {
 	// FindByDirection resolves the exit leaving fromRoomID in the given
 	// direction. Returns ErrExitNotFound when the room has no such exit.
 	FindByDirection(ctx context.Context, fromRoomID int64, direction string) (Exit, error)
+	// Create inserts a new exit. Returns ErrDuplicateExit when
+	// (from_room_id, direction) is already taken.
+	Create(ctx context.Context, e Exit) (Exit, error)
 }
 
-var ErrExitNotFound = errors.New("repo: exit not found")
+var (
+	ErrExitNotFound = errors.New("repo: exit not found")
+	ErrDuplicateExit = errors.New("repo: exit already exists for that (room, direction)")
+)

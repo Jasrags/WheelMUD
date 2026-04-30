@@ -40,41 +40,49 @@ func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 // CurrentRoomID. Move commands call this after a successful move so the
 // player sees the new room without typing `look`. Errors writing to the
 // session bubble up; missing-data errors render as a graceful message.
+//
+// Output uses cfmt {{...}}::style tags via Session.WriteString — never
+// pass untrusted input through this path. World text comes from the
+// YAML loader, which is operator-controlled, so it's safe.
 func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo) error {
 	if s.CurrentRoomID == 0 {
-		return s.WriteRaw([]byte("You are nowhere in particular.\r\n"))
+		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")
 	}
 
 	room, err := rooms.FindByID(ctx, s.CurrentRoomID)
 	if err != nil {
 		if errors.Is(err, repo.ErrRoomNotFound) {
-			return s.WriteRaw([]byte("The room around you has gone missing. Tell an admin.\r\n"))
+			return s.WriteString("{{The room around you has gone missing. Tell an admin.}}::red\r\n")
 		}
-		return s.WriteRaw([]byte("Could not look around right now.\r\n"))
+		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 
 	exitsList, err := exits.ListFrom(ctx, room.ID)
 	if err != nil {
-		return s.WriteRaw([]byte("Could not look around right now.\r\n"))
+		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 	itemsList, err := items.ListInRoom(ctx, room.ID)
 	if err != nil {
-		return s.WriteRaw([]byte("Could not look around right now.\r\n"))
+		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 	mobsList, err := mobs.ListInRoom(ctx, room.ID)
 	if err != nil {
-		return s.WriteRaw([]byte("Could not look around right now.\r\n"))
+		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 
 	var b strings.Builder
+	// Room title: bright + bold so it stands out as the section header.
+	b.WriteString("{{")
 	b.WriteString(room.Name)
-	b.WriteString("\r\n")
+	b.WriteString("}}::cyan|bold\r\n")
 	if room.LongDesc != "" {
-		b.WriteString(room.LongDesc)
+		// Description stays uncoloured so the room title and the
+		// labelled lists below it pop. Just normalize line endings.
+		b.WriteString(toCRLF(room.LongDesc))
 		b.WriteString("\r\n")
 	}
 	if len(exitsList) > 0 {
-		b.WriteString("Exits: ")
+		b.WriteString("{{Exits:}}::yellow|bold ")
 		for i, e := range exitsList {
 			if i > 0 {
 				b.WriteString(", ")
@@ -83,31 +91,47 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 			if !ok {
 				name = e.Direction
 			}
+			b.WriteString("{{")
 			b.WriteString(name)
+			b.WriteString("}}::yellow")
 		}
 		b.WriteString("\r\n")
 	} else {
-		b.WriteString("Exits: none\r\n")
+		b.WriteString("{{Exits:}}::yellow|bold {{none}}::gray\r\n")
 	}
 	if len(itemsList) > 0 {
-		b.WriteString("You see: ")
+		b.WriteString("{{You see:}}::green|bold ")
 		for i, it := range itemsList {
 			if i > 0 {
 				b.WriteString(", ")
 			}
+			b.WriteString("{{")
 			b.WriteString(it.Name)
+			b.WriteString("}}::green")
 		}
 		b.WriteString("\r\n")
 	}
 	if len(mobsList) > 0 {
-		b.WriteString("Also here: ")
+		b.WriteString("{{Also here:}}::magenta|bold ")
 		for i, m := range mobsList {
 			if i > 0 {
 				b.WriteString(", ")
 			}
+			b.WriteString("{{")
 			b.WriteString(m.Name)
+			b.WriteString("}}::magenta")
 		}
 		b.WriteString("\r\n")
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return s.WriteString(b.String())
+}
+
+// toCRLF normalizes line breaks for the telnet wire. World data
+// authored in YAML uses bare LF (or, on Windows authoring, CRLF); the
+// telnet client expects CRLF, and a stray LF leaves the cursor on the
+// next row at the previous column. Strips bare CRs first so a CRLF
+// input doesn't become CRCRLF.
+func toCRLF(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\n", "\r\n")
 }

@@ -1,0 +1,263 @@
+package world
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"sort"
+	"strings"
+
+	"github.com/Jasrags/WheelMUD/internal/repo"
+)
+
+// LoadAndSync reads YAML zone folders from src, validates the world,
+// and populates the rooms / exits / items / mobs tables. It is a no-op
+// if the world tables already have rows (boot-time only — pick up YAML
+// changes by wiping the DB).
+//
+// All inserts happen in a single transaction so a partial failure
+// rolls back to an empty world rather than leaving the DB half-loaded.
+//
+// The "already loaded?" probe and the subsequent insert are NOT
+// atomic. This is safe today because the loader runs once per process
+// at boot and the project ships a single server binary. If LoadAndSync
+// is ever invoked concurrently (e.g. exposed as an admin endpoint or
+// run from two boot paths against a shared DB) it must be wrapped in
+// an application-level mutex or rewritten to do the probe + load
+// inside one transaction.
+func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) error {
+	already, err := worldAlreadyLoaded(ctx, db)
+	if err != nil {
+		return fmt.Errorf("world: probe existing rows: %w", err)
+	}
+	if already {
+		slog.Info("world: already loaded, skipping")
+		return nil
+	}
+
+	world, err := parseWorld(src)
+	if err != nil {
+		return fmt.Errorf("world: parse: %w", err)
+	}
+	if err := validate(world); err != nil {
+		return fmt.Errorf("world: validate: %w", err)
+	}
+
+	if err := insertWorld(ctx, db, world); err != nil {
+		return fmt.Errorf("world: insert: %w", err)
+	}
+	slog.Info("world: load complete",
+		"zones", len(world.Zones),
+		"rooms", len(world.Rooms),
+		"items", len(world.Items),
+		"mobs", len(world.Mobs))
+	return nil
+}
+
+// worldAlreadyLoaded probes whether the rooms table has any rows.
+// Migrations 0006 wipes the tables; the loader runs once on first boot
+// and is a no-op on every subsequent boot.
+func worldAlreadyLoaded(ctx context.Context, db *sql.DB) (bool, error) {
+	row := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rooms)`)
+	var exists int
+	if err := row.Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists != 0, nil
+}
+
+// parseWorld walks src for `*/zone.yaml` and parses each matched zone.
+// Each zone contributes rooms / items / mobs to the combined World.
+func parseWorld(src fs.FS) (*World, error) {
+	zoneDirs, err := findZoneDirs(src)
+	if err != nil {
+		return nil, err
+	}
+	if len(zoneDirs) == 0 {
+		return nil, errors.New("no zone.yaml files found under source filesystem")
+	}
+
+	w := &World{}
+	for _, dir := range zoneDirs {
+		zone, rooms, items, mobs, err := parseZone(src, dir)
+		if err != nil {
+			return nil, err
+		}
+		w.Zones = append(w.Zones, zone)
+		w.Rooms = append(w.Rooms, rooms...)
+		w.Items = append(w.Items, items...)
+		w.Mobs = append(w.Mobs, mobs...)
+	}
+	return w, nil
+}
+
+// findZoneDirs returns every directory under src that contains a
+// `zone.yaml`, sorted lexically so loads are deterministic.
+func findZoneDirs(src fs.FS) ([]string, error) {
+	var dirs []string
+	err := fs.WalkDir(src, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() != "zone.yaml" {
+			return nil
+		}
+		// p is like "starter/zone.yaml" — directory is everything up to
+		// the last slash. fs.FS uses forward slashes regardless of OS.
+		for i := len(p) - 1; i >= 0; i-- {
+			if p[i] == '/' {
+				dirs = append(dirs, p[:i])
+				return nil
+			}
+		}
+		dirs = append(dirs, ".")
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk world fs: %w", err)
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+// insertWorld writes the parsed world into the DB inside a single
+// transaction. The starter room is forced to id=1 so the
+// repo.StarterRoomID constant stays valid; everything else
+// auto-increments.
+func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	roomIDs, err := insertRooms(ctx, tx, w.Rooms)
+	if err != nil {
+		return err
+	}
+	if err := insertExits(ctx, tx, w.Rooms, roomIDs); err != nil {
+		return err
+	}
+	if err := insertItems(ctx, tx, w.Items, roomIDs); err != nil {
+		return err
+	}
+	if err := insertMobs(ctx, tx, w.Mobs, roomIDs); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// insertRooms inserts every room and returns a map from external_id ->
+// int id. The starter room is inserted first with an explicit id=1 so
+// repo.StarterRoomID stays accurate.
+//
+// Note: this writes raw SQL into *sql.Tx instead of going through
+// repo.RoomRepo.Create. The repo Create takes *sql.DB, so calling it
+// from inside a transaction is not possible without either a tx-aware
+// variant of the interface or rewriting the loader to not be
+// transactional. Atomicity across all four kinds matters more here
+// than reuse, so the column list is duplicated. Keep the INSERT
+// columns in sync with room_sqlite.go::Create if either changes.
+func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int64, error) {
+	out := make(map[string]int64, len(rooms))
+
+	// Validation has already established exactly one starter exists.
+	var starterIdx int
+	for i, r := range rooms {
+		if r.Starter {
+			starterIdx = i
+			break
+		}
+	}
+
+	starter := rooms[starterIdx]
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO rooms(id, external_id, name, short_desc, long_desc) VALUES (?, ?, ?, ?, ?)`,
+		repo.StarterRoomID, starter.ID, starter.Name, starter.Short, starter.Long,
+	); err != nil {
+		return nil, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
+	}
+	out[starter.ID] = repo.StarterRoomID
+
+	for i, r := range rooms {
+		if i == starterIdx {
+			continue
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO rooms(external_id, name, short_desc, long_desc) VALUES (?, ?, ?, ?)`,
+			r.ID, r.Name, r.Short, r.Long,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert room %q: %w", r.ID, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("last insert id for room %q: %w", r.ID, err)
+		}
+		out[r.ID] = id
+	}
+	return out, nil
+}
+
+func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[string]int64) error {
+	for _, r := range rooms {
+		from := roomIDs[r.ID]
+		// Exits are sorted by direction so insert order is
+		// deterministic — useful for tests that assert on row ids.
+		dirs := make([]string, 0, len(r.Exits))
+		for d := range r.Exits {
+			dirs = append(dirs, d)
+		}
+		sort.Strings(dirs)
+		for _, dir := range dirs {
+			to, ok := roomIDs[r.Exits[dir]]
+			if !ok {
+				// validate() already caught this, but defensively.
+				return fmt.Errorf("exit from %q dir %q targets unknown room %q", r.ID, dir, r.Exits[dir])
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO exits(from_room_id, to_room_id, direction) VALUES (?, ?, ?)`,
+				from, to, dir,
+			); err != nil {
+				return fmt.Errorf("insert exit %q->%q: %w", r.ID, dir, err)
+			}
+		}
+	}
+	return nil
+}
+
+func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[string]int64) error {
+	for _, it := range items {
+		roomID := roomIDs[it.Room]
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id) VALUES (?, ?, ?, ?, ?)`,
+			it.ID, it.Name, strings.ToLower(it.Name), it.Short, roomID,
+		); err != nil {
+			return fmt.Errorf("insert item %q: %w", it.ID, err)
+		}
+	}
+	return nil
+}
+
+func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]int64) error {
+	for _, m := range mobs {
+		roomID := roomIDs[m.Room]
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO mobs(external_id, name, name_lower, short_desc, room_id) VALUES (?, ?, ?, ?, ?)`,
+			m.ID, m.Name, strings.ToLower(m.Name), m.Short, roomID,
+		); err != nil {
+			return fmt.Errorf("insert mob %q: %w", m.ID, err)
+		}
+	}
+	return nil
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -62,6 +63,11 @@ func main() {
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
 	mobs := repo.NewSQLiteMobRepo(conn)
+
+	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
+		slog.Error("World load failed", "error", err)
+		os.Exit(1)
+	}
 
 	registry, err := buildRegistry(rooms, exits, items, mobs, characters)
 	if err != nil {

@@ -1,0 +1,14 @@
+- id: plaza.pebble
+  room: plaza.fountain
+  name: a small pebble
+  short: a smooth grey pebble lies on the cobbles
+
+- id: plaza.sign
+  room: plaza.north_road
+  name: a wooden sign
+  short: a weathered wooden sign is staked beside the road
+
+- id: plaza.leaf
+  room: plaza.south_road
+  name: a fallen leaf
+  short: a curling autumn leaf rests in the dust

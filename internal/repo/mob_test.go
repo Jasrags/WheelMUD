@@ -2,32 +2,68 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Jasrags/WheelMUD/internal/db"
 )
 
-func runMobRepoTests(t *testing.T, name string, newRepo func(t *testing.T) MobRepo) {
+type mobRepoFixture struct {
+	mobs  MobRepo
+	rooms RoomRepo
+}
+
+func runMobRepoTests(t *testing.T, name string, newFix func(t *testing.T) mobRepoFixture) {
 	t.Helper()
-	t.Run(name+"/list_in_starter", func(t *testing.T) {
-		r := newRepo(t)
-		got, err := r.ListInRoom(context.Background(), StarterRoomID)
+
+	makeRoom := func(t *testing.T, fix mobRepoFixture) int64 {
+		t.Helper()
+		r, err := fix.rooms.Create(context.Background(), Room{ExternalID: "a", Name: "A"})
+		if err != nil {
+			t.Fatalf("create room: %v", err)
+		}
+		return r.ID
+	}
+
+	t.Run(name+"/create_and_list", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		if _, err := fix.mobs.Create(ctx, Mob{ExternalID: "crier", Name: "a town crier", RoomID: roomID}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.mobs.ListInRoom(ctx, roomID)
 		if err != nil {
 			t.Fatalf("ListInRoom: %v", err)
 		}
-		if len(got) == 0 {
-			t.Fatal("starter room has no mobs; seed migration probably regressed")
+		if len(got) != 1 || got[0].Name != "a town crier" {
+			t.Fatalf("got %+v", got)
 		}
-		for i := 1; i < len(got); i++ {
-			if got[i-1].NameLower > got[i].NameLower {
-				t.Fatalf("mobs not sorted: %+v", got)
-			}
+	})
+
+	t.Run(name+"/create_rejects_empty_external_id", func(t *testing.T) {
+		fix := newFix(t)
+		_, err := fix.mobs.Create(context.Background(), Mob{Name: "ghost"})
+		if !errors.Is(err, ErrInvalidExternalID) {
+			t.Fatalf("err = %v, want ErrInvalidExternalID", err)
+		}
+	})
+
+	t.Run(name+"/create_duplicate_external_id", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		if _, err := fix.mobs.Create(ctx, Mob{ExternalID: "dup", Name: "a"}); err != nil {
+			t.Fatalf("first Create: %v", err)
+		}
+		_, err := fix.mobs.Create(ctx, Mob{ExternalID: "dup", Name: "b"})
+		if !errors.Is(err, ErrDuplicateExternalID) {
+			t.Fatalf("err = %v, want ErrDuplicateExternalID", err)
 		}
 	})
 
 	t.Run(name+"/empty_room", func(t *testing.T) {
-		r := newRepo(t)
-		got, err := r.ListInRoom(context.Background(), 99999)
+		fix := newFix(t)
+		got, err := fix.mobs.ListInRoom(context.Background(), 99999)
 		if err != nil {
 			t.Fatalf("ListInRoom: %v", err)
 		}
@@ -38,20 +74,21 @@ func runMobRepoTests(t *testing.T, name string, newRepo func(t *testing.T) MobRe
 }
 
 func TestMemoryMobRepo(t *testing.T) {
-	runMobRepoTests(t, "memory", func(t *testing.T) MobRepo {
-		r := NewMemoryMobRepo()
-		r.Insert(Mob{Name: "a town crier", RoomID: StarterRoomID})
-		return r
+	runMobRepoTests(t, "memory", func(t *testing.T) mobRepoFixture {
+		return mobRepoFixture{mobs: NewMemoryMobRepo(), rooms: NewMemoryRoomRepo()}
 	})
 }
 
 func TestSQLiteMobRepo(t *testing.T) {
-	runMobRepoTests(t, "sqlite", func(t *testing.T) MobRepo {
+	runMobRepoTests(t, "sqlite", func(t *testing.T) mobRepoFixture {
 		conn, err := db.Open(context.Background(), ":memory:")
 		if err != nil {
 			t.Fatalf("open db: %v", err)
 		}
 		t.Cleanup(func() { conn.Close() })
-		return NewSQLiteMobRepo(conn)
+		return mobRepoFixture{
+			mobs:  NewSQLiteMobRepo(conn),
+			rooms: NewSQLiteRoomRepo(conn),
+		}
 	})
 }

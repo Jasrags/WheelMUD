@@ -98,12 +98,15 @@ func TestLook_RendersRoomWithExitsItemsAndMobs(t *testing.T) {
 	}
 
 	got := conn.String()
+	// SGR escapes sit between the label and the value, so we check
+	// each token independently rather than asserting on the
+	// concatenated form.
 	for _, want := range []string{
 		"Town Plaza",
 		"Cobblestones radiate outward.",
-		"Exits: north",
-		"You see: a small pebble",
-		"Also here: a town crier",
+		"Exits:", "north",
+		"You see:", "a small pebble",
+		"Also here:", "a town crier",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("output missing %q.\nGot:\n%s", want, got)
@@ -128,8 +131,9 @@ func TestLook_OmitsEmptySubsections(t *testing.T) {
 	if !strings.Contains(got, "Empty Hall") {
 		t.Fatalf("missing room name; got %q", got)
 	}
-	if !strings.Contains(got, "Exits: none") {
-		t.Fatalf("expected 'Exits: none' in empty hall; got %q", got)
+	// SGR escapes between "Exits:" and "none", so check tokens.
+	if !strings.Contains(got, "Exits:") || !strings.Contains(got, "none") {
+		t.Fatalf("expected 'Exits:' + 'none' in empty hall; got %q", got)
 	}
 	if strings.Contains(got, "You see:") {
 		t.Fatalf("expected no 'You see:' line; got %q", got)
@@ -154,5 +158,20 @@ func TestLook_MissingRoomMessage(t *testing.T) {
 	got := conn.String()
 	if !strings.Contains(got, "gone missing") {
 		t.Fatalf("expected missing-room message; got %q", got)
+	}
+}
+
+// TestLook_EmitsANSIEscapes confirms the cfmt path actually produces
+// SGR sequences — guards against a future regression where someone
+// switches WriteString back to WriteRaw and silently strips colour.
+func TestLook_EmitsANSIEscapes(t *testing.T) {
+	rooms, exits, items, mobs := seedWorld(t)
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	if !strings.Contains(conn.String(), "\x1b[") {
+		t.Fatalf("output has no ANSI escapes; got %q", conn.String())
 	}
 }
