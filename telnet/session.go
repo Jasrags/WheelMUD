@@ -42,6 +42,17 @@ type Session struct {
 	// this against Command.Auth.
 	AuthLevel AuthLevel
 
+	// AccountID is the authenticated account, set by login mode after a
+	// successful auth. Zero means "not authenticated." Used for the
+	// session registry / multi-session policy.
+	AccountID int64
+
+	// CharacterID and CharacterName are set by character-select mode
+	// once the user has chosen which character to play. Zero / empty
+	// when the session is pre-character (login or select).
+	CharacterID   int64
+	CharacterName string
+
 	writeMu sync.Mutex
 
 	modeMu sync.Mutex

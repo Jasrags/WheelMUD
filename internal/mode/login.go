@@ -28,14 +28,16 @@ const (
 )
 
 // Login handles authentication. The state machine is two-step
-// (username → password); on success it bumps the session's AuthLevel
-// and replaces itself with the next mode (typically Game). Each
-// connection gets its own *Login because the captured username is
-// per-session.
+// (username → password); on success it bumps the session's AuthLevel,
+// stamps Session.AccountID, and hands off to postAuth which routes to
+// CharacterSelect / CharacterCreate / game depending on character
+// count. Each connection gets its own *Login because the captured
+// username is per-session.
 type Login struct {
-	accounts repo.AccountRepo
-	next     telnet.Mode // mode to ReplaceMode into on success
-	now      func() time.Time
+	accounts   repo.AccountRepo
+	characters repo.CharacterRepo
+	game       telnet.Mode
+	now        func() time.Time
 
 	// lockoutThreshold and lockoutDuration are mutable so tests can
 	// shrink them. Production callers leave the defaults.
@@ -47,12 +49,14 @@ type Login struct {
 	account  *repo.Account // resolved after step 1; nil when no such user
 }
 
-// NewLogin returns a fresh Login bound to accounts. next is the mode to
-// switch to after successful authentication (typically the Game mode).
-func NewLogin(accounts repo.AccountRepo, next telnet.Mode) *Login {
+// NewLogin returns a fresh Login bound to accounts and characters.
+// game is the in-world mode to promote successful logins into (after
+// CharacterSelect / CharacterCreate decisions land).
+func NewLogin(accounts repo.AccountRepo, characters repo.CharacterRepo, game telnet.Mode) *Login {
 	return &Login{
 		accounts:         accounts,
-		next:             next,
+		characters:       characters,
+		game:             game,
 		now:              time.Now,
 		lockoutThreshold: LockoutThreshold,
 		lockoutDuration:  LockoutDuration,
@@ -100,7 +104,7 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 	if strings.EqualFold(username, "new") {
 		// Hand off to account-create mode. Login is replaced; if create
 		// is canceled, the user reconnects.
-		return s.ReplaceMode(NewCreate(l.accounts, l.next))
+		return s.ReplaceMode(NewCreate(l.accounts, l.characters, l.game))
 	}
 
 	// Resolve the account up front so we can check lockout *before*
@@ -174,11 +178,12 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	if err := l.accounts.RecordLoginSuccess(ctx, l.account.ID, l.now()); err != nil {
 		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
 	}
+	s.AccountID = l.account.ID
 	s.AuthLevel = telnet.AuthPlayer
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return s.ReplaceMode(l.next)
+	return postAuth(ctx, s, l.characters, l.game)
 }
 
 // fail resets to the username step and writes a uniform failure

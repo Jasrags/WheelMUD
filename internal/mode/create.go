@@ -27,21 +27,24 @@ const (
 )
 
 // Create is the account-creation mode reachable from Login when the
-// user types "new". On success it inserts the account, bumps the
-// session's AuthLevel, and replaces itself with the next mode.
+// user types "new". On success it inserts the account, stamps
+// Session.AccountID, bumps the session's AuthLevel, and hands off to
+// postAuth (which routes to CharacterCreate since a fresh account has
+// zero characters).
 type Create struct {
-	accounts repo.AccountRepo
-	next     telnet.Mode
+	accounts   repo.AccountRepo
+	characters repo.CharacterRepo
+	game       telnet.Mode
 
 	step     createStep
 	username string
 	hash     string
 }
 
-// NewCreate returns a fresh account-creation mode. next is the mode to
-// switch to after the account is persisted (typically Game).
-func NewCreate(accounts repo.AccountRepo, next telnet.Mode) *Create {
-	return &Create{accounts: accounts, next: next}
+// NewCreate returns a fresh account-creation mode. game is forwarded
+// to postAuth after the account is persisted.
+func NewCreate(accounts repo.AccountRepo, characters repo.CharacterRepo, game telnet.Mode) *Create {
+	return &Create{accounts: accounts, characters: characters, game: game}
 }
 
 func (c *Create) Prompt(_ *telnet.Session) string {
@@ -130,11 +133,12 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 		return s.WriteRaw([]byte("Account creation failed. Try again later.\r\n"))
 	}
 
+	s.AccountID = a.ID
 	s.AuthLevel = telnet.AuthPlayer
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return s.ReplaceMode(c.next)
+	return postAuth(ctx, s, c.characters, c.game)
 }
 
 // reservedUsernames are case-insensitively forbidden. "new" routes to

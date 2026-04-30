@@ -101,6 +101,10 @@ constants and helpers in `telnet/iac.go`.
       legacy `togglepassword`
 - [x] Account-create mode — `internal/mode.Create` reachable via "new"
       from login; ASCII-only username policy, password confirmation
+- [x] Character model — `repo.Character`, `0002_create_characters.sql`
+      with FK + cascade, account isolation enforced in `CharacterSelect`
+- [x] Character-select + character-create modes — auto-skip when account
+      has 0 chars (forced create) or 1 char (auto-promote); 2+ shows menu
 - [ ] Mode-aware echo masking (push a `passwordMode` rather than toggling a flag
       on `Session`)
 - [ ] Character model attached to account (1:N)

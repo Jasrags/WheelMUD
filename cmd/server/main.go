@@ -30,6 +30,7 @@ const (
 // just returns the same pointer.
 type server struct {
 	accounts   repo.AccountRepo
+	characters repo.CharacterRepo
 	newInitial func() telnet.Mode
 }
 
@@ -56,11 +57,13 @@ func main() {
 	}
 
 	accounts := repo.NewSQLiteAccountRepo(conn)
+	characters := repo.NewSQLiteCharacterRepo(conn)
 	gameMode := mode.NewGame(registry)
 	srv := &server{
-		accounts: accounts,
+		accounts:   accounts,
+		characters: characters,
 		newInitial: func() telnet.Mode {
-			return mode.NewLogin(accounts, gameMode)
+			return mode.NewLogin(accounts, characters, gameMode)
 		},
 	}
 

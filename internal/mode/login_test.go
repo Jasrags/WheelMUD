@@ -25,27 +25,43 @@ type loginFixture struct {
 	session  *telnet.Session
 	peer     net.Conn
 	repo     *repo.MemoryAccountRepo
+	chars    *repo.MemoryCharacterRepo
 	login    *Login
 	game     *stubMode
 	captured *safeBuf
 }
 
+// newLoginFixture seeds an account "Alice" with password "correct-horse"
+// and (by default) one character "Hero" — single-character so the
+// happy-path tests exercise the auto-promote-to-game path. Tests that
+// need different character counts should use newLoginFixtureChars.
 func newLoginFixture(t *testing.T) *loginFixture {
+	return newLoginFixtureChars(t, []string{"Hero"})
+}
+
+func newLoginFixtureChars(t *testing.T, charNames []string) *loginFixture {
 	t.Helper()
 	server, client := net.Pipe()
 	t.Cleanup(func() { server.Close(); client.Close() })
 
-	r := repo.NewMemoryAccountRepo()
+	ar := repo.NewMemoryAccountRepo()
+	cr := repo.NewMemoryCharacterRepo()
 	hash, err := auth.Hash("correct-horse")
 	if err != nil {
 		t.Fatalf("seed hash: %v", err)
 	}
-	if _, err := r.Create(context.Background(), repo.Account{Username: "Alice", PasswordHash: hash}); err != nil {
+	acc, err := ar.Create(context.Background(), repo.Account{Username: "Alice", PasswordHash: hash})
+	if err != nil {
 		t.Fatalf("seed account: %v", err)
+	}
+	for _, name := range charNames {
+		if _, err := cr.Create(context.Background(), repo.Character{AccountID: acc.ID, Name: name}); err != nil {
+			t.Fatalf("seed character %q: %v", name, err)
+		}
 	}
 
 	game := &stubMode{name: "game"}
-	login := NewLogin(r, game)
+	login := NewLogin(ar, cr, game)
 
 	s := telnet.NewSession(server)
 	if err := s.PushMode(login); err != nil {
@@ -55,7 +71,7 @@ func newLoginFixture(t *testing.T) *loginFixture {
 	captured := &safeBuf{}
 	drainPeer(t, client, captured)
 
-	return &loginFixture{t: t, session: s, peer: client, repo: r, login: login, game: game, captured: captured}
+	return &loginFixture{t: t, session: s, peer: client, repo: ar, chars: cr, login: login, game: game, captured: captured}
 }
 
 func (f *loginFixture) feed(line string) {

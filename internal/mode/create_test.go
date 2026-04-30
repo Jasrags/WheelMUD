@@ -17,6 +17,7 @@ type createFixture struct {
 	session  *telnet.Session
 	peer     net.Conn
 	repo     *repo.MemoryAccountRepo
+	chars    *repo.MemoryCharacterRepo
 	create   *Create
 	game     *stubMode
 	captured *safeBuf
@@ -27,14 +28,15 @@ func newCreateFixture(t *testing.T, seed ...repo.Account) *createFixture {
 	server, client := net.Pipe()
 	t.Cleanup(func() { server.Close(); client.Close() })
 
-	r := repo.NewMemoryAccountRepo()
+	ar := repo.NewMemoryAccountRepo()
+	cr := repo.NewMemoryCharacterRepo()
 	for _, a := range seed {
-		if _, err := r.Create(context.Background(), a); err != nil {
+		if _, err := ar.Create(context.Background(), a); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 	}
 	game := &stubMode{name: "game"}
-	c := NewCreate(r, game)
+	c := NewCreate(ar, cr, game)
 
 	s := telnet.NewSession(server)
 	if err := s.PushMode(c); err != nil {
@@ -44,7 +46,7 @@ func newCreateFixture(t *testing.T, seed ...repo.Account) *createFixture {
 	captured := &safeBuf{}
 	drainPeer(t, client, captured)
 
-	return &createFixture{t: t, session: s, peer: client, repo: r, create: c, game: game, captured: captured}
+	return &createFixture{t: t, session: s, peer: client, repo: ar, chars: cr, create: c, game: game, captured: captured}
 }
 
 func (f *createFixture) feed(line string) {
@@ -73,8 +75,14 @@ func TestCreate_HappyPath(t *testing.T) {
 	if f.session.AuthLevel != telnet.AuthPlayer {
 		t.Fatalf("AuthLevel = %d, want AuthPlayer", f.session.AuthLevel)
 	}
-	if f.session.CurrentMode() != f.game {
-		t.Fatal("expected ReplaceMode to game")
+	if f.session.AccountID == 0 {
+		t.Fatal("AccountID not stamped after create")
+	}
+	// Fresh account has zero characters → postAuth pushes CharacterCreate.
+	current := f.session.CurrentMode()
+	cc, ok := current.(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", current)
 	}
 	if f.session.InPasswordMode {
 		t.Fatal("password mode must clear after success")
@@ -85,6 +93,18 @@ func TestCreate_HappyPath(t *testing.T) {
 	}
 	if !auth.Verify(got.PasswordHash, "hunter2-password") {
 		t.Fatal("stored hash does not verify against original password")
+	}
+
+	// Drive CharacterCreate to completion to verify the full flow lands
+	// in game with the character set.
+	if err := cc.Handle(context.Background(), f.session, "Hero"); err != nil {
+		t.Fatalf("CharacterCreate handle: %v", err)
+	}
+	if f.session.CurrentMode() != f.game {
+		t.Fatal("expected ReplaceMode to game after character create")
+	}
+	if f.session.CharacterName != "Hero" {
+		t.Fatalf("CharacterName = %q, want Hero", f.session.CharacterName)
 	}
 }
 
