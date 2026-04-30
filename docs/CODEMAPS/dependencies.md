@@ -49,9 +49,9 @@ None. The server has no outbound network calls, no DB, no cache, no queue, no au
 | `make build/server` / `make run/server` | `Makefile` | Build to `/tmp/bin/server`, run |
 | `make run/live/server` | `Makefile` | Hot reload via `cosmtrek/air@v1.43.0` |
 | `docker compose up` | `Dockerfile` + `docker-compose.yml` | Containerized run, exposes :2323 |
-| `go test -race ./...` | — | Full suite (only `telnet/` has tests) |
+| `go test -race ./...` | — | Full suite — `telnet`, `internal/auth`, `internal/db`, `internal/mode`, `internal/repo`, `internal/session` all have tests |
 | `gofmt`, `go vet` | — | Required clean before commit |
 
 ## Pending integrations
 
-When `ROADMAP.md` items land, expect this file to grow rows for: SQLite/Postgres driver, password-hashing (`bcrypt`/`argon2id`), embedded scripting (`gopher-lua` or starlark/risor), Prometheus client, and possibly `golang.org/x/text/width` for wide-glyph wrap.
+When `ROADMAP.md` items land, expect this file to grow rows for: embedded scripting (`gopher-lua` or starlark/risor) for builder-authored NPC behavior, Prometheus client for §19 metrics, `golang.org/x/text/unicode/norm` for NFKC username normalization (`persistence_followups.md` item 9), and `golang.org/x/text/width` for wide-glyph wrap (`terminal_rendering_followups.md`).

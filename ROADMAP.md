@@ -57,7 +57,8 @@ constants and helpers in `telnet/iac.go`.
 - [x] Byte-at-a-time read loop with CR/LF line termination
 - [x] Backspace / DEL handling
 - [x] Tab autocomplete (verb-only) via `telnet/completion.go` + `Game.Complete`
-- [x] Password-mode echo suppression (legacy flag, see §6)
+- [x] Password-mode echo suppression — driven by Login / Create mode lifecycle
+      (`Session.InPasswordMode` flipped on entering / leaving password substep)
 - [ ] Argument-side tab completion (per-command `Completer`)
 - [ ] Quoted-argument tokenization (`say "hello world"`)
 - [ ] Command history with up/down arrows (`ESC [ A` / `ESC [ B`)
@@ -69,9 +70,9 @@ constants and helpers in `telnet/iac.go`.
 - [x] Command registry with aliases, prefix lookup, ambiguity detection (`telnet/command.go`)
 - [x] Per-session dispatcher and `Mode` stack (`telnet/mode.go`, `telnet/session.go`)
 - [x] `Game` mode wrapping the registry (`internal/mode/game.go`)
-- [x] Sample commands: `quit`, `who`, `help`, `togglepassword`
-- [~] `AuthLevel` field on `Command` — present but never enforced; trigger is the
-       account/login subsystem (§6)
+- [x] Sample commands: `quit`, `who`, `help`, `colors`
+- [x] `AuthLevel` enforcement in `Registry.Dispatch` — denials render as
+      `"Unknown command"` so privileged verbs can't be enumerated
 - [ ] Per-command argument completer
 - [ ] Command cooldowns / lag system (combat balance lever)
 - [ ] Macro / multi-command lines (`;` separator)
@@ -81,14 +82,16 @@ constants and helpers in `telnet/iac.go`.
 
 - [x] `Mode` interface with `OnEnter`/`OnExit`/`Handle`/`Prompt`/`Complete`
 - [x] `PushMode`, `ReplaceMode`, `PopMode` on `Session`
-- [x] Game mode landed
-- [ ] **Login mode** — username / password prompt, account lookup
-- [ ] **Character-select / create mode**
-- [ ] **OLC editor modes** (room editor, mob editor, etc.)
-- [ ] **Mail / note editor mode** (multi-line input, `.` to end)
-- [ ] **Pager mode** for long output
-- [ ] `context.Context` plumbed through `Mode.Handle` so teardown can cancel
-      blocking I/O
+- [x] `PushMode` / `ReplaceMode` roll back on `OnEnter` error
+- [x] `context.Context` plumbed through `Mode.Handle` — canceled when read
+      loop exits so blocking I/O in handlers can observe teardown
+- [x] Game mode (`internal/mode/game.go`)
+- [x] Login mode (`internal/mode/login.go`) — see §6
+- [x] Character-select + character-create modes (`internal/mode/character_*.go`)
+- [x] Account-create mode (`internal/mode/create.go`)
+- [ ] OLC editor modes (room editor, mob editor, etc.)
+- [ ] Mail / note editor mode (multi-line input, `.` to end)
+- [ ] Pager mode for long output (also tracked in §2)
 
 ## 6. Accounts, auth & characters
 
@@ -105,16 +108,17 @@ constants and helpers in `telnet/iac.go`.
       with FK + cascade, account isolation enforced in `CharacterSelect`
 - [x] Character-select + character-create modes — auto-skip when account
       has 0 chars (forced create) or 1 char (auto-promote); 2+ shows menu
-- [ ] Mode-aware echo masking (push a `passwordMode` rather than toggling a flag
-      on `Session`)
-- [ ] Character model attached to account (1:N)
-- [ ] Character creation wizard
+- [x] Mode-driven echo masking — Login / Create / CharacterCreate flip
+      `Session.InPasswordMode` via lifecycle; `togglepassword` debug
+      command retired
 - [x] Multi-session detection — `internal/session.Registry` keyed by
       account ID; Login + Create bind on success and disconnect any
       prior occupant with a "logged in elsewhere" notice. Compare-and-
       delete unbind in `handleConnection` defer prevents stale teardown
       from clobbering a takeover.
-- [ ] Lockout / rate-limiting on failed logins
+- [~] Lockout on failed logins — per-account 5-failure / 15-min lock
+      enforced; per-connection rate limit / exponential backoff still
+      pending (`login_followups.md` items 4 & 6)
 - [ ] Email verification / password reset (later)
 
 ## 7. Persistence
@@ -125,7 +129,8 @@ constants and helpers in `telnet/iac.go`.
 - [x] First migration: `0001_create_accounts.sql` (accounts table + lockout index)
 - [x] Account aggregate: `repo.AccountRepo` interface, `SQLiteAccountRepo`
       impl, `MemoryAccountRepo` fake; shared contract test exercises both
-- [ ] Character aggregate (CharacterRepo) — waits on character model
+- [x] Character aggregate: `repo.CharacterRepo`, `0002_create_characters.sql`
+      with FK + cascade, both impls + shared contract test
 - [ ] World aggregates (rooms, exits, items, mobs)
 - [ ] World data on disk (YAML/JSON area files) with a loader
 - [ ] Hot-reload of area files without restart
@@ -186,7 +191,8 @@ constants and helpers in `telnet/iac.go`.
 - [ ] `tell` / `whisper` (private)
 - [ ] `shout` / `yell` (zone-wide)
 - [ ] Channels (`ooc`, `gossip`, `newbie`) with on/off toggles
-- [x] `who` (basic, single-session list)
+- [~] `who` — currently shows only the caller's character name; full
+      multi-session listing waits on iterating `session.Registry` (§6)
 - [ ] Ignore list / mute
 - [ ] Mail between characters
 - [ ] Bulletin boards / notes
@@ -249,7 +255,8 @@ constants and helpers in `telnet/iac.go`.
 
 ## 21. Testing & CI
 
-- [x] Unit tests for command, completion, and server input handling
+- [x] Unit + contract tests across `telnet`, `internal/auth`,
+      `internal/db`, `internal/mode`, `internal/repo`, `internal/session`
 - [x] Dependabot config (`.github/dependabot.yml`)
 - [ ] GitHub Actions: `go vet`, `go test -race -cover`, `staticcheck`, `gosec`
 - [ ] Integration test that drives the telnet protocol against a real listener
@@ -271,12 +278,23 @@ constants and helpers in `telnet/iac.go`.
 
 Items already tracked elsewhere — included here so the roadmap points at them:
 
-- **Command-input deferred work** (auth enforcement, quoted args, argument
-  completion, login/char-create modes, password masking) — see auto-memory entry
+- **Command-input deferred work** (quoted args, argument completion) —
   `command_input_followups.md`.
 - **Open code-review items** (ambiguous-error wording, empty-candidate
-  guard, redundant `ToLower`, `.claude/` gitignore) — see auto-memory
-  entry `code_review_open_items.md`.
+  guard, server ctx parent, timing side channel, AuthLevel encapsulation,
+  cctx naming, cancellation test coverage) — `code_review_open_items.md`.
 - **Terminal & rendering deferred work** (pager mode, prompt templating,
-  wide-glyph wrap, long-token break, `SGR` perf, color-enum naming) — see
-  auto-memory entry `terminal_rendering_followups.md`.
+  wide-glyph wrap, long-token break, `SGR` perf, color-enum naming) —
+  `terminal_rendering_followups.md`.
+- **Persistence layer follow-ups** (down-migrations, brittle unique-violation
+  match, DSN leak, CHECK constraints, memory repo O(n), clock seam, sqlite
+  `:memory:` pool trap, NFKC normalization, `UsernameLower` /
+  `NameLower` encapsulation, FK pragma reliance) —
+  `persistence_followups.md`.
+- **Auth (password hashing) follow-ups** (bcrypt cost tuning, lockout-
+  before-Verify ordering — `SetCost` mutability now resolved) —
+  `auth_followups.md`.
+- **Login / account-create follow-ups** (control-char scrub on welcome
+  echo, lockout enumeration leak, hash-in-memory hygiene, per-connection
+  rate limits, account-create soft DoS, `CharacterSelect.chars` snapshot
+  staleness, double Conn.Close) — `login_followups.md`.
