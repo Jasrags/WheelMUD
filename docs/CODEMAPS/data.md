@@ -1,23 +1,25 @@
-<!-- Generated: 2026-04-30 | Files scanned: internal/db/*, internal/repo/*, internal/auth/*, migrations | Token estimate: ~450 -->
+<!-- Generated: 2026-04-30 | Files scanned: internal/db/*, internal/repo/*, internal/auth/*, migrations | Token estimate: ~600 -->
 
 # Data
 
-SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). Migrations are embedded into the binary and applied at boot. `cmd/server/main.go` opens the DB on startup, runs `Migrate`, and constructs a `SQLiteAccountRepo` that login + account-create modes consume.
+SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). Migrations are embedded into the binary and applied at boot. `cmd/server/main.go` opens the DB on startup, runs `Migrate`, and constructs the SQLite-backed repos (accounts, characters, rooms, exits, items, mobs) that the modes and commands consume.
 
 ## Layers
 
 ```
-┌────────────────────────────────────────────┐
-│ Login + Create modes (internal/mode)       │  consumers depend on the
-├────────────────────────────────────────────┤   AccountRepo *interface*
-│ internal/repo/AccountRepo (interface)      │
-├────────────────────────────────────────────┤
-│ SQLiteAccountRepo  │  MemoryAccountRepo    │  prod + test impls
-├────────────────────┴───────────────────────┤
-│ internal/db.Open / Migrate                 │  *sql.DB + migrations
-├────────────────────────────────────────────┤
-│ modernc.org/sqlite                         │  driver
-└────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│ Modes + commands (internal/mode, internal/cmd)             │  depend on
+├────────────────────────────────────────────────────────────┤   the repo
+│ internal/repo/  AccountRepo │ CharacterRepo │ RoomRepo     │  *interfaces*
+│                 ExitRepo    │ ItemRepo      │ MobRepo      │
+├────────────────────────────────────────────────────────────┤
+│ SQLite{Account,Character,Room,Exit,Item,Mob}Repo  (prod)   │
+│ Memory{Account,Character,Room,Exit,Item,Mob}Repo  (tests)  │
+├────────────────────────────────────────────────────────────┤
+│ internal/db.Open / Migrate                  *sql.DB + SQL  │
+├────────────────────────────────────────────────────────────┤
+│ modernc.org/sqlite                          driver         │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ## Migrations
@@ -37,6 +39,15 @@ Pragmas set on every `Open`: `foreign_keys=ON`, `journal_mode=WAL`, `synchronous
 |---|---|---|
 | `schema_migrations` | (bootstrap) | `version PK, applied_at` |
 | `accounts` | `0001_create_accounts.sql` | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until` + partial index on `locked_until` |
+| `characters` | `0002_create_characters.sql` (+ `0005_add_character_room.sql` for `current_room_id`) | `id, account_id (FK accounts.id ON DELETE CASCADE), name, name_lower (unique), created_at, last_played_at, current_room_id` (defaults to `1` = starter room) |
+| `rooms` | `0003_create_world.sql` | `id, name, short_desc, long_desc, created_at` |
+| `exits` | `0003_create_world.sql` | `id, from_room_id (FK rooms ON DELETE CASCADE), to_room_id (FK rooms ON DELETE CASCADE), direction CHECK in (n/s/e/w/u/d)`, unique `(from_room_id, direction)` |
+| `items` | `0003_create_world.sql` | `id, name, name_lower, short_desc, room_id (nullable, FK rooms ON DELETE SET NULL), created_at` |
+| `mobs` | `0003_create_world.sql` | `id, name, name_lower, short_desc, room_id (nullable, FK rooms ON DELETE SET NULL), created_at` |
+
+**Seed data**: `0004_seed_starter_zone.sql` inserts a 3-room starter zone (Plaza ↔ North Road ↔ South Road) with one item per room and one mob in the plaza. Room id `1` is the starter — `repo.StarterRoomID` references it from Go code.
+
+**FK on `characters.current_room_id`** is enforced at the application layer, not the DB. SQLite forbids `ALTER TABLE ADD COLUMN ... REFERENCES` with a non-NULL default while `foreign_keys=ON`, so the column was added without a `REFERENCES rooms(id)` clause. A future table-rebuild migration can promote it to a true FK.
 
 ## Auth (`internal/auth`)
 
@@ -71,6 +82,36 @@ Two implementations:
 - `MemoryAccountRepo` (`account_memory.go`) — concurrent-safe map keyed on `username_lower`. For tests; never used at runtime.
 
 A shared contract test (`account_test.go::runAccountRepoTests`) exercises both impls so the in-memory fake stays a faithful stand-in.
+
+## CharacterRepo
+
+Interface (`internal/repo/character.go`):
+
+```
+Create(ctx, Character)              → Character, error  (defaults CurrentRoomID to StarterRoomID)
+FindByName(ctx, name)               → Character, error  (case-insensitive)
+ListByAccount(ctx, accountID)       → []Character, error (recent-first, then name)
+RecordPlay(ctx, id, t)              → error             (last_played_at)
+RecordRoom(ctx, id, roomID)         → error             (current_room_id; called on every move)
+```
+
+`SQLiteCharacterRepo` + `MemoryCharacterRepo`; shared contract test in `character_test.go`.
+
+## World repos (RoomRepo / ExitRepo / ItemRepo / MobRepo)
+
+All four are read-only for now. World data ships via `0004_seed_starter_zone.sql`; authoring (Create/Update) lands with the YAML-loader slice in §7 of the roadmap.
+
+```
+RoomRepo.FindByID(ctx, id)                              → Room, error  (ErrRoomNotFound)
+ExitRepo.ListFrom(ctx, fromRoomID)                      → []Exit, error (sorted by direction)
+ExitRepo.FindByDirection(ctx, fromRoomID, dir)          → Exit, error  (ErrExitNotFound)
+ItemRepo.ListInRoom(ctx, roomID)                        → []Item, error (sorted by name_lower)
+MobRepo.ListInRoom(ctx, roomID)                         → []Mob, error
+```
+
+Direction codes (`repo.DirNorth..DirDown`) are single-byte strings (`n/s/e/w/u/d`) matching the DB CHECK constraint. The `look`/`move` commands translate the long names (`north`, ...) at the boundary.
+
+`SQLite*Repo` and `Memory*Repo` for each of the four; the memory variants expose `Insert(...)` for test fixtures (no public Create on the interface yet). Shared contract tests in `room_test.go` / `exit_test.go` / `item_test.go` / `mob_test.go`.
 
 ## Login flow (where this layer is consumed)
 
@@ -107,8 +148,9 @@ Create mode follows the same shape but goes username → Hash(password) → conf
 
 ## Pending
 
-- `CharacterRepo` once a character model exists (1:N to accounts).
-- World aggregates (rooms / items / mobs) when the world model lands.
+- World authoring (YAML/JSON loader, hot reload, autosave) — §7 of the roadmap.
+- True FK on `characters.current_room_id` — needs a table-rebuild migration; see comment in `0005_add_character_room.sql`.
+- Item/mob template-vs-instance split — only minimal placeholder schemas today; lifecycle (spawn/despawn, inventory ownership) lands with §11/§14.
 - CHECK constraints on `accounts` (length / charset) — see `persistence_followups.md` item 4.
 - Down-migration / rollback path — see `persistence_followups.md` item 1.
 - Backup / vacuum / WAL checkpoint policy.

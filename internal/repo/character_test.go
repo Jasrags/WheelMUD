@@ -82,6 +82,44 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/create_defaults_to_starter_room", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		got, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Pippin"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if got.CurrentRoomID != StarterRoomID {
+			t.Fatalf("CurrentRoomID = %d, want %d", got.CurrentRoomID, StarterRoomID)
+		}
+		// Round-trip via FindByName.
+		found, err := cr.FindByName(ctx, "Pippin")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if found.CurrentRoomID != StarterRoomID {
+			t.Fatalf("found.CurrentRoomID = %d, want %d", found.CurrentRoomID, StarterRoomID)
+		}
+	})
+
+	t.Run(name+"/record_room_persists", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Merry"})
+		if err := cr.RecordRoom(ctx, c.ID, 42); err != nil {
+			t.Fatalf("RecordRoom: %v", err)
+		}
+		found, err := cr.FindByName(ctx, "Merry")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if found.CurrentRoomID != 42 {
+			t.Fatalf("CurrentRoomID = %d, want 42", found.CurrentRoomID)
+		}
+	})
+
 	t.Run(name+"/list_by_account_isolates", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

@@ -131,7 +131,14 @@ constants and helpers in `telnet/iac.go`.
       impl, `MemoryAccountRepo` fake; shared contract test exercises both
 - [x] Character aggregate: `repo.CharacterRepo`, `0002_create_characters.sql`
       with FK + cascade, both impls + shared contract test
-- [ ] World aggregates (rooms, exits, items, mobs)
+- [x] World aggregates (rooms, exits, items, mobs) — `repo.Room`/`Exit`/`Item`/`Mob`
+      with SQLite + memory repos (`internal/repo/{room,exit,item,mob}_*.go`),
+      `0003_create_world.sql` schema, `0004_seed_starter_zone.sql` 3-room demo
+      zone (Plaza ↔ North/South Roads), and `0005_add_character_room.sql`
+      adding `current_room_id` to characters. `Session.CurrentRoomID` is
+      populated in `promoteToGame` and persisted across reconnects via
+      `CharacterRepo.RecordRoom`. `look`, `n/s/e/w/u/d` commands wired into
+      Game mode (`internal/cmd/look.go`, `internal/cmd/move.go`).
 - [ ] World data on disk (YAML/JSON area files) with a loader
 - [ ] Hot-reload of area files without restart
 - [ ] Periodic + shutdown autosave
@@ -159,8 +166,11 @@ constants and helpers in `telnet/iac.go`.
 
 ## 10. Movement, look & navigation
 
-- [ ] `look` (current room, item, mob, direction)
-- [ ] Cardinal + vertical directions (`n/s/e/w/ne/nw/se/sw/u/d`) with abbreviations
+- [x] `look` (current room, items, mobs, exits) — `internal/cmd/look.go`
+      via `RenderRoom`; reused by every successful move
+- [~] Cardinal + vertical directions — `n/s/e/w/u/d` with single-letter
+      aliases via `NewMoveFamily`. Diagonals (`ne/nw/se/sw`) pending; will
+      need a CHECK-constraint update to `exits.direction`.
 - [ ] Doors, locks, keys
 - [ ] `examine` for detailed inspection
 - [ ] `map` / mini-map ASCII rendering

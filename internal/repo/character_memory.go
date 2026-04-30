@@ -32,6 +32,9 @@ func (r *MemoryCharacterRepo) Create(_ context.Context, c Character) (Character,
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = time.Now().UTC()
 	}
+	if c.CurrentRoomID == 0 {
+		c.CurrentRoomID = StarterRoomID
+	}
 	stored := c
 	r.byLower[c.NameLower] = &stored
 	return stored, nil
@@ -79,6 +82,18 @@ func (r *MemoryCharacterRepo) RecordPlay(_ context.Context, id int64, when time.
 		if c.ID == id {
 			t := when
 			c.LastPlayedAt = &t
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordRoom(_ context.Context, id, roomID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.CurrentRoomID = roomID
 			return nil
 		}
 	}

@@ -32,6 +32,10 @@ const (
 type server struct {
 	accounts   repo.AccountRepo
 	characters repo.CharacterRepo
+	rooms      repo.RoomRepo
+	exits      repo.ExitRepo
+	items      repo.ItemRepo
+	mobs       repo.MobRepo
 	sessions   *session.Registry
 	newInitial func() telnet.Mode
 }
@@ -52,19 +56,28 @@ func main() {
 	}
 	defer closeDB(conn)
 
-	registry, err := buildRegistry()
+	accounts := repo.NewSQLiteAccountRepo(conn)
+	characters := repo.NewSQLiteCharacterRepo(conn)
+	rooms := repo.NewSQLiteRoomRepo(conn)
+	exits := repo.NewSQLiteExitRepo(conn)
+	items := repo.NewSQLiteItemRepo(conn)
+	mobs := repo.NewSQLiteMobRepo(conn)
+
+	registry, err := buildRegistry(rooms, exits, items, mobs, characters)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
 	}
 
-	accounts := repo.NewSQLiteAccountRepo(conn)
-	characters := repo.NewSQLiteCharacterRepo(conn)
 	sessions := session.NewRegistry()
 	gameMode := mode.NewGame(registry)
 	srv := &server{
 		accounts:   accounts,
 		characters: characters,
+		rooms:      rooms,
+		exits:      exits,
+		items:      items,
+		mobs:       mobs,
 		sessions:   sessions,
 		newInitial: func() telnet.Mode {
 			return mode.NewLogin(accounts, characters, sessions, gameMode)
@@ -111,12 +124,18 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry() (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters)...); err != nil {
 		return nil, err
 	}
 	return r, nil

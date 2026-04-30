@@ -2,7 +2,7 @@
 
 # Architecture
 
-WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters). There's no world state yet — the surface area is the telnet/ANSI transport, a command-registry/mode-stack input pipeline, and the auth + character pipeline.
+WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters), and the first slice of the world model has landed — rooms, exits, items, and mobs as read-only seeded aggregates plus `look` and `n/s/e/w/u/d` movement that persists across reconnects.
 
 ## Layers
 
@@ -13,11 +13,12 @@ WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a gorout
 │ internal/mode/             Mode implementations                   │
 │   game / login / create / character_select / character_create     │
 │ internal/cmd/              Concrete commands                      │
-│   quit / who / help / colors                                      │
+│   quit / who / help / colors / look / move-family (n/s/e/w/u/d)   │
 ├───────────────────────────────────────────────────────────────────┤
 │ internal/auth/             bcrypt Hash / Verify                   │
-│ internal/repo/             AccountRepo + CharacterRepo            │
-│   sqlite + memory impls; shared contract tests                    │
+│ internal/repo/             Account + Character + Room/Exit/Item/  │
+│                             Mob repos (sqlite + memory impls;     │
+│                             shared contract tests)                │
 │ internal/session/          Process-level session.Registry         │
 ├───────────────────────────────────────────────────────────────────┤
 │ internal/db/               SQLite Open + embedded migrations      │
@@ -41,12 +42,14 @@ Dependency direction (no cycles): `cmd/server` → `internal/{mode,cmd,session,r
 
 ```
 main ─► db.Open(DB_DSN)                           runs embedded migrations
-     ─► repo.NewSQLiteAccountRepo / Character     wraps *sql.DB
+     ─► repo.NewSQLite{Account,Character,Room,    wraps *sql.DB
+                       Exit,Item,Mob}Repo
      ─► session.NewRegistry()                     process-level
-     ─► buildRegistry()                           commands
+     ─► buildRegistry(rooms, exits, items, mobs,  closures over world repos
+                      characters)                  for look + move family
      ─► mode.NewGame(registry)                    stateless, shared
-     ─► server{ accounts, characters, sessions,
-                newInitial: () => NewLogin(...) } per-conn factory
+     ─► server{ accounts, characters, world repos,
+                sessions, newInitial: …NewLogin } per-conn factory
      ─► net.Listen → Accept loop ─► srv.handleConnection per conn
 ```
 
@@ -96,6 +99,8 @@ Login.handlePassword:
        2+ chars→ ReplaceMode(CharacterSelect)
 ```
 
+`promoteToGame` stamps `CharacterID`, `CharacterName`, and `CurrentRoomID` onto the session (defaulting to `repo.StarterRoomID` if the row has none) so the first `look` resolves immediately. Movement commands write `CurrentRoomID` back via `CharacterRepo.RecordRoom` so a reconnect picks up where the player left off.
+
 Create mode mirrors Login on the success path (insert account, Bind, postAuth → CharacterCreate since 0 chars).
 
 ## Input → command path
@@ -117,7 +122,7 @@ Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced befo
 ## What's missing on purpose
 
 - No game loop / tick scheduler (§8 of ROADMAP).
-- No world model — rooms, items, mobs, exits (§9).
+- World model is read-only and tiny — 3 seeded rooms, no authoring loader, no spawn/despawn lifecycle, no item/mob template-vs-instance split (§9).
 - No combat, skills, economy, quests, OLC, channels.
 - No `who`-across-the-server — needs `session.Registry.Snapshot` iteration; currently shows only the caller.
 - See `ROADMAP.md` for the full ledger.
@@ -138,4 +143,7 @@ client ──telnet──► readLoop ──inbox──► dispatcher ──Mode
 Mode.Handle (Login/Create) ──repo──► SQLite (accounts, characters)
                           ──auth──► bcrypt
                           ──sessions──► Registry (kick prior)
+
+Command.Run (look/move)   ──repo──► SQLite (rooms, exits, items, mobs)
+                          ──repo──► SQLite (characters.RecordRoom on move)
 ```

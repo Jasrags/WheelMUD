@@ -47,11 +47,21 @@ type Session struct {
 	// session registry / multi-session policy.
 	AccountID int64
 
-	// CharacterID and CharacterName are set by character-select mode
-	// once the user has chosen which character to play. Zero / empty
-	// when the session is pre-character (login or select).
+	// In-world session state. CharacterID, CharacterName, and
+	// CurrentRoomID are owned by the dispatcher goroutine: written by
+	// the mode-promotion helpers (postauth.promoteToGame) and by
+	// movement commands during dispatch, read only by other commands
+	// running on the same dispatch path. Code outside the dispatcher
+	// (e.g. session.Registry consumers, future `who` implementations)
+	// must treat these as snapshot values that can change underfoot;
+	// add explicit synchronization here if/when a non-dispatcher reader
+	// lands.
+	//
+	// CharacterID / CharacterName are zero / empty pre-character (login
+	// or select); CurrentRoomID is zero pre-game (login, select, create).
 	CharacterID   int64
 	CharacterName string
+	CurrentRoomID int64
 
 	writeMu sync.Mutex
 

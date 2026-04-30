@@ -10,12 +10,13 @@ import (
 // globally unique (case-insensitive); login enforces single-active-
 // character once multi-session policy lands.
 type Character struct {
-	ID           int64
-	AccountID    int64
-	Name         string
-	NameLower    string
-	CreatedAt    time.Time
-	LastPlayedAt *time.Time
+	ID            int64
+	AccountID     int64
+	Name          string
+	NameLower     string
+	CreatedAt     time.Time
+	LastPlayedAt  *time.Time
+	CurrentRoomID int64
 }
 
 // CharacterRepo is the persistence boundary character-select / character-
@@ -32,6 +33,10 @@ type CharacterRepo interface {
 	ListByAccount(ctx context.Context, accountID int64) ([]Character, error)
 	// RecordPlay updates last_played_at for a character.
 	RecordPlay(ctx context.Context, id int64, when time.Time) error
+	// RecordRoom persists the character's current location. Movement
+	// commands call this on every successful move so a reconnect drops
+	// the character back where they were.
+	RecordRoom(ctx context.Context, id, roomID int64) error
 }
 
 var (

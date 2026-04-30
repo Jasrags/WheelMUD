@@ -22,10 +22,13 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = time.Now().UTC()
 	}
+	if c.CurrentRoomID == 0 {
+		c.CurrentRoomID = StarterRoomID
+	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO characters(account_id, name, name_lower, created_at)
-		 VALUES (?, ?, ?, ?)`,
-		c.AccountID, c.Name, c.NameLower, c.CreatedAt,
+		`INSERT INTO characters(account_id, name, name_lower, created_at, current_room_id)
+		 VALUES (?, ?, ?, ?, ?)`,
+		c.AccountID, c.Name, c.NameLower, c.CreatedAt, c.CurrentRoomID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -43,7 +46,7 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 
 func (r *SQLiteCharacterRepo) FindByName(ctx context.Context, name string) (Character, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, account_id, name, name_lower, created_at, last_played_at
+		`SELECT id, account_id, name, name_lower, created_at, last_played_at, current_room_id
 		 FROM characters WHERE name_lower = ?`,
 		strings.ToLower(name),
 	)
@@ -51,7 +54,7 @@ func (r *SQLiteCharacterRepo) FindByName(ctx context.Context, name string) (Char
 		c          Character
 		lastPlayed sql.NullTime
 	)
-	err := row.Scan(&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed)
+	err := row.Scan(&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed, &c.CurrentRoomID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Character{}, ErrCharacterNotFound
 	}
@@ -67,7 +70,7 @@ func (r *SQLiteCharacterRepo) FindByName(ctx context.Context, name string) (Char
 
 func (r *SQLiteCharacterRepo) ListByAccount(ctx context.Context, accountID int64) ([]Character, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, account_id, name, name_lower, created_at, last_played_at
+		`SELECT id, account_id, name, name_lower, created_at, last_played_at, current_room_id
 		 FROM characters
 		 WHERE account_id = ?
 		 ORDER BY last_played_at DESC NULLS LAST, name_lower`,
@@ -83,7 +86,7 @@ func (r *SQLiteCharacterRepo) ListByAccount(ctx context.Context, accountID int64
 			c          Character
 			lastPlayed sql.NullTime
 		)
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed, &c.CurrentRoomID); err != nil {
 			return nil, fmt.Errorf("scan character row: %w", err)
 		}
 		if lastPlayed.Valid {
@@ -102,6 +105,23 @@ func (r *SQLiteCharacterRepo) RecordPlay(ctx context.Context, id int64, when tim
 	)
 	if err != nil {
 		return fmt.Errorf("record play: %w", err)
+	}
+	return nil
+}
+
+func (r *SQLiteCharacterRepo) RecordRoom(ctx context.Context, id, roomID int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET current_room_id = ? WHERE id = ?`,
+		roomID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record room: %w", err)
+	}
+	// Match MemoryCharacterRepo: a zero-row update means the caller
+	// passed a stale or zero id, which is a real error rather than a
+	// silent no-op.
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
 	}
 	return nil
 }

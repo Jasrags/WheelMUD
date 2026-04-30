@@ -41,6 +41,13 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, game telnet.Mode) error {
 	s.CharacterID = c.ID
 	s.CharacterName = c.Name
+	s.CurrentRoomID = c.CurrentRoomID
+	if s.CurrentRoomID == 0 {
+		// Defensive: a character row missing a room id (e.g. created
+		// before the column existed) gets dropped at the starter so
+		// look / move have somewhere to anchor.
+		s.CurrentRoomID = repo.StarterRoomID
+	}
 	if err := characters.RecordPlay(ctx, c.ID, time.Now()); err != nil {
 		slog.Warn("RecordPlay failed", "char", c.ID, "error", err)
 	}

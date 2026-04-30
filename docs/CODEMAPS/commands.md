@@ -1,4 +1,4 @@
-<!-- Generated: 2026-04-30 | Files scanned: internal/cmd/*.go (4 files) | Token estimate: ~480 -->
+<!-- Generated: 2026-04-30 | Files scanned: internal/cmd/*.go | Token estimate: ~600 -->
 
 # Command Catalog
 
@@ -6,13 +6,15 @@ Replaces the standard `frontend.md`: there is no UI tree, but the commands are t
 
 ## Wiring
 
-`cmd/server/main.go::buildRegistry` constructs a `telnet.Registry` and calls `Register(...)` once per command. `Help` needs the registry pointer (so it can list peers) and is registered after.
+`cmd/server/main.go::buildRegistry` takes the world + character repos so closure-style commands (`NewHelp`, `NewLook`, `NewMoveFamily`) can hold references. Variable-style commands (`Quit`, `Who`, `Colors`) are package-level singletons.
 
 ```
-buildRegistry()
+buildRegistry(rooms, exits, items, mobs, characters)
   r := NewRegistry()
   r.Register(Quit, Who, Colors)
   r.Register(NewHelp(r))
+  r.Register(NewLook(rooms, exits, items, mobs))
+  r.Register(NewMoveFamily(rooms, exits, items, mobs, characters)...)
 ```
 
 The registry is shared across sessions (read-only at runtime). Mode wiring: `mode.NewGame(r)` is the in-world target; `mode.NewLogin(accounts, characters, sessions, gameMode)` is what `srv.newInitial()` returns for each new connection.
@@ -24,7 +26,9 @@ The registry is shared across sessions (read-only at runtime). Mode wiring: `mod
 | `quit` | — | `internal/cmd/quit.go` | Closes the session. `Run` writes goodbye, closes `Conn`, returns `ErrSessionEnded` so the dispatcher stops without a prompt. |
 | `who` | — | `internal/cmd/who.go` | Reports the caller's character name (falls back to `RemoteAddress` if no character is selected). Server-wide listing pending — needs `session.Registry.Snapshot` iteration. |
 | `colors` | `colortest`, `palette` | `internal/cmd/colors.go` | Prints terminal info, 16-color palette, xterm-256 cube + grayscale, RGB ramp via `RenderRGBBG` (so the downsampling path is exercised), and style samples via `SGR`. |
-| `help` | — | `internal/cmd/help.go` | `help` lists registered commands; `help <verb>` prints `Help`/`Long`. Built via `NewHelp(r)` so it sees the live registry. |
+| `help` | `?` | `internal/cmd/help.go` | `help` lists registered commands; `help <verb>` prints `Help`/`Long`. Built via `NewHelp(r)` so it sees the live registry. |
+| `look` | `l` | `internal/cmd/look.go` | Renders the room at `Session.CurrentRoomID`: name, long description, exits (with long-name translation), items, mobs. Empty subsections collapse; missing-room writes a soft "tell an admin" line. The internal `RenderRoom` helper is reused by every move so movement implicitly shows the new room. |
+| `north` / `south` / `east` / `west` / `up` / `down` | `n` / `s` / `e` / `w` / `u` / `d` | `internal/cmd/move.go` | Six commands built by `NewMoveFamily`. Each calls `moveDir`, which: (1) resolves the exit via `ExitRepo.FindByDirection`; (2) on miss, writes `"You can't go that way."`; (3) on hit, updates `Session.CurrentRoomID`, persists via `CharacterRepo.RecordRoom` (best-effort), and re-renders the new room via `RenderRoom`. |
 
 ## Adding a command
 
