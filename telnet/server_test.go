@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ type scriptedMode struct {
 	closed atomic.Bool
 }
 
-func (m *scriptedMode) Handle(s *Session, line string) error {
+func (m *scriptedMode) Handle(_ context.Context, s *Session, line string) error {
 	m.mu.Lock()
 	m.lines = append(m.lines, line)
 	m.mu.Unlock()
@@ -140,19 +141,99 @@ func TestRunSession_InputFlooded(t *testing.T) {
 	}
 }
 
+// ctxObservingMode records the ctx Handle was invoked with so tests can
+// assert that the dispatcher cancels it on session teardown.
+type ctxObservingMode struct {
+	mu       sync.Mutex
+	captured context.Context
+	signal   chan struct{} // closed when Handle is invoked
+}
+
+func (m *ctxObservingMode) Handle(ctx context.Context, s *Session, _ string) error {
+	m.mu.Lock()
+	m.captured = ctx
+	m.mu.Unlock()
+	close(m.signal)
+	_ = s.WriteRaw([]byte("ack\r\n"))
+	return nil
+}
+func (m *ctxObservingMode) Prompt(_ *Session) string { return "> " }
+func (m *ctxObservingMode) OnEnter(_ *Session) error { return nil }
+func (m *ctxObservingMode) OnExit(_ *Session) error  { return nil }
+
+func (m *ctxObservingMode) ctx() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.captured
+}
+
+func TestRunSession_CancelsHandlerCtxOnTeardown(t *testing.T) {
+	s, peer := newPipeSession(t)
+	mode := &ctxObservingMode{signal: make(chan struct{})}
+	if err := s.PushMode(mode); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	// Drain whatever the server writes.
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			_ = peer.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			if _, err := peer.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- RunSession(s) }()
+
+	// Drive one line so Handle captures the dispatcher ctx.
+	if _, err := peer.Write([]byte("ping\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	select {
+	case <-mode.signal:
+	case <-time.After(time.Second):
+		t.Fatal("Handle did not run")
+	}
+
+	captured := mode.ctx()
+	if captured == nil {
+		t.Fatal("captured ctx is nil")
+	}
+	if err := captured.Err(); err != nil {
+		t.Fatalf("ctx already canceled before teardown: %v", err)
+	}
+
+	// Tear down: closing the peer EOFs readLoop, which cancels the ctx.
+	_ = peer.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunSession did not return after peer close")
+	}
+	if err := captured.Err(); err == nil {
+		t.Fatal("ctx not canceled after session teardown")
+	}
+}
+
 type blockingMode struct {
 	released chan struct{}
 }
 
-func (b *blockingMode) Handle(_ *Session, _ string) error { <-b.released; return nil }
-func (b *blockingMode) Prompt(_ *Session) string          { return "" }
-func (b *blockingMode) OnEnter(_ *Session) error          { return nil }
-func (b *blockingMode) OnExit(_ *Session) error           { return nil }
+func (b *blockingMode) Handle(_ context.Context, _ *Session, _ string) error {
+	<-b.released
+	return nil
+}
+func (b *blockingMode) Prompt(_ *Session) string { return "" }
+func (b *blockingMode) OnEnter(_ *Session) error { return nil }
+func (b *blockingMode) OnExit(_ *Session) error  { return nil }
 
 // terminalMode signals end-of-session from Handle without writing a prompt.
 type terminalMode struct{ closed bool }
 
-func (m *terminalMode) Handle(s *Session, _ string) error {
+func (m *terminalMode) Handle(_ context.Context, s *Session, _ string) error {
 	m.closed = true
 	_ = s.Conn.Close()
 	return ErrSessionEnded

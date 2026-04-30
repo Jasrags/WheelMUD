@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"context"
 	"errors"
 	"net"
 	"strings"
@@ -206,7 +207,7 @@ func TestRegistry_Dispatch(t *testing.T) {
 			}()
 
 			done := make(chan error, 1)
-			go func() { done <- r.Dispatch(s, tc.line) }()
+			go func() { done <- r.Dispatch(context.Background(), s, tc.line) }()
 
 			select {
 			case err := <-done:
@@ -248,6 +249,60 @@ func TestRegistry_Dispatch(t *testing.T) {
 	}
 }
 
+func TestRegistry_Dispatch_AuthEnforcement(t *testing.T) {
+	r := NewRegistry()
+	called := false
+	admin := &Command{
+		Name: "shutdown",
+		Auth: AuthAdmin,
+		Run:  func(_ *Context) error { called = true; return nil },
+	}
+	if err := r.Register(admin); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	t.Run("guest sees Unknown command (does not leak existence)", func(t *testing.T) {
+		s, peer := newPipeSession(t)
+		s.AuthLevel = AuthGuest
+
+		outCh := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 256)
+			_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			n, _ := peer.Read(buf)
+			outCh <- string(buf[:n])
+		}()
+		if err := r.Dispatch(context.Background(), s, "shutdown"); err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+		if got := <-outCh; !strings.Contains(got, "Unknown command") {
+			t.Fatalf("guest output = %q, want 'Unknown command'", got)
+		}
+		if called {
+			t.Fatal("Run was invoked despite guest auth level")
+		}
+	})
+
+	t.Run("admin runs the command", func(t *testing.T) {
+		called = false
+		s, peer := newPipeSession(t)
+		s.AuthLevel = AuthAdmin
+
+		// Drain.
+		go func() {
+			buf := make([]byte, 256)
+			_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			_, _ = peer.Read(buf)
+		}()
+		if err := r.Dispatch(context.Background(), s, "shutdown"); err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+		if !called {
+			t.Fatal("admin Run was not invoked")
+		}
+	})
+}
+
 func TestRegistry_Dispatch_Ambiguous(t *testing.T) {
 	r := NewRegistry()
 	_ = r.Register(cmd("look", noopRun), cmd("loot", noopRun))
@@ -260,7 +315,7 @@ func TestRegistry_Dispatch_Ambiguous(t *testing.T) {
 		n, _ := peer.Read(buf)
 		outCh <- string(buf[:n])
 	}()
-	if err := r.Dispatch(s, "lo"); err != nil {
+	if err := r.Dispatch(context.Background(), s, "lo"); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 	out := <-outCh

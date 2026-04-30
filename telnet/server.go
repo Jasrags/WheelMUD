@@ -2,6 +2,7 @@ package telnet
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -28,11 +29,18 @@ func RunSession(s *Session) error {
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	dispatcherDone := make(chan struct{})
-	go runDispatcher(s, dispatcherDone)
+	go runDispatcher(ctx, s, dispatcherDone)
 
 	err := readLoop(s)
 
+	// Signal in-flight handlers before closing the inbox so a slow Handle
+	// observes cancellation rather than running to completion against a
+	// dead connection.
+	cancel()
 	close(s.inbox)
 	<-dispatcherDone
 	return err
@@ -60,7 +68,7 @@ func readLoop(s *Session) error {
 	}
 }
 
-func runDispatcher(s *Session, done chan<- struct{}) {
+func runDispatcher(ctx context.Context, s *Session, done chan<- struct{}) {
 	defer close(done)
 	for line := range s.inbox {
 		mode := s.CurrentMode()
@@ -68,7 +76,7 @@ func runDispatcher(s *Session, done chan<- struct{}) {
 			slog.Warn("No mode for input", "remote", s.RemoteAddress, "line", line)
 			continue
 		}
-		err := mode.Handle(s, line)
+		err := mode.Handle(ctx, s, line)
 		if shouldEndSession(err) {
 			// Mode signaled termination (or wrote to a closed conn);
 			// drain remaining lines without invoking handlers.

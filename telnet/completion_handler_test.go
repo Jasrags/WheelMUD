@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync"
@@ -14,7 +15,7 @@ type completingMode struct {
 	prompt     string
 }
 
-func (m *completingMode) Handle(_ *Session, _ string) error { return nil }
+func (m *completingMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
 func (m *completingMode) Prompt(_ *Session) string {
 	if m.prompt == "" {
 		return "> "
@@ -39,10 +40,10 @@ func (m *completingMode) Complete(_ *Session, buffer string) []Candidate {
 // quietMode does not implement Completer.
 type quietMode struct{}
 
-func (m *quietMode) Handle(_ *Session, _ string) error { return nil }
-func (m *quietMode) Prompt(_ *Session) string          { return "> " }
-func (m *quietMode) OnEnter(_ *Session) error          { return nil }
-func (m *quietMode) OnExit(_ *Session) error           { return nil }
+func (m *quietMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
+func (m *quietMode) Prompt(_ *Session) string                             { return "> " }
+func (m *quietMode) OnEnter(_ *Session) error                             { return nil }
+func (m *quietMode) OnExit(_ *Session) error                              { return nil }
 
 // drainPeer reads everything from peer until it returns an error. Returns
 // the full byte stream captured up to that point.

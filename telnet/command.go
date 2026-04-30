@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -31,6 +32,7 @@ type Command struct {
 
 // Context is passed to Command.Run. It is created fresh per dispatch.
 type Context struct {
+	Ctx     context.Context // canceled when the session ends
 	Session *Session
 	Name    string   // canonical name of the command that matched
 	Args    []string // tokenized arguments
@@ -174,8 +176,10 @@ func (r *Registry) All() []*Command {
 
 // Dispatch parses line, resolves the verb, and runs the matching command.
 // Errors from lookup are translated into user-facing messages and are not
-// returned. Errors from Command.Run are returned to the caller.
-func (r *Registry) Dispatch(s *Session, line string) error {
+// returned. Errors from Command.Run are returned to the caller. ctx is
+// surfaced on the per-dispatch Context so commands can observe session
+// cancellation while doing blocking work.
+func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
@@ -185,6 +189,12 @@ func (r *Registry) Dispatch(s *Session, line string) error {
 	if err != nil {
 		return writeLookupError(s, err)
 	}
+	if s.AuthLevel < cmd.Auth {
+		// Don't disclose that the verb exists — render the same response
+		// as ErrUnknownCommand so the prompt can't be used to enumerate
+		// privileged commands.
+		return s.WriteRaw([]byte("Unknown command\r\n"))
+	}
 	args := strings.Fields(rest)
 	if len(args) < cmd.MinArgs {
 		usage := cmd.Help
@@ -193,13 +203,14 @@ func (r *Registry) Dispatch(s *Session, line string) error {
 		}
 		return s.WriteRaw([]byte("Usage: " + usage + "\r\n"))
 	}
-	ctx := &Context{
+	cctx := &Context{
+		Ctx:     ctx,
 		Session: s,
 		Name:    cmd.Name,
 		Args:    args,
 		Raw:     rest,
 	}
-	return cmd.Run(ctx)
+	return cmd.Run(cctx)
 }
 
 func writeLookupError(s *Session, err error) error {

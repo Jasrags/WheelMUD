@@ -1,6 +1,7 @@
 package mode
 
 import (
+	"context"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -14,8 +15,8 @@ type Game struct {
 
 func NewGame(r *telnet.Registry) *Game { return &Game{Registry: r} }
 
-func (g *Game) Handle(s *telnet.Session, line string) error {
-	return g.Registry.Dispatch(s, line)
+func (g *Game) Handle(ctx context.Context, s *telnet.Session, line string) error {
+	return g.Registry.Dispatch(ctx, s, line)
 }
 
 func (g *Game) Prompt(_ *telnet.Session) string { return "> " }

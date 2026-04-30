@@ -60,15 +60,16 @@ Registry
 Register(c)   validates verb (lowercase ASCII, no ws), inserts sorted, indexes aliases
 Lookup(v)    alias → exact → unique prefix (else ErrUnknownCommand / ErrAmbiguousPrefix)
 Prefix(p)    [start..) slice of HasPrefix(p) hits — drives completion
-Dispatch(s,line)
+Dispatch(ctx, s, line)
   TrimSpace → splitVerb(line) → Lookup(verb)
   err? → writeLookupError(s, err)   (Unknown / err.Error / Command error)
+  s.AuthLevel < cmd.Auth → "Unknown command" (does NOT leak existence)
   args := strings.Fields(rest)      (quoted-arg tokenizer deferred)
   len(args) < MinArgs → "Usage: ..."
-  build Context{Session, Name, Args, Raw} → Command.Run
+  build Context{Ctx, Session, Name, Args, Raw} → Command.Run
 ```
 
-`Command.Auth` (`AuthGuest/AuthPlayer/AuthAdmin`) is stored but not enforced.
+`Command.Auth` (`AuthGuest/AuthPlayer/AuthAdmin`) is checked against `Session.AuthLevel`. Login mode is what bumps `AuthLevel` from the default `AuthGuest` — until login lands, all commands run at guest level.
 
 ## Mode stack (`mode.go`, `session.go`)
 

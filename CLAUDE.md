@@ -40,8 +40,8 @@ Connect with: `telnet localhost 2323` (or `nc localhost 2323`).
 - The protocol parser lives in `telnet/server.go` (the older note about it living in `main.go` is obsolete).
 - `Session.InputBuffer` is owned by the read goroutine inside `RunSession`. Do not mutate it from another goroutine, including the dispatcher.
 - `Session.WriteRaw` is the only safe write path; it holds `writeMu`. New helpers should layer on top of it rather than calling `Conn.Write` directly.
-- `Mode.Handle` is invoked synchronously by `runDispatcher`; a slow handler stalls input for that session. If a Handle implementation needs blocking I/O, plumb a `context.Context` through (tracked in the deferred-work memory).
-- `Command.Auth` (`AuthLevel`) is stored but not enforced yet — the check waits for the login/account subsystem.
+- `Mode.Handle(ctx, *Session, line)` is invoked synchronously by `runDispatcher`. The ctx is canceled when the read loop exits (EOF / idle / flood); handlers doing blocking I/O must observe it. A slow handler still stalls input for that session — concurrency for long work is the handler's responsibility.
+- `Registry.Dispatch(ctx, *Session, line)` enforces `Command.Auth` against `Session.AuthLevel`. A privilege-denied lookup returns the same `Unknown command` text as a missing verb so the prompt can't be used to enumerate privileged commands.
 - Logging uses `slog` at `LevelDebug` set globally in `main.go`; verbose by design during protocol bring-up.
 
 ## Tests

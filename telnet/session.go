@@ -37,6 +37,10 @@ type Session struct {
 	InputBuffer    []byte
 	InPasswordMode bool
 	ColorLevel     int
+	// AuthLevel is the privilege the session has earned. Defaults to
+	// AuthGuest until login mode promotes it. Registry.Dispatch checks
+	// this against Command.Auth.
+	AuthLevel AuthLevel
 
 	writeMu sync.Mutex
 
