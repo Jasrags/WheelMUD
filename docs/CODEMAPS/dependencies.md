@@ -11,12 +11,18 @@
 | Dep | Version | Used in | Purpose |
 |---|---|---|---|
 | `github.com/i582/cfmt` | v1.4.0 | `telnet/session.go` | Renders `{{text}}::style` tags inside `WriteString`/`WriteWrapped`. **Important:** treats input as a template — do not pass untrusted strings. Use `WriteRaw` for client-derived data. |
+| `modernc.org/sqlite` | v1.50.0 | `internal/db/db.go` | Pure-Go SQLite driver (no CGO). `database/sql` driver name `sqlite`. Embedded migrations under `internal/db/migrations/`. |
 
 ## Indirect
 
 | Dep | Version | Pulled by |
 |---|---|---|
 | `github.com/gookit/color` | v1.3.2 | cfmt |
+| `modernc.org/libc` | — | sqlite |
+| `modernc.org/memory` | — | sqlite |
+| `modernc.org/mathutil` | — | sqlite |
+| `golang.org/x/sys` | — | sqlite |
+| `github.com/google/uuid`, `github.com/dustin/go-humanize`, `github.com/mattn/go-isatty`, `github.com/ncruces/go-strftime`, `github.com/remyoudompheng/bigfft` | — | sqlite |
 
 `go.sum` also lists `davecgh/go-spew`, `pmezard/go-difflib`, `stretchr/testify`, `stretchr/objx` from the resolution graph but they are not imported by any source file in this module.
 

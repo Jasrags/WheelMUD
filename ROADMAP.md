@@ -105,10 +105,14 @@ constants and helpers in `telnet/iac.go`.
 
 ## 7. Persistence
 
-- [ ] Storage interface (`Repository` per aggregate: accounts, characters,
-      rooms, items, mobs)
-- [ ] Choose backing store (likely SQLite first, Postgres later)
-- [ ] Migration tooling (`goose` / `golang-migrate`)
+- [x] Backing store chosen: SQLite via pure-Go `modernc.org/sqlite` (no CGO)
+- [x] Migration runner: embedded `internal/db/migrations/*.sql`, applied
+      lexically, tracked in `schema_migrations` (`internal/db/db.go`)
+- [x] First migration: `0001_create_accounts.sql` (accounts table + lockout index)
+- [x] Account aggregate: `repo.AccountRepo` interface, `SQLiteAccountRepo`
+      impl, `MemoryAccountRepo` fake; shared contract test exercises both
+- [ ] Character aggregate (CharacterRepo) — waits on character model
+- [ ] World aggregates (rooms, exits, items, mobs)
 - [ ] World data on disk (YAML/JSON area files) with a loader
 - [ ] Hot-reload of area files without restart
 - [ ] Periodic + shutdown autosave
