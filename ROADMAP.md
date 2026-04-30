@@ -255,9 +255,9 @@ Items already tracked elsewhere — included here so the roadmap points at them:
 - **Command-input deferred work** (auth enforcement, quoted args, argument
   completion, login/char-create modes, password masking) — see auto-memory entry
   `command_input_followups.md`.
-- **Open code-review items** (ambiguous-error wording, PushMode rollback,
-  empty-candidate guard, redundant `ToLower`, `.claude/` gitignore) — see
-  auto-memory entry `code_review_open_items.md`.
+- **Open code-review items** (ambiguous-error wording, empty-candidate
+  guard, redundant `ToLower`, `.claude/` gitignore) — see auto-memory
+  entry `code_review_open_items.md`.
 - **Terminal & rendering deferred work** (pager mode, prompt templating,
   wide-glyph wrap, long-token break, `SGR` perf, color-enum naming) — see
   auto-memory entry `terminal_rendering_followups.md`.
