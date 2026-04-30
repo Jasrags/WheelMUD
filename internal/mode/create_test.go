@@ -145,6 +145,21 @@ func TestCreate_RejectsBadCharacters(t *testing.T) {
 	}
 }
 
+func TestCreate_RejectsReservedUsername(t *testing.T) {
+	for _, name := range []string{"new", "NEW", "New"} {
+		t.Run(name, func(t *testing.T) {
+			f := newCreateFixture(t)
+			f.feed(name)
+			if f.create.step != createStepUsername {
+				t.Fatalf("step = %d, reserved username should be rejected", f.create.step)
+			}
+			if !strings.Contains(f.captured.String(), "reserved") {
+				t.Fatalf("expected reserved-name message: %q", f.captured.String())
+			}
+		})
+	}
+}
+
 func TestCreate_RejectsShortPassword(t *testing.T) {
 	f := newCreateFixture(t)
 	f.feed("Bob")

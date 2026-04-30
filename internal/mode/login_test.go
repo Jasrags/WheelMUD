@@ -202,6 +202,26 @@ func TestLogin_NewRoutesToCreateMode(t *testing.T) {
 	}
 }
 
+func TestLogin_LockoutDuringPasswordStepIsHonored(t *testing.T) {
+	// Regression: account gets locked between the username step and
+	// the password step (parallel session). The handlePassword path
+	// must re-check rather than trust the cached state.
+	f := newLoginFixture(t)
+	f.feed("alice")
+
+	a, _ := f.repo.FindByUsername(context.Background(), "alice")
+	future := time.Now().Add(time.Hour)
+	_ = f.repo.RecordLoginFailure(context.Background(), a.ID, future)
+
+	f.feed("correct-horse")
+	if f.session.AuthLevel == telnet.AuthPlayer {
+		t.Fatal("locked account must not authenticate (TOCTOU regression)")
+	}
+	if !strings.Contains(f.captured.String(), "locked") {
+		t.Fatalf("expected lockout message: %q", f.captured.String())
+	}
+}
+
 func TestLogin_OnExitClearsPasswordMode(t *testing.T) {
 	f := newLoginFixture(t)
 	f.feed("alice")

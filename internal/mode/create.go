@@ -137,9 +137,17 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	return s.ReplaceMode(c.next)
 }
 
+// reservedUsernames are case-insensitively forbidden. "new" routes to
+// account-create from Login mode, so allowing it as an account name
+// would create an unloggable-into account.
+var reservedUsernames = map[string]bool{
+	"new": true,
+}
+
 // validateUsername enforces ASCII-only [A-Za-z0-9_-] usernames within
-// the configured length window. Tightened on purpose — Unicode policy
-// (NFKC, lookalikes) is tracked under persistence_followups.md.
+// the configured length window, and rejects names that conflict with
+// login-mode keywords. Unicode policy (NFKC, lookalikes) is tracked
+// under persistence_followups.md.
 func validateUsername(name string) error {
 	if name == "" {
 		return errors.New("Username cannot be empty")
@@ -158,6 +166,9 @@ func validateUsername(name string) error {
 		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-') {
 			return errors.New("Username may only contain letters, digits, _ or -")
 		}
+	}
+	if reservedUsernames[strings.ToLower(name)] {
+		return errors.New("Username is reserved. Choose another")
 	}
 	return nil
 }

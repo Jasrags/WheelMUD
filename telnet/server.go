@@ -164,7 +164,14 @@ func handleLineBreak(s *Session) error {
 	}
 	input := string(s.InputBuffer)
 	s.InputBuffer = s.InputBuffer[:0]
-	slog.Info("User entered command", "input", input, "remote", s.RemoteAddress)
+	// Never log raw input while password masking is active — login,
+	// account-create, password-change, etc. all set InPasswordMode and
+	// the cleartext password must not enter logs.
+	if s.InPasswordMode {
+		slog.Info("User entered command", "input", "(redacted)", "remote", s.RemoteAddress)
+	} else {
+		slog.Info("User entered command", "input", input, "remote", s.RemoteAddress)
+	}
 
 	if err := s.WriteRaw([]byte("\r\n")); err != nil {
 		return err

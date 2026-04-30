@@ -134,6 +134,21 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 		return l.fail(s, "")
 	}
 
+	// Re-fetch the account so a parallel session that locked it between
+	// our username step and password step is honored. The cached
+	// l.account avoids leaking existence in the not-found branch above;
+	// once we know the user exists, freshness wins.
+	fresh, err := l.accounts.FindByUsername(ctx, l.username)
+	switch {
+	case err == nil:
+		l.account = &fresh
+	case errors.Is(err, repo.ErrAccountNotFound):
+		// Account was deleted between steps. Treat as fail.
+		return l.fail(s, "")
+	default:
+		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
+	}
+
 	if l.account.IsLockedAt(l.now()) {
 		// Locked accounts skip the verify step entirely (saves bcrypt
 		// CPU for repeated probes). Be explicit so users with a valid

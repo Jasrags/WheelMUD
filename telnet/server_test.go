@@ -1,8 +1,10 @@
 package telnet
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -215,6 +217,74 @@ func TestRunSession_CancelsHandlerCtxOnTeardown(t *testing.T) {
 	}
 	if err := captured.Err(); err == nil {
 		t.Fatal("ctx not canceled after session teardown")
+	}
+}
+
+// captureSlog swaps the default slog logger for one writing to a
+// shared buffer for the duration of the test. Returns the buffer.
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+func TestHandleLineBreak_RedactsInputInPasswordMode(t *testing.T) {
+	logBuf := captureSlog(t)
+	s, peer := newPipeSession(t)
+	s.InPasswordMode = true
+
+	// Drain so writes don't block the pipe.
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			if _, err := peer.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	const secret = "supersecret-must-not-leak"
+	s.InputBuffer = []byte(secret)
+	if err := handleLineBreak(s); err != nil {
+		t.Fatalf("handleLineBreak: %v", err)
+	}
+
+	logged := logBuf.String()
+	if strings.Contains(logged, secret) {
+		t.Fatalf("password leaked into logs: %q", logged)
+	}
+	if !strings.Contains(logged, "redacted") {
+		t.Fatalf("expected 'redacted' marker in log, got %q", logged)
+	}
+}
+
+func TestHandleLineBreak_LogsInputWhenNotPasswordMode(t *testing.T) {
+	logBuf := captureSlog(t)
+	s, peer := newPipeSession(t)
+	s.InPasswordMode = false
+
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+			if _, err := peer.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	s.InputBuffer = []byte("look")
+	if err := handleLineBreak(s); err != nil {
+		t.Fatalf("handleLineBreak: %v", err)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "look") {
+		t.Fatalf("normal input should be logged verbatim: %q", logged)
 	}
 }
 
