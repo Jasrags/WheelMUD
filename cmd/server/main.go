@@ -2,12 +2,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
-	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/cmd"
+	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -23,6 +23,13 @@ func main() {
 	if addr == "" {
 		addr = defaultListenAddr
 	}
+
+	registry, err := buildRegistry()
+	if err != nil {
+		slog.Error("Failed to build command registry", "error", err)
+		os.Exit(1)
+	}
+	gameMode := mode.NewGame(registry)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -47,47 +54,50 @@ func main() {
 			continue
 		}
 
-		go handleConnection(session)
+		go handleConnection(session, gameMode)
 	}
 }
 
-func handleConnection(s *telnet.Session) {
+func buildRegistry() (*telnet.Registry, error) {
+	r := telnet.NewRegistry()
+	if err := r.Register(cmd.Quit, cmd.Who, cmd.TogglePassword); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewHelp(r)); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func handleConnection(s *telnet.Session, initialMode telnet.Mode) {
 	defer s.Conn.Close()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
 
-	if err := s.WriteString("Welcome to the Telnet server!\r\n"); err != nil {
-		slog.Debug("Welcome write failed", "remote", s.RemoteAddress, "error", err)
-		return
-	}
-	if err := s.WriteString("{{Welcome}}::green|bold\r\n"); err != nil {
-		return
-	}
-	if err := s.WriteString("{{Underlined Bold}}::underline|bold\r\n"); err != nil {
-		return
-	}
-	if err := s.WriteRaw([]byte("> ")); err != nil {
+	if err := writeBanner(s); err != nil {
+		slog.Debug("Banner write failed", "remote", s.RemoteAddress, "error", err)
 		return
 	}
 
-	if err := telnet.RunSession(s, processCommand); err != nil {
-		// EOF and idle timeout are expected; log others at debug level.
-		if !errors.Is(err, net.ErrClosed) {
-			slog.Debug("Session ended", "remote", s.RemoteAddress, "error", err)
-		}
+	if err := s.PushMode(initialMode); err != nil {
+		slog.Error("Failed to enter initial mode", "remote", s.RemoteAddress, "error", err)
+		return
+	}
+	if err := s.WriteRaw([]byte(initialMode.Prompt(s))); err != nil {
+		return
+	}
+
+	if err := telnet.RunSession(s); err != nil && !errors.Is(err, net.ErrClosed) {
+		slog.Debug("Session ended", "remote", s.RemoteAddress, "error", err)
 	}
 	slog.Info("Client disconnected", "remote", s.RemoteAddress)
 }
 
-func processCommand(s *telnet.Session, input string) error {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "toggle password":
-		s.InPasswordMode = !s.InPasswordMode
-		status := "off"
-		if s.InPasswordMode {
-			status = "on"
-		}
-		return s.WriteRaw([]byte(fmt.Sprintf("Password mode %s\r\n", status)))
-	default:
-		return s.WriteRaw([]byte("Unknown command\r\n"))
+func writeBanner(s *telnet.Session) error {
+	if err := s.WriteString("Welcome to the Telnet server!\r\n"); err != nil {
+		return err
 	}
+	if err := s.WriteString("{{Welcome}}::green|bold\r\n"); err != nil {
+		return err
+	}
+	return s.WriteString("{{Underlined Bold}}::underline|bold\r\n")
 }
