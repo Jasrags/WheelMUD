@@ -12,6 +12,7 @@
 |---|---|---|---|
 | `github.com/i582/cfmt` | v1.4.0 | `telnet/session.go` | Renders `{{text}}::style` tags inside `WriteString`/`WriteWrapped`. **Important:** treats input as a template — do not pass untrusted strings. Use `WriteRaw` for client-derived data. |
 | `modernc.org/sqlite` | v1.50.0 | `internal/db/db.go` | Pure-Go SQLite driver (no CGO). `database/sql` driver name `sqlite`. Embedded migrations under `internal/db/migrations/`. |
+| `golang.org/x/crypto/bcrypt` | v0.50.0 | `internal/auth/hash.go` | Password hashing. Default cost (10); tests drop to MinCost via `auth.SetCost`. |
 
 ## Indirect
 

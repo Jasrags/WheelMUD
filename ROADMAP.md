@@ -92,8 +92,10 @@ constants and helpers in `telnet/iac.go`.
 
 ## 6. Accounts, auth & characters
 
-- [ ] Account model (id, email, password hash, created-at, last-login)
-- [ ] Password hashing with `bcrypt` / `argon2id`
+- [x] Account model — `repo.Account` + accounts table (`internal/repo/account.go`,
+      `internal/db/migrations/0001_create_accounts.sql`)
+- [x] Password hashing — `internal/auth.Hash` / `Verify` via `bcrypt`,
+      enforcing 8-rune min / 72-byte max
 - [ ] Login / logout flow as a Mode (replaces legacy `togglepassword`)
 - [ ] Mode-aware echo masking (push a `passwordMode` rather than toggling a flag
       on `Session`)

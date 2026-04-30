@@ -38,6 +38,19 @@ Pragmas set on every `Open`: `foreign_keys=ON`, `journal_mode=WAL`, `synchronous
 | `schema_migrations` | (bootstrap) | `version PK, applied_at` |
 | `accounts` | `0001_create_accounts.sql` | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until` + partial index on `locked_until` |
 
+## Auth (`internal/auth`)
+
+```
+Hash(password) → string, error    bcrypt at DefaultCost (10)
+                                  enforces 8-rune min / 72-byte max
+                                  errors: ErrPasswordTooShort, ErrPasswordTooLong
+Verify(hash, password) → bool     bcrypt.CompareHashAndPassword wrapper;
+                                  rejects empty / oversized inputs early
+SetCost(c) → previous int         test-only knob; tests run at MinCost
+```
+
+`accounts.password_hash` stores the bcrypt output verbatim. `auth` is the only package that calls bcrypt; login mode and any future password-bearing flow consume `Hash` / `Verify`.
+
 ## AccountRepo
 
 Interface (`internal/repo/account.go`):
