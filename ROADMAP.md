@@ -105,7 +105,9 @@ constants and helpers in `telnet/iac.go`.
       on `Session`)
 - [ ] Character model attached to account (1:N)
 - [ ] Character creation wizard
-- [ ] Multi-session detection (kick old session, refuse, or allow shadow)
+- [ ] Multi-session detection — policy chosen: **kick the previous
+      session on re-login** (one account, one live session). See
+      `login_followups.md` item 8 for the implementation sketch.
 - [ ] Lockout / rate-limiting on failed logins
 - [ ] Email verification / password reset (later)
 
