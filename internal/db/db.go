@@ -1,8 +1,8 @@
 // Package db wires the SQLite driver and applies embedded migrations.
 //
-// Migrations live in /migrations as `NNNN_description.sql`, applied in
-// lexical order. Each file is one statement batch; we track applied
-// versions in a `schema_migrations` table.
+// Migrations live in internal/db/migrations as `NNNN_description.sql`,
+// applied in lexical order. Each file is one statement batch; we track
+// applied versions in a `schema_migrations` table.
 package db
 
 import (
