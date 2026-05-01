@@ -1,3 +1,11 @@
+# WORLD_DIR points at the authored zone tree the loader populates the DB
+# from on first boot. Override at the make-call site (e.g.
+# `make run/server WORLD_DIR=/path/to/other`) to load a different tree.
+# The variable is exported so build/server (which only compiles) is
+# unaffected, but run/server and run/live/server pick it up.
+WORLD_DIR ?= ./data/world
+export WORLD_DIR
+
 .PHONY: build/server
 build/server:
 	go build -o=/tmp/bin/server cmd/server/main.go
