@@ -248,7 +248,7 @@ func TestHandleLineBreak_RedactsInputInPasswordMode(t *testing.T) {
 	}()
 
 	const secret = "supersecret-must-not-leak"
-	s.InputBuffer = []byte(secret)
+	s.Input = LineEdit{Buf: []byte(secret), Cursor: len(secret)}
 	if err := handleLineBreak(s); err != nil {
 		t.Fatalf("handleLineBreak: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestHandleLineBreak_LogsInputWhenNotPasswordMode(t *testing.T) {
 		}
 	}()
 
-	s.InputBuffer = []byte("look")
+	s.Input = LineEdit{Buf: []byte("look"), Cursor: 4}
 	if err := handleLineBreak(s); err != nil {
 		t.Fatalf("handleLineBreak: %v", err)
 	}

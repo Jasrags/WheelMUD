@@ -29,6 +29,21 @@ func NewHelp(r *telnet.Registry) *telnet.Command {
 			}
 			return writeList(c.Session, matches, "Commands matching "+query+":")
 		},
+		// Tab in `help <prefix>` lists every verb the session can see —
+		// we filter by AuthLevel so a guest can't enumerate privileged
+		// commands through completion.
+		Completer: func(s *telnet.Session, args string) []telnet.Candidate {
+			partial, _ := telnet.CompletionPartial(args)
+			matches := r.Prefix(strings.ToLower(partial))
+			out := make([]telnet.Candidate, 0, len(matches))
+			for _, c := range matches {
+				if s.AuthLevel < c.Auth {
+					continue
+				}
+				out = append(out, telnet.Candidate{Text: c.Name, Help: c.Help})
+			}
+			return out
+		},
 	}
 }
 

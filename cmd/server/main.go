@@ -204,6 +204,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewAlias(), cmd.NewUnalias()); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
 		return nil, err
 	}

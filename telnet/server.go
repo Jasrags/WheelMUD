@@ -129,7 +129,7 @@ func dispatchByte(s *Session, r *bufio.Reader, b byte) error {
 		}
 		return nil
 	case b == ASCII_ESC:
-		return DiscardANSI(r)
+		return handleEscape(s, r)
 	case b == '\r' || b == '\n':
 		// Coalesce CRLF: telnet clients send CR LF, so on CR we consume a
 		// following LF if it's already in the reader buffer to avoid
@@ -144,6 +144,16 @@ func dispatchByte(s *Session, r *bufio.Reader, b byte) error {
 		return handleBackspace(s)
 	case b == ASCII_HT:
 		return handleTab(s)
+	case b == ASCII_SOH: // Ctrl-A
+		return handleMotion(s, motionHome)
+	case b == ASCII_ENQ: // Ctrl-E
+		return handleMotion(s, motionEnd)
+	case b == ASCII_NAK: // Ctrl-U
+		return handleKill(s, killToStart)
+	case b == ASCII_VT: // Ctrl-K
+		return handleKill(s, killToEnd)
+	case b == ASCII_ETB: // Ctrl-W
+		return handleKill(s, killPrevWord)
 	case unicode.IsPrint(rune(b)):
 		return bufferInput(s, b)
 	default:
@@ -152,8 +162,117 @@ func dispatchByte(s *Session, r *bufio.Reader, b byte) error {
 	}
 }
 
+type motionKind int
+
+const (
+	motionHome motionKind = iota
+	motionEnd
+	motionLeft
+	motionRight
+	motionDelete
+)
+
+type killKind int
+
+const (
+	killToStart killKind = iota
+	killToEnd
+	killPrevWord
+)
+
+// handleEscape parses the byte stream after a 0x1B and dispatches the
+// resulting CSI op. Unknown sequences bell so the user gets feedback
+// without corrupting the input model.
+func handleEscape(s *Session, r *bufio.Reader) error {
+	op, err := ReadCSI(r)
+	if err != nil {
+		return err
+	}
+	if s.InPasswordMode {
+		// Suppress every motion / history key in password mode so a
+		// stray arrow doesn't mutate or echo the masked buffer.
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	switch op {
+	case CSIUp:
+		return handleHistoryStep(s, true)
+	case CSIDown:
+		return handleHistoryStep(s, false)
+	case CSILeft:
+		return handleMotion(s, motionLeft)
+	case CSIRight:
+		return handleMotion(s, motionRight)
+	case CSIHome:
+		return handleMotion(s, motionHome)
+	case CSIEnd:
+		return handleMotion(s, motionEnd)
+	case CSIDelete:
+		return handleMotion(s, motionDelete)
+	default:
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+}
+
+func handleMotion(s *Session, kind motionKind) error {
+	if s.InPasswordMode {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	var echo []byte
+	switch kind {
+	case motionLeft:
+		echo = s.Input.MoveLeft()
+	case motionRight:
+		echo = s.Input.MoveRight()
+	case motionHome:
+		echo = s.Input.MoveHome()
+	case motionEnd:
+		echo = s.Input.MoveEnd()
+	case motionDelete:
+		echo = s.Input.Delete()
+	}
+	if len(echo) == 0 {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	return s.WriteRaw(echo)
+}
+
+func handleKill(s *Session, kind killKind) error {
+	if s.InPasswordMode {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	var echo []byte
+	switch kind {
+	case killToStart:
+		echo = s.Input.KillToStart()
+	case killToEnd:
+		echo = s.Input.KillToEnd()
+	case killPrevWord:
+		echo = s.Input.KillPrevWord()
+	}
+	if len(echo) == 0 {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	return s.WriteRaw(echo)
+}
+
+func handleHistoryStep(s *Session, prev bool) error {
+	var (
+		line string
+		ok   bool
+	)
+	if prev {
+		line, ok = s.History.Prev(string(s.Input.Buf))
+	} else {
+		line, ok = s.History.Next()
+	}
+	if !ok {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	return s.WriteRaw(s.Input.Replace(line))
+}
+
 func handleLineBreak(s *Session) error {
-	if len(s.InputBuffer) == 0 {
+	if len(s.Input.Buf) == 0 {
 		// Bare Enter: redraw the current mode's prompt without dispatching.
 		if mode := s.CurrentMode(); mode != nil {
 			if prompt := mode.Prompt(s); prompt != "" {
@@ -162,15 +281,17 @@ func handleLineBreak(s *Session) error {
 		}
 		return s.WriteRaw([]byte("\r\n"))
 	}
-	input := string(s.InputBuffer)
-	s.InputBuffer = s.InputBuffer[:0]
+	input := string(s.Input.Buf)
+	s.Input.Reset()
 	// Never log raw input while password masking is active — login,
 	// account-create, password-change, etc. all set InPasswordMode and
-	// the cleartext password must not enter logs.
+	// the cleartext password must not enter logs. Same rule for history:
+	// passwords must not survive into the ↑/↓ ring.
 	if s.InPasswordMode {
 		slog.Info("User entered command", "input", "(redacted)", "remote", s.RemoteAddress)
 	} else {
 		slog.Info("User entered command", "input", input, "remote", s.RemoteAddress)
+		s.History.Add(input)
 	}
 
 	if err := s.WriteRaw([]byte("\r\n")); err != nil {
@@ -186,19 +307,33 @@ func handleLineBreak(s *Session) error {
 }
 
 func handleBackspace(s *Session) error {
-	if len(s.InputBuffer) == 0 {
+	if s.InPasswordMode {
+		// Password mode keeps the legacy end-of-buffer-only behavior so
+		// the asterisk echo stays in lockstep with the buffer length.
+		if len(s.Input.Buf) == 0 {
+			return nil
+		}
+		s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-1]
+		s.Input.Cursor = len(s.Input.Buf)
+		return s.WriteRaw([]byte("\b \b"))
+	}
+	echo := s.Input.Backspace()
+	if echo == nil {
 		return nil
 	}
-	s.InputBuffer = s.InputBuffer[:len(s.InputBuffer)-1]
-	return s.WriteRaw([]byte("\b \b"))
+	return s.WriteRaw(echo)
 }
 
 func bufferInput(s *Session, b byte) error {
-	s.InputBuffer = append(s.InputBuffer, b)
 	if s.InPasswordMode {
+		// In password mode we keep an end-only model: append to buffer,
+		// echo a single asterisk. Cursor tracks the end so backspace
+		// stays aligned.
+		s.Input.Buf = append(s.Input.Buf, b)
+		s.Input.Cursor = len(s.Input.Buf)
 		return s.WriteRaw([]byte("*"))
 	}
-	return s.WriteRaw([]byte{b})
+	return s.WriteRaw(s.Input.Insert(b))
 }
 
 // handleTab implements end-of-buffer tab completion. Behavior:
@@ -219,7 +354,13 @@ func handleTab(s *Session) error {
 	if !ok {
 		return s.WriteRaw([]byte{ASCII_BEL})
 	}
-	buffer := string(s.InputBuffer)
+	// Tab completion only fires at end-of-line for now: completing
+	// mid-word with characters trailing the cursor would require us to
+	// rewrite the suffix and is more confusion than help. Bell instead.
+	if s.Input.Cursor != len(s.Input.Buf) {
+		return s.WriteRaw([]byte{ASCII_BEL})
+	}
+	buffer := string(s.Input.Buf)
 	partial := completionPartial(buffer)
 	cands := completer.Complete(s, buffer)
 	return applyCompletion(s, mode, partial, cands)
@@ -257,15 +398,17 @@ func applyCompletion(s *Session, mode Mode, partial string, cands []Candidate) e
 }
 
 // extendBuffer rewrites the trailing partial in-place and emits the diff.
-// All editing is end-of-buffer only (per design scope), so we erase the old
-// partial with backspaces (one per displayed rune) and write the replacement.
+// Tab is end-of-line only (handleTab guards on Cursor==len(Buf)), so we
+// erase the old partial with backspaces (one per displayed rune) and
+// write the replacement, keeping the cursor at the new end.
 func extendBuffer(s *Session, partial, replacement string) error {
-	if len(partial) > len(s.InputBuffer) {
+	if len(partial) > len(s.Input.Buf) {
 		// Defensive: should never happen, but don't slice past the start.
 		return nil
 	}
-	s.InputBuffer = s.InputBuffer[:len(s.InputBuffer)-len(partial)]
-	s.InputBuffer = append(s.InputBuffer, replacement...)
+	s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-len(partial)]
+	s.Input.Buf = append(s.Input.Buf, replacement...)
+	s.Input.Cursor = len(s.Input.Buf)
 
 	// Erase one display cell per rune of the old partial. ASCII verbs are
 	// the steady state today; this stays correct if non-ASCII candidates
@@ -285,6 +428,6 @@ func listAndRedraw(s *Session, mode Mode, cands []Candidate) error {
 	b.WriteString("\r\n")
 	b.WriteString(listing)
 	b.WriteString(prompt)
-	b.Write(s.InputBuffer)
+	b.Write(s.Input.Buf)
 	return s.WriteRaw([]byte(b.String()))
 }

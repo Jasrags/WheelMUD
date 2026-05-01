@@ -115,7 +115,7 @@ func TestHandleTab_PasswordMode(t *testing.T) {
 		t.Fatalf("push: %v", err)
 	}
 	s.InPasswordMode = true
-	s.InputBuffer = []byte("lo")
+	s.Input = LineEdit{Buf: []byte("lo"), Cursor: 2}
 
 	var wg sync.WaitGroup
 	out := drainPeer(peer, &wg)
@@ -130,8 +130,8 @@ func TestHandleTab_PasswordMode(t *testing.T) {
 	if !strings.Contains(out.String(), "\x07") {
 		t.Fatalf("expected bell in password mode, got %q", out.String())
 	}
-	if string(s.InputBuffer) != "lo" {
-		t.Fatalf("password mode must not mutate buffer: %q", s.InputBuffer)
+	if string(s.Input.Buf) != "lo" {
+		t.Fatalf("password mode must not mutate buffer: %q", s.Input.Buf)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestHandleTab_ZeroCandidates(t *testing.T) {
 	if err := s.PushMode(mode); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	s.InputBuffer = []byte("xyz")
+	s.Input = LineEdit{Buf: []byte("xyz"), Cursor: 3}
 
 	var wg sync.WaitGroup
 	out := drainPeer(peer, &wg)
@@ -156,8 +156,8 @@ func TestHandleTab_ZeroCandidates(t *testing.T) {
 	if !strings.Contains(out.String(), "\x07") {
 		t.Fatalf("expected bell on zero candidates, got %q", out.String())
 	}
-	if string(s.InputBuffer) != "xyz" {
-		t.Fatalf("buffer should be unchanged: %q", s.InputBuffer)
+	if string(s.Input.Buf) != "xyz" {
+		t.Fatalf("buffer should be unchanged: %q", s.Input.Buf)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestHandleTab_SingleCandidate(t *testing.T) {
 	if err := s.PushMode(mode); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	s.InputBuffer = []byte("q")
+	s.Input = LineEdit{Buf: []byte("q"), Cursor: 1}
 
 	var wg sync.WaitGroup
 	out := drainPeer(peer, &wg)
@@ -179,8 +179,8 @@ func TestHandleTab_SingleCandidate(t *testing.T) {
 	peer.Close()
 	wg.Wait()
 
-	if string(s.InputBuffer) != "quit " {
-		t.Fatalf("buffer = %q, want %q", s.InputBuffer, "quit ")
+	if string(s.Input.Buf) != "quit " {
+		t.Fatalf("buffer = %q, want %q", s.Input.Buf, "quit ")
 	}
 	wire := out.String()
 	// One \b \b for the partial 'q', then 'quit '.
@@ -202,7 +202,7 @@ func TestHandleTab_ExtendsToCommonPrefix(t *testing.T) {
 	if err := s.PushMode(mode); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	s.InputBuffer = []byte("l")
+	s.Input = LineEdit{Buf: []byte("l"), Cursor: 1}
 
 	var wg sync.WaitGroup
 	out := drainPeer(peer, &wg)
@@ -214,8 +214,8 @@ func TestHandleTab_ExtendsToCommonPrefix(t *testing.T) {
 	peer.Close()
 	wg.Wait()
 
-	if string(s.InputBuffer) != "loo" {
-		t.Fatalf("buffer = %q, want %q", s.InputBuffer, "loo")
+	if string(s.Input.Buf) != "loo" {
+		t.Fatalf("buffer = %q, want %q", s.Input.Buf, "loo")
 	}
 	if strings.Contains(out.String(), "look") {
 		t.Fatalf("listing should not appear when prefix can be extended: %q", out.String())
@@ -233,7 +233,7 @@ func TestHandleTab_ListsAndRedraws(t *testing.T) {
 	if err := s.PushMode(mode); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	s.InputBuffer = []byte("loo") // already at the common prefix
+	s.Input = LineEdit{Buf: []byte("loo"), Cursor: 3} // already at the common prefix
 
 	var wg sync.WaitGroup
 	out := drainPeer(peer, &wg)
@@ -252,8 +252,8 @@ func TestHandleTab_ListsAndRedraws(t *testing.T) {
 	if !strings.Contains(wire, "> loo") {
 		t.Fatalf("expected redraw of prompt + buffer: %q", wire)
 	}
-	if string(s.InputBuffer) != "loo" {
-		t.Fatalf("buffer must not change on listing: %q", s.InputBuffer)
+	if string(s.Input.Buf) != "loo" {
+		t.Fatalf("buffer must not change on listing: %q", s.Input.Buf)
 	}
 }
 

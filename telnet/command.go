@@ -31,6 +31,13 @@ type Command struct {
 	Long    string // optional multi-line help body
 	Auth    AuthLevel
 	Run     func(*Context) error
+	// Completer, if non-nil, supplies argument-side tab completion. args
+	// is the full argument line as typed (everything after the verb,
+	// leading whitespace already stripped). Implementations should match
+	// against the trailing partial — see CompletionPartial — and return
+	// candidates whose Text is the full replacement token. A nil return
+	// (or no Completer) bells.
+	Completer func(s *Session, args string) []Candidate
 }
 
 // Context is passed to Command.Run. It is created fresh per dispatch.
@@ -187,6 +194,10 @@ func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error 
 	if line == "" {
 		return nil
 	}
+	// User-level aliases are resolved once before lookup so a chained
+	// alias-of-alias can't recurse. expandAlias is a no-op when no
+	// matching alias exists or when the session has no table.
+	line = expandAlias(s.Aliases, line)
 	verb, rest := splitVerb(line)
 	cmd, err := r.Lookup(verb)
 	if err != nil {
@@ -198,7 +209,13 @@ func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error 
 		// privileged commands.
 		return s.WriteRaw([]byte("Unknown command\r\n"))
 	}
-	args := strings.Fields(rest)
+	args, err := Tokenize(rest)
+	if err != nil {
+		if errors.Is(err, ErrUnbalancedQuote) {
+			return s.WriteRaw([]byte("Unbalanced quote\r\n"))
+		}
+		return s.WriteRaw([]byte("Command error\r\n"))
+	}
 	if len(args) < cmd.MinArgs {
 		usage := cmd.Help
 		if usage == "" {
@@ -226,6 +243,11 @@ func writeLookupError(s *Session, err error) error {
 		return s.WriteRaw([]byte("Command error\r\n"))
 	}
 }
+
+// SplitVerb returns the leading word of line and the remainder with any
+// leading/trailing whitespace trimmed. Exposed so completion plumbing
+// elsewhere can split a buffer the same way Dispatch does.
+func SplitVerb(line string) (verb, rest string) { return splitVerb(line) }
 
 func splitVerb(line string) (verb, rest string) {
 	idx := strings.IndexAny(line, " \t")

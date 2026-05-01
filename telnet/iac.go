@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 )
@@ -231,23 +230,3 @@ func RequestTerminalType(conn net.Conn) error {
 	return nil
 }
 
-// DiscardANSI consumes an ANSI/VT escape sequence after the leading 0x1B has
-// been read. It bounds the read length to avoid spinning on unterminated
-// sequences from malicious clients.
-func DiscardANSI(r *bufio.Reader) error {
-	const maxANSILen = 64
-	for i := 0; i < maxANSILen; i++ {
-		b, err := r.ReadByte()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return err
-			}
-			return fmt.Errorf("read ANSI escape: %w", err)
-		}
-		// Final byte of CSI sequences is in 0x40-0x7E.
-		if b >= 0x40 && b <= 0x7E {
-			return nil
-		}
-	}
-	return errors.New("telnet: ANSI escape exceeds max length")
-}

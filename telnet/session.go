@@ -29,12 +29,17 @@ type Session struct {
 	TerminalType  string
 	Width         int
 	Height        int
-	// InputBuffer accumulates raw printable bytes until a line terminator
-	// arrives. It is owned by the read goroutine inside RunSession and must
-	// not be mutated from anywhere else; reading it from another goroutine
-	// is also unsafe. The slice retains its high-water-mark allocation for
-	// the life of the session, which is acceptable at MUD scale.
-	InputBuffer    []byte
+	// Input is the cursor-aware line model. Buf accumulates raw printable
+	// bytes until a line terminator arrives; Cursor tracks the insertion
+	// point for in-line editing. It is owned by the read goroutine inside
+	// RunSession and must not be mutated from anywhere else; reading from
+	// another goroutine is also unsafe. The buffer retains its high-water
+	// allocation for the session lifetime — acceptable at MUD scale.
+	Input LineEdit
+	// History is the per-session command-history ring used by ↑/↓
+	// navigation. Entries that arrive in InPasswordMode are skipped.
+	// Same goroutine-affinity rules as Input.
+	History        History
 	InPasswordMode bool
 	ColorLevel     int
 	// AuthLevel is the privilege the session has earned. Defaults to
@@ -46,6 +51,12 @@ type Session struct {
 	// successful auth. Zero means "not authenticated." Used for the
 	// session registry / multi-session policy.
 	AccountID int64
+
+	// Aliases holds the user-defined alias table consulted by
+	// Registry.Dispatch before verb lookup. May be nil; expandAlias
+	// tolerates that. Persistence across reconnects is deferred —
+	// see ROADMAP §4 ("User-defined aliases stored on the character").
+	Aliases *AliasTable
 
 	// In-world session state. CharacterID, CharacterName, and
 	// CurrentRoomID are owned by the dispatcher goroutine: written by
@@ -79,7 +90,8 @@ func NewSession(conn net.Conn) *Session {
 	return &Session{
 		Conn:          conn,
 		RemoteAddress: conn.RemoteAddr().String(),
-		InputBuffer:   make([]byte, 0),
+		Input:         LineEdit{Buf: make([]byte, 0)},
+		Aliases:       NewAliasTable(),
 		Width:         80,
 		Height:        24,
 		ColorLevel:    ColorLevel16,

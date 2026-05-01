@@ -59,11 +59,23 @@ constants and helpers in `telnet/iac.go`.
 - [x] Tab autocomplete (verb-only) via `telnet/completion.go` + `Game.Complete`
 - [x] Password-mode echo suppression — driven by Login / Create mode lifecycle
       (`Session.InPasswordMode` flipped on entering / leaving password substep)
-- [ ] Argument-side tab completion (per-command `Completer`)
-- [ ] Quoted-argument tokenization (`say "hello world"`)
-- [ ] Command history with up/down arrows (`ESC [ A` / `ESC [ B`)
-- [ ] In-line cursor movement (left/right arrows, Home/End, Ctrl-A/E/U/W)
-- [ ] Aliases at the user level (distinct from registry aliases)
+- [x] Argument-side tab completion via `Command.Completer`; `Game.Complete`
+      delegates to the matched command once whitespace appears, with
+      AuthLevel filtering so privileged verbs can't be enumerated
+- [x] Quoted-argument tokenization (`telnet/tokenize.go`) — `Tokenize`
+      replaces `strings.Fields` in `Registry.Dispatch`; supports double,
+      single, and bare-backslash escapes; unbalanced quotes surface as
+      "Unbalanced quote"
+- [x] Command history with up/down arrows — `History` ring on `Session`
+      (`telnet/history.go`), CSI parser (`telnet/csi.go`) recognizes
+      ESC[A/B and SS3 ESC O A/B; password-mode lines never enter history
+- [x] In-line cursor movement — `LineEdit` model (`telnet/lineedit.go`)
+      handles ←/→, Home/End (ESC[H/F, ESC[1~, ESC[4~), forward-delete
+      (ESC[3~), Ctrl-A/E/U/W/K, mid-line insert/backspace; password mode
+      bells on every motion key
+- [x] Aliases at the user level — `AliasTable` on `Session`,
+      `alias`/`unalias` commands, single-pass expansion in
+      `Registry.Dispatch` so chained aliases don't recurse
 
 ## 4. Command system
 
@@ -73,10 +85,13 @@ constants and helpers in `telnet/iac.go`.
 - [x] Sample commands: `quit`, `who`, `help`, `colors`
 - [x] `AuthLevel` enforcement in `Registry.Dispatch` — denials render as
       `"Unknown command"` so privileged verbs can't be enumerated
-- [ ] Per-command argument completer
+- [x] Per-command argument completer — `Command.Completer` field;
+      `help` ships a real one (sample: tab on `help <prefix>`)
 - [ ] Command cooldowns / lag system (combat balance lever)
 - [ ] Macro / multi-command lines (`;` separator)
-- [ ] User-defined aliases stored on the character
+- [ ] User-defined aliases stored on the character (the in-memory
+      `AliasTable` from §3 is the runtime; persistence still pending —
+      needs a `character_aliases` table or a JSON column on character)
 
 ## 5. Mode / state stack
 
