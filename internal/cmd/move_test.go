@@ -12,9 +12,9 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// findCmd looks a command up in a slice produced by NewMoveFamily. The
-// move family returns the six commands in a fixed order but tests should
-// not depend on that ordering.
+// findCmd looks a command up in a slice produced by NewMoveFamily.
+// The family returns commands in a fixed order but tests should not
+// depend on that ordering.
 func findCmd(t *testing.T, cmds []*telnet.Command, name string) *telnet.Command {
 	t.Helper()
 	for _, c := range cmds {
@@ -122,6 +122,47 @@ func TestMove_PublishesPlayerEnteredAndLeft(t *testing.T) {
 	}
 	if len(entered) != 1 || entered[0].FromRoomID != 1 || entered[0].ToRoomID != 2 || entered[0].CharacterID != c.ID {
 		t.Fatalf("PlayerEntered = %+v", entered)
+	}
+}
+
+func TestMove_DiagonalDirections(t *testing.T) {
+	// Each diagonal verb gets its own command in the family. Wire a
+	// throwaway exit per direction off room 1 and assert the command
+	// resolves and moves the session to the matching destination.
+	rooms, exits, items, mobs := seedWorld(t)
+	chars := repo.NewMemoryCharacterRepo()
+
+	cases := []struct {
+		name string
+		dir  string
+		dest int64
+	}{
+		{"northeast", repo.DirNortheast, 10},
+		{"northwest", repo.DirNorthwest, 11},
+		{"southeast", repo.DirSoutheast, 12},
+		{"southwest", repo.DirSouthwest, 13},
+	}
+	for _, tc := range cases {
+		rooms.Insert(repo.Room{ID: tc.dest, Name: tc.name + " room"})
+		exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: tc.dest, Direction: tc.dir})
+	}
+
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := bufSession(t)
+			s.CurrentRoomID = 1
+
+			cmd := findCmd(t, family, tc.name)
+			ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: tc.name}
+			if err := cmd.Run(ctx); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if s.CurrentRoomID != tc.dest {
+				t.Fatalf("CurrentRoomID = %d, want %d", s.CurrentRoomID, tc.dest)
+			}
+		})
 	}
 }
 

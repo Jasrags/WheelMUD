@@ -10,11 +10,14 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// NewMoveFamily builds the six direction commands (north, south, east,
-// west, up, down) plus their single-letter aliases. Each command runs the
-// shared moveDir helper, which resolves the exit, updates the session,
-// persists the new location via CharacterRepo, publishes PlayerLeft /
-// PlayerEntered on bus, and re-renders the room.
+// NewMoveFamily builds the ten direction commands — cardinals
+// (north/south/east/west), vertical (up/down), and diagonals
+// (northeast/northwest/southeast/southwest) — each with its short-code
+// alias (n/s/e/w/u/d/ne/nw/se/sw) matching the DB direction column.
+// Each command runs the shared moveDir helper, which resolves the
+// exit, updates the session, persists the new location via
+// CharacterRepo, publishes PlayerLeft / PlayerEntered on bus, and
+// re-renders the room.
 //
 // bus may be nil during tests that don't care about event emission;
 // moveDir tolerates a nil bus.
@@ -37,6 +40,10 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		build("west", repo.DirWest),
 		build("up", repo.DirUp),
 		build("down", repo.DirDown),
+		build("northeast", repo.DirNortheast),
+		build("northwest", repo.DirNorthwest),
+		build("southeast", repo.DirSoutheast),
+		build("southwest", repo.DirSouthwest),
 	}
 }
 

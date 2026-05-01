@@ -5,16 +5,21 @@ import (
 	"errors"
 )
 
-// Direction constants for room exits. The DB stores the same single-byte
-// strings (CHECK constraint in 0003_create_world.sql); commands accept
-// long names ("north") and translate before hitting the repo.
+// Direction constants for room exits. The DB stores the same short
+// codes (CHECK constraint in 0003_create_world.sql, widened by
+// 0007_widen_exit_directions.sql); commands accept long names
+// ("north") and translate before hitting the repo.
 const (
-	DirNorth = "n"
-	DirSouth = "s"
-	DirEast  = "e"
-	DirWest  = "w"
-	DirUp    = "u"
-	DirDown  = "d"
+	DirNorth     = "n"
+	DirSouth     = "s"
+	DirEast      = "e"
+	DirWest      = "w"
+	DirUp        = "u"
+	DirDown      = "d"
+	DirNortheast = "ne"
+	DirNorthwest = "nw"
+	DirSoutheast = "se"
+	DirSouthwest = "sw"
 )
 
 // Exit is a one-way connection between two rooms. Bidirectional travel

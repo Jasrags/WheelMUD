@@ -82,12 +82,16 @@ func validateStarter(rooms []Room) error {
 }
 
 var validDirections = map[string]bool{
-	repo.DirNorth: true,
-	repo.DirSouth: true,
-	repo.DirEast:  true,
-	repo.DirWest:  true,
-	repo.DirUp:    true,
-	repo.DirDown:  true,
+	repo.DirNorth:     true,
+	repo.DirSouth:     true,
+	repo.DirEast:      true,
+	repo.DirWest:      true,
+	repo.DirUp:        true,
+	repo.DirDown:      true,
+	repo.DirNortheast: true,
+	repo.DirNorthwest: true,
+	repo.DirSoutheast: true,
+	repo.DirSouthwest: true,
 }
 
 func validateExits(rooms []Room) error {
@@ -99,7 +103,7 @@ func validateExits(rooms []Room) error {
 		seenDir := make(map[string]bool, len(r.Exits))
 		for dir, target := range r.Exits {
 			if !validDirections[dir] {
-				return fmt.Errorf("%s:%d: room %q has invalid exit direction %q (want one of n/s/e/w/u/d)",
+				return fmt.Errorf("%s:%d: room %q has invalid exit direction %q (want one of n/s/e/w/u/d/ne/nw/se/sw)",
 					r.SourceFile, r.Line, r.ID, dir)
 			}
 			if seenDir[dir] {

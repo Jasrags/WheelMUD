@@ -9,16 +9,19 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// directionLongName maps the single-byte direction codes stored on Exit
-// to the words rendered in look output. Mirrored by lookupDirection in
-// move.go.
+// directionLongName maps the short direction codes stored on Exit
+// (n/s/e/w/u/d/ne/nw/se/sw) to the words rendered in look output.
 var directionLongName = map[string]string{
-	repo.DirNorth: "north",
-	repo.DirSouth: "south",
-	repo.DirEast:  "east",
-	repo.DirWest:  "west",
-	repo.DirUp:    "up",
-	repo.DirDown:  "down",
+	repo.DirNorth:     "north",
+	repo.DirSouth:     "south",
+	repo.DirEast:      "east",
+	repo.DirWest:      "west",
+	repo.DirUp:        "up",
+	repo.DirDown:      "down",
+	repo.DirNortheast: "northeast",
+	repo.DirNorthwest: "northwest",
+	repo.DirSoutheast: "southeast",
+	repo.DirSouthwest: "southwest",
 }
 
 // NewLook builds the look command. It reads the room, exits, items, and
