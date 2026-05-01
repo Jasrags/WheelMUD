@@ -7,19 +7,26 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/db"
+	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/tick"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 const (
-	defaultListenAddr = ":2323"
-	defaultDBDSN      = "wheelmud.db"
+	defaultListenAddr    = ":2323"
+	defaultDBDSN         = "wheelmud.db"
+	shutdownDrainTimeout = 10 * time.Second
 )
 
 // server bundles the long-lived dependencies a connection needs. New
@@ -38,7 +45,13 @@ type server struct {
 	items      repo.ItemRepo
 	mobs       repo.MobRepo
 	sessions   *session.Registry
+	scheduler  *tick.Scheduler
+	buckets    *tick.Buckets
+	bus        *eventbus.Bus
 	newInitial func() telnet.Mode
+
+	wg     sync.WaitGroup
+	closed chan struct{}
 }
 
 func main() {
@@ -69,13 +82,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, characters)
+	sessions := session.NewRegistry()
+	bus := eventbus.New()
+
+	registry, err := buildRegistry(rooms, exits, items, mobs, characters, sessions, bus)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
 	}
 
-	sessions := session.NewRegistry()
+	scheduler := tick.New()
+	buckets := tick.NewBuckets(scheduler)
+
 	gameMode := mode.NewGame(registry)
 	srv := &server{
 		accounts:   accounts,
@@ -85,36 +103,87 @@ func main() {
 		items:      items,
 		mobs:       mobs,
 		sessions:   sessions,
+		scheduler:  scheduler,
+		buckets:    buckets,
+		bus:        bus,
+		closed:     make(chan struct{}),
 		newInitial: func() telnet.Mode {
 			return mode.NewLogin(accounts, characters, sessions, gameMode)
 		},
 	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	scheduler.Start(ctx)
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("Failed to start server", "error", err)
 		os.Exit(1)
 	}
-	defer ln.Close()
 
 	slog.Info("Server started", "address", addr, "db", dsn)
 
+	go func() {
+		<-ctx.Done()
+		slog.Info("Shutdown signal received, closing listener")
+		close(srv.closed)
+		_ = ln.Close()
+	}()
+
+	srv.acceptLoop(ln)
+	srv.shutdown()
+}
+
+func (srv *server) acceptLoop(ln net.Listener) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			select {
+			case <-srv.closed:
+				return
+			default:
+			}
 			slog.Error("Failed to accept connection", "error", err)
 			continue
 		}
 
-		session := telnet.NewSession(c)
-		if session == nil {
+		s := telnet.NewSession(c)
+		if s == nil {
 			slog.Error("Failed to create telnet session", "remote", c.RemoteAddr().String())
 			c.Close()
 			continue
 		}
 
-		go srv.handleConnection(session)
+		srv.wg.Add(1)
+		go func() {
+			defer srv.wg.Done()
+			srv.handleConnection(s)
+		}()
 	}
+}
+
+func (srv *server) shutdown() {
+	slog.Info("Draining active sessions", "timeout", shutdownDrainTimeout)
+	done := make(chan struct{})
+	go func() {
+		srv.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		slog.Info("All sessions drained")
+	case <-time.After(shutdownDrainTimeout):
+		slog.Warn("Shutdown drain timed out", "timeout", shutdownDrainTimeout)
+	}
+	srv.buckets.Stop()
+	srv.scheduler.Stop()
+	srv.bus.Stop()
+	slog.Info("Scheduler stopped")
 }
 
 func envOr(key, fallback string) string {
@@ -130,7 +199,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
 		return nil, err
@@ -141,7 +210,10 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters)...); err != nil {
+	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus)...); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions)); err != nil {
 		return nil, err
 	}
 	return r, nil

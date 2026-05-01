@@ -4,18 +4,21 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 // NewMoveFamily builds the six direction commands (north, south, east,
 // west, up, down) plus their single-letter aliases. Each command runs the
 // shared moveDir helper, which resolves the exit, updates the session,
-// persists the new location via CharacterRepo, and re-renders the room.
+// persists the new location via CharacterRepo, publishes PlayerLeft /
+// PlayerEntered on bus, and re-renders the room.
 //
-// All four world repos plus characters are required so a successful move
-// can immediately call into RenderRoom.
-func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo) []*telnet.Command {
+// bus may be nil during tests that don't care about event emission;
+// moveDir tolerates a nil bus.
+func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, bus *eventbus.Bus) []*telnet.Command {
 	build := func(name, dir string) *telnet.Command {
 		return &telnet.Command{
 			Name:    name,
@@ -23,7 +26,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			Help:    "Move " + name,
 			Auth:    telnet.AuthPlayer,
 			Run: func(c *telnet.Context) error {
-				return moveDir(c, dir, rooms, exits, items, mobs, characters)
+				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus)
 			},
 		}
 	}
@@ -40,7 +43,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 // moveDir is the work behind every direction command. Pulled out as a
 // helper so each direction's Run is a one-liner and the move semantics
 // live in one place.
-func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo) error {
+func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, bus *eventbus.Bus) error {
 	s := c.Session
 	if s.CurrentRoomID == 0 {
 		return s.WriteRaw([]byte("You are nowhere — cannot move.\r\n"))
@@ -55,6 +58,15 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		return s.WriteRaw([]byte("Could not move right now.\r\n"))
 	}
 
+	fromRoomID := s.CurrentRoomID
+	if bus != nil && s.CharacterID != 0 {
+		bus.Publish(c.Ctx, world.PlayerLeft{
+			CharacterID: s.CharacterID,
+			FromRoomID:  fromRoomID,
+			ToRoomID:    exit.ToRoomID,
+		})
+	}
+
 	s.CurrentRoomID = exit.ToRoomID
 	if s.CharacterID != 0 {
 		// Best-effort persistence: if it fails we still let the player
@@ -64,5 +76,14 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 			slog.Warn("RecordRoom failed", "char", s.CharacterID, "to", exit.ToRoomID, "error", err)
 		}
 	}
+
+	if bus != nil && s.CharacterID != 0 {
+		bus.Publish(c.Ctx, world.PlayerEntered{
+			CharacterID: s.CharacterID,
+			FromRoomID:  fromRoomID,
+			ToRoomID:    exit.ToRoomID,
+		})
+	}
+
 	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs)
 }

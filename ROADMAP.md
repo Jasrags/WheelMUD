@@ -157,11 +157,35 @@ constants and helpers in `telnet/iac.go`.
 
 ## 8. Game loop & scheduling
 
-- [ ] Tick / heartbeat goroutine (e.g. 1 Hz) with pluggable subscribers
-- [ ] Pulse buckets (combat pulse, regen pulse, area reset pulse)
-- [ ] Event bus / pub-sub for room and zone events
-- [ ] Delayed / scheduled actions (`after 5s do X`)
-- [ ] Graceful shutdown: drain dispatcher, save world, close listener
+- [x] Tick / heartbeat goroutine — `internal/tick.Scheduler` runs a
+      single 1 Hz goroutine, dispatches due `Subscribe(every, fn)` /
+      `After(d, fn)` handlers fire-and-forget, recovers panics, warns
+      on >50 ms fan-out. Clock seam (`WithClock`) for deterministic
+      tests. Owned by `server` in `cmd/server/main.go`, started after
+      DB open and stopped after the session drain.
+- [x] Pulse buckets — `internal/tick.Bucket` wraps a single scheduler
+      subscription and fans out to its own subscriber list;
+      `tick.NewBuckets(s)` registers `combat` / `regen` / `areaReset`
+      with default cadences (4 s / 30 s / 5 min). No game logic yet —
+      just the plumbing for §11 / §12 to attach to.
+- [x] Event bus / pub-sub for room and zone events —
+      `internal/eventbus.Bus` with generic `Subscribe[T]` /
+      `SubscribeAsync[T]`, sync dispatch by default, single-worker
+      async path, panic-recovery per handler. `world.PlayerEntered`
+      / `PlayerLeft` defined in `internal/world/events.go` and
+      published from `cmd/move.go::moveDir`. Owned by `server` and
+      drained alongside scheduler in `srv.shutdown()`.
+- [x] Delayed / scheduled actions (`after 5s do X`) —
+      `Scheduler.After` for unscoped one-shots; `tick.AfterCtx`
+      auto-cancels via `context.Context` so callers can pass a
+      session or room ctx and have the timer die with its scope.
+      The wrapped handler also re-checks `ctx.Err()` before firing
+      so a race between dispatch and cancel doesn't leak through.
+- [x] Graceful shutdown — `signal.NotifyContext(SIGINT, SIGTERM)` in
+      `main.go` closes the listener, accept loop exits on
+      `net.ErrClosed`, `srv.shutdown()` drains in-flight sessions via
+      `WaitGroup` with a 10 s bound, then stops buckets + scheduler.
+      World save still pending (depends on §7 dirty-tracking).
 
 ## 9. World model
 
