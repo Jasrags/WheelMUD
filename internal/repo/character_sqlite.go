@@ -43,7 +43,8 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	args = append(args, charCoreValues(c, jsons.dr, jsons.resists, jsons.affects)...)
 	args = append(args, charPlayerValues(c,
 		jsons.classLevels, jsons.feats, jsons.skills, jsons.classFeatures,
-		jsons.questLog, jsons.dialogueState, jsons.equipment, jsons.inventory)...)
+		jsons.questLog, jsons.dialogueState, jsons.equipment, jsons.inventory,
+		jsons.channelSettings)...)
 
 	query := fmt.Sprintf(
 		`INSERT INTO characters(
@@ -137,6 +138,24 @@ func (r *SQLiteCharacterRepo) RecordCore(ctx context.Context, id int64, hp, subd
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordChannelSettings(ctx context.Context, id int64, settings map[string]bool) error {
+	js, err := jsonMarshalString(settings)
+	if err != nil {
+		return fmt.Errorf("marshal channel settings: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET channel_settings_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record channel settings: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 // characterSelect is the canonical SELECT used by FindByName /
 // ListByAccount. Columns ordered: identity → CurrentRoomID → Core
 // block → player block. scanCharacter mirrors the order.
@@ -162,7 +181,8 @@ func scanCharacter(s scanner) (Character, error) {
 		&j.classLevels, &j.feats, &j.skills, &j.classFeatures,
 		&coinCP, &bankCP,
 		&fatigue, &idle, &login,
-		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory)...)
+		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
+		&j.channelSettings)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
@@ -192,9 +212,10 @@ func scanCharacter(s scanner) (Character, error) {
 // characters table (Core's three + player block's eight). Same
 // pattern as templateJSON in creature_sql.go.
 type characterJSON struct {
-	dr, resists, affects                         string
-	classLevels, feats, skills, classFeatures    string
+	dr, resists, affects                          string
+	classLevels, feats, skills, classFeatures     string
 	questLog, dialogueState, equipment, inventory string
+	channelSettings                               string
 }
 
 func marshalCharacterJSON(c Character) (characterJSON, error) {
@@ -233,6 +254,9 @@ func marshalCharacterJSON(c Character) (characterJSON, error) {
 	if j.inventory, err = marshalJSONSlice(c.Inventory); err != nil {
 		return j, err
 	}
+	if j.channelSettings, err = jsonMarshalString(c.ChannelSettings); err != nil {
+		return j, err
+	}
 	return j, nil
 }
 
@@ -268,6 +292,9 @@ func (j characterJSON) unmarshalInto(c *Character) error {
 		return err
 	}
 	if err := unmarshalJSONSlice(j.inventory, &c.Inventory); err != nil {
+		return err
+	}
+	if err := jsonUnmarshalString(j.channelSettings, &c.ChannelSettings); err != nil {
 		return err
 	}
 	return nil

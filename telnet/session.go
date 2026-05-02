@@ -83,9 +83,15 @@ type Session struct {
 	// SetLastTellFrom / LastTellFrom / StampInput / IdleSince
 	// helpers; the fields themselves are unexported so callers
 	// can't bypass the lock.
-	crossMu       sync.Mutex
-	lastTellFrom  string
-	lastInputAt   time.Time
+	crossMu      sync.Mutex
+	lastTellFrom string
+	lastInputAt  time.Time
+	// channelMuted holds the per-channel mute map keyed by lowercase
+	// channel name; true = the player has the channel turned off and
+	// should not receive broadcasts. Loaded from the character at game
+	// promotion and written through to the repo on toggle. Read by
+	// other dispatchers iterating Snapshot() during a broadcast.
+	channelMuted map[string]bool
 
 	writeMu sync.Mutex
 
@@ -119,6 +125,64 @@ func (s *Session) StampInput(t time.Time) {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	s.lastInputAt = t
+}
+
+// SetChannelMuted replaces the mute map. Pass nil to clear. The
+// caller's map is copied so subsequent caller mutation doesn't race
+// with broadcast readers.
+func (s *Session) SetChannelMuted(m map[string]bool) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if len(m) == 0 {
+		s.channelMuted = nil
+		return
+	}
+	cp := make(map[string]bool, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	s.channelMuted = cp
+}
+
+// IsChannelMuted reports whether the named channel is muted on this
+// session. Lookup is case-insensitive on the channel name; callers
+// should already pass a normalized lowercase name.
+func (s *Session) IsChannelMuted(name string) bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.channelMuted[name]
+}
+
+// ToggleChannelMuted flips the mute bit for the named channel and
+// returns the new value (true = now muted). The lazy allocation of
+// the map keeps default-everything sessions cheap.
+func (s *Session) ToggleChannelMuted(name string) bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if s.channelMuted == nil {
+		s.channelMuted = make(map[string]bool)
+	}
+	if s.channelMuted[name] {
+		delete(s.channelMuted, name)
+		return false
+	}
+	s.channelMuted[name] = true
+	return true
+}
+
+// ChannelMutedSnapshot returns a copy of the mute map suitable for
+// persisting. May be nil when nothing is muted.
+func (s *Session) ChannelMutedSnapshot() map[string]bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if len(s.channelMuted) == 0 {
+		return nil
+	}
+	cp := make(map[string]bool, len(s.channelMuted))
+	for k, v := range s.channelMuted {
+		cp[k] = v
+	}
+	return cp
 }
 
 // IdleSince returns now - LastInputAt, or zero when no command has

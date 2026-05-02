@@ -37,9 +37,9 @@ type Character struct {
 	Core creature.Core
 
 	// Player-only fields (migration 0009).
-	Race          creature.Race
-	Background    creature.Background
-	ClassLevels   map[creature.Class]int8
+	Race        creature.Race
+	Background  creature.Background
+	ClassLevels map[creature.Class]int8
 
 	XP             int64
 	PracticePoints int16
@@ -76,6 +76,13 @@ type Character struct {
 	DialogueState map[int64]creature.DialogueCursor
 	Equipment     creature.Equipment
 	Inventory     []int64
+
+	// ChannelSettings holds per-channel mute state keyed by channel
+	// name (lowercase). `true` means the player has the channel
+	// turned off and won't receive broadcasts; absent / `false`
+	// means they're listening on the default. Kept sparse so the
+	// JSON column stays small for the common (all-defaults) case.
+	ChannelSettings map[string]bool
 }
 
 // CharacterRepo is the persistence boundary character-select / character-
@@ -101,6 +108,10 @@ type CharacterRepo interface {
 	// / weave-resolution paths call this; immutable fields like
 	// abilities and class are untouched.
 	RecordCore(ctx context.Context, id int64, hpCurrent, subdual int32, conditions creature.Condition, positionFlags creature.PositionFlags) error
+	// RecordChannelSettings persists the per-channel mute map after
+	// a toggle. The channel command writes through immediately so
+	// the setting survives logout even if autosave hasn't fired.
+	RecordChannelSettings(ctx context.Context, id int64, settings map[string]bool) error
 }
 
 var (

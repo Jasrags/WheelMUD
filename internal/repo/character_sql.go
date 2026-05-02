@@ -11,15 +11,15 @@ import (
 //
 // Differs from coreColumns (used by mob_templates) on three axes:
 //
-//   1. Adds hp_current / subdual / conditions / position_flags /
-//      affects_json — characters are always "live" creatures, so
-//      these instance-style fields live on the row too.
-//   2. Splits out as a separate constant rather than reusing
-//      coreColumns + extras, because the column ORDER differs from
-//      0008 and embedding a different sequence with the same name
-//      would silently corrupt scans.
-//   3. Excludes mob-template-only fields (challenge_code, behavior,
-//      shadow_*, loot, dialogue_tree, shopkeeper, etc.).
+//  1. Adds hp_current / subdual / conditions / position_flags /
+//     affects_json — characters are always "live" creatures, so
+//     these instance-style fields live on the row too.
+//  2. Splits out as a separate constant rather than reusing
+//     coreColumns + extras, because the column ORDER differs from
+//     0008 and embedding a different sequence with the same name
+//     would silently corrupt scans.
+//  3. Excludes mob-template-only fields (challenge_code, behavior,
+//     shadow_*, loot, dialogue_tree, shopkeeper, etc.).
 const charCoreColumns = `size, type, gender, alignment,
 		str_cur, str_max, str_inh,
 		dex_cur, dex_max, dex_inh,
@@ -45,7 +45,8 @@ const charPlayerColumns = `race, background, class_levels_json,
 		coin_cp, bank_cp,
 		encumbrance, fatigue_until, position, idle_since,
 		bound_room_id, played_seconds, last_login,
-		quest_log_json, dialogue_state_json, equipment_json, inventory_json`
+		quest_log_json, dialogue_state_json, equipment_json, inventory_json,
+		channel_settings_json`
 
 // charCoreValues returns the bound-parameter slice for the Core
 // columns in INSERT order. Caller marshals the JSON columns once
@@ -98,7 +99,7 @@ func charCoreScanDest(c *Character, drJSON, resistsJSON, affectsJSON *string) []
 // FatigueUntil / IdleSince / LastLogin maps to NULL rather than
 // the zero time.
 func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON,
-	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON string,
+	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON string,
 ) []any {
 	return []any{
 		c.Race, c.Background, classLevelsJSON,
@@ -109,6 +110,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		c.Encumbrance, nullTime(c.FatigueUntil), c.Position, nullTime(c.IdleSince),
 		c.BoundRoomID, c.PlayedSeconds, nullTime(c.LastLogin),
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
+		channelSettingsJSON,
 	}
 }
 
@@ -119,7 +121,7 @@ func charPlayerScanDest(c *Character,
 	classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON *string,
 	coinCP, bankCP *int64,
 	fatigueUntil, idleSince, lastLogin *sql.NullTime,
-	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON *string,
+	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON *string,
 ) []any {
 	return []any{
 		&c.Race, &c.Background, classLevelsJSON,
@@ -130,6 +132,7 @@ func charPlayerScanDest(c *Character,
 		&c.Encumbrance, fatigueUntil, &c.Position, idleSince,
 		&c.BoundRoomID, &c.PlayedSeconds, lastLogin,
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
+		channelSettingsJSON,
 	}
 }
 

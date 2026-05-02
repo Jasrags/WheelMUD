@@ -656,12 +656,24 @@ will need on top of those tables.
 - [ ] `shout` / `yell` (zone-wide) — broadcast to every session whose
       character is in the same `zone_id`. Higher cost (small move
       drain) to discourage spam. Suppressed in `silent` rooms.
-- [ ] Channels (`ooc`, `gossip`, `newbie`) with on/off toggles —
-      `channels` table seeds (`name`, `min_level`, `color`). Per-
-      character `channel_settings` JSON tracks on/off + per-channel
-      mute. Dispatch via the §8 event bus so admin tools can snoop.
-      Built-in: `ooc`, `gossip`, `newbie` (auto-leave at level 10),
-      `auction`, `clan` (filtered by clan id).
+- [~] Channels (`ooc`, `gossip`, `newbie`) with on/off toggles —
+      catalog table + repo
+      (`internal/repo/channel{,_sqlite,_memory,_test}.go`,
+      migration `0011_create_channels.sql`) seeded with `ooc` /
+      `gossip` / `newbie`. `internal/cmd/channel.go::NewChannel`
+      registers one verb per row at startup; no-arg toggles the
+      caller's mute bit and write-throughs via
+      `CharacterRepo.RecordChannelSettings`, args broadcasts
+      `[<NAME>] <speaker>: <text>` to every other authenticated
+      session whose mute bit is off. `channels` overview command
+      lists each channel with the caller's on/off state. Per-
+      character mute lives in `characters.channel_settings_json`
+      (sparse — keys present only when muted) and is mirrored onto
+      `Session.channelMuted` (crossMu-guarded) at game promotion.
+      Pending: `min_level` enforcement / `newbie` auto-leave at
+      level 10 (blocked on §12 level computation), §8 event-bus
+      dispatch for admin snoop, and `auction` / `clan` channels
+      (clan needs clan_id from §17).
 - [~] `who` — `internal/cmd/who.go::NewWho` iterates
       `session.Registry.Snapshot()`, renders each bound session
       with its character name, "(you)" marker, and idle time

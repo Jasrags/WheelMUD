@@ -105,6 +105,26 @@ func (r *MemoryCharacterRepo) RecordRoom(_ context.Context, id, roomID int64) er
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordChannelSettings(_ context.Context, id int64, settings map[string]bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if len(settings) == 0 {
+				c.ChannelSettings = nil
+				return nil
+			}
+			cp := make(map[string]bool, len(settings))
+			for k, v := range settings {
+				cp[k] = v
+			}
+			c.ChannelSettings = cp
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordCore(_ context.Context, id int64, hp, subdual int32, cond creature.Condition, pos creature.PositionFlags) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

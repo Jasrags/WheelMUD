@@ -87,6 +87,12 @@ func main() {
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
 	mobs := repo.NewSQLiteMobInstanceRepo(conn)
+	channelRepo := repo.NewSQLiteChannelRepo(conn)
+	channels, err := channelRepo.List(context.Background())
+	if err != nil {
+		slog.Error("Failed to load channel catalog", "error", err)
+		os.Exit(1)
+	}
 
 	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
 		slog.Error("World load failed", "error", err)
@@ -96,7 +102,7 @@ func main() {
 	sessions := session.NewRegistry()
 	bus := eventbus.New()
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, characters, sessions, bus)
+	registry, err := buildRegistry(rooms, exits, items, mobs, characters, sessions, bus, channels)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -277,7 +283,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -288,6 +294,14 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewTell(sessions),
 		cmd.NewReply(sessions),
 	); err != nil {
+		return nil, err
+	}
+	for _, ch := range channels {
+		if err := r.Register(cmd.NewChannel(ch, sessions, characters)); err != nil {
+			return nil, err
+		}
+	}
+	if err := r.Register(cmd.NewChannelsList(channels)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewAlias(), cmd.NewUnalias()); err != nil {
