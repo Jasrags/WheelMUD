@@ -26,6 +26,7 @@ go.work.sum
 
 /tmp
 project.zip
+/docs/Wheel-of-Time-RPG.pdf
 
 # Project-local Claude Code settings
 .claude/

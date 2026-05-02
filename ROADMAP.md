@@ -224,6 +224,10 @@ constants and helpers in `telnet/iac.go`.
       populated in `promoteToGame` and persisted across reconnects via
       `CharacterRepo.RecordRoom`. `look`, `n/s/e/w/u/d` commands wired into
       Game mode (`internal/cmd/look.go`, `internal/cmd/move.go`).
+      Follow-up: drop the legacy flat `mobs` table (and its
+      `repo.Mob` SQLite/memory impls) once the world loader is
+      migrated to spawn `mob_instances` from `mob_templates` —
+      see "Player character extending the mob model" in §9.
 - [x] World data on disk (YAML/JSON area files) with a loader —
       `internal/world` package: `gopkg.in/yaml.v3` parsing, strict
       cross-reference validation (unique ids, exactly-one starter, valid
@@ -331,7 +335,10 @@ will need on top of those tables.
       holding), liquid containers as a separate subtype with capacity
       in sips and a liquid id.
 - [~] **Mob / NPC** — `repo.Mob` has id, room/zone, name,
-      description, `external_id`. Pending: stat block (level, HP/MP,
+      description, `external_id`; `mob_templates` / `mob_instances`
+      tables and `creature.MobTemplate` / `MobInstance` types now
+      exist (see "Player character extending the mob model" below)
+      but no repo or loader integration yet. Pending: stat block (level, HP/MP,
       str/dex/con/int/wis/cha, AC, hit/dam dice, attack type,
       damage type), behavior flags (`aggressive`, `wimpy`,
       `sentinel`, `scavenger`, `assist-same-race`, `helper`),
@@ -340,20 +347,113 @@ will need on top of those tables.
       (zone reset references), dialogue/script hooks (§15
       triggers), shopkeeper subtype (inventory list, buy/sell
       multipliers, hours), quest-giver flag.
-- [ ] **Player character extending the mob model** — share a
-      `creatures` core (stats, position, equipment, inventory,
-      affects) and split into `mob_template` (immutable) /
-      `mob_instance` (in-world state) / `character` (persisted
-      player). Player adds: account fk, class, race, alignment,
-      XP/level curve state, skill/spell book, quest log,
-      hunger/thirst, condition (standing/sitting/sleeping/fighting),
-      idle timer, bank balance, played-time counter, last-login.
-- [ ] **Equipment slots and wear/wield logic** — slot enum
-      (`light`, `head`, `neck`, `body`, `arms`, `hands`, `wrist-l/r`,
-      `finger-l/r`, `waist`, `legs`, `feet`, `wield`, `hold`,
-      `shield`, `back`, `face`, `ear-l/r`, `float`), wear-flag
-      validation against item, two-handed weapons consume `wield` +
-      `hold`, swap semantics, save/restore on login, affects
+- [~] **Player character extending the mob model** — type skeleton
+      and schema landed (`internal/creature/creature.go` defines
+      `Core`, `Abilities`/`AbilityScore`, `Saves`, `Speed`,
+      condition/position/quality bitsets, `Affect`/`StatMod`,
+      damage types + DR/resists, `Equipment` slots, `Channeling`
+      sub-record, `MobTemplate`, `MobInstance`, `Character`).
+      Migrations `0008_create_creatures.sql` (mob_templates,
+      mob_instances, polymorphic channeling) and
+      `0009_extend_characters.sql` (Core + player columns) applied.
+      Pending: `MobTemplateRepo` / `MobInstanceRepo` /
+      `ChannelingRepo` (SQLite + memory + contract tests),
+      extending `repo.CharacterRepo` to load/persist the new Core
+      + player columns, world loader writing templates instead of
+      the legacy flat `mobs` table, char-create rolling abilities
+      / picking race / class / background / starting HP & defense,
+      `look`/`examine` rendering mob instances, and seed catalogs
+      for feats / skills / talents / weaves / classes /
+      backgrounds (stubbed as `int32` ids today). Original spec:
+      share a `creatures` core: `name`, `size` (Fine→Colossal), `type`
+      (Humanoid / Animal / Exotic / Shadowspawn), `gender`,
+      `alignment_posture` (Good/Bad/Evil narrative tag); abilities
+      `Str/Dex/Con/Int/Wis/Cha` as `current/max/inherent` triples
+      (drain vs damage vs ter'angreal); `hp_current/max` plus a
+      separate `subdual_damage` pool; Hit Dice; **`defense`** (replaces
+      AC — class+Dex+size+armor+shield+dodge); `fort/ref/will` saves;
+      `init_modifier`; `base_speed_ft` (+ optional climb / fly with
+      maneuverability / swim); `bab` (drives multi-attack at +6/+11/
+      +16); reach/face/threat range; conditions set (§12); position
+      flags (prone, flat-footed, flanked, grappling targets); damage
+      reduction; resistances; special qualities (Blindsight,
+      Low-Light Vision, Scent). Split into `mob_template` (immutable
+      archetype — `challenge_code` A–I, `organization`, climate/
+      terrain, advancement rules, behavior flags, natural attacks,
+      `special_attacks`, traits, `loot_table_id`, `gold_dice`,
+      `dialogue_tree_id`, `trigger_scripts[]`, `shopkeeper_config`,
+      `corpse_decay_ticks`, `respawn_zone_reset_id`, Shadowspawn-
+      specific `shadow_link_to_myrddraal_id` + `taint_immune` +
+      fade-on-link-master timer) / `mob_instance` (in-world state) /
+      `character` (persisted player). Player adds: account fk,
+      `class_levels: map[Class]int` over the seven WoT classes
+      (multiclass = sum), `race` (Human/Ogier), `background` (Aiel /
+      Atha'an Miere / Borderlander / Cairhienin / Domani / Ebou Dari
+      / Illianer / Midlander / Taraboner / Tairen / Tar Valoner —
+      supplies starting gear, languages, height-mod), `feats[]`
+      (general/special/channeling/lost-ability), `skills:
+      map[SkillID]ranks` (class-skill cap = level+3, cross-class
+      = ½), `practice_points`, `class_features[]` (Uncanny Dodge,
+      Dance the Spears, Sneak Attack, etc.), appearance (height/
+      weight/age/handedness), **reputation** with `infamy_share`
+      (≥½ vicious gains → Infamous; gates fame/infamy feats),
+      `followers[]` (unlocked lvl 10, capped by Reputation),
+      `coin: Amount` (existing currency), encumbrance load +
+      fatigue/exhaustion timers, condition (standing/sitting/
+      sleeping/fighting), idle timer, `bound_room_id` (respawn),
+      `bank_balance`, `played_seconds`, `last_login`, `quest_log`,
+      per-NPC dialogue state. Channelers (PC or NPC) attach a
+      sub-record — see new bullet below.
+- [ ] **Channeling (One Power) sub-record** — attached to any
+      channeler (PC, Aes Sedai, Wise Ones, Forsaken, damane,
+      Asha'man). Fields: `gender_source` (`Saidin` male / `Saidar`
+      female — same mechanics, asymmetric perception);
+      `channeler_type` (`Initiate` Int+Wis-keyed / `Wilder`
+      Cha+Wis-keyed); `affinities: Set[Power]` ⊆ {Air, Earth, Fire,
+      Water, Spirit}; `talents: Set[TalentID]` (Healing, Traveling,
+      Warding, Cloud Dancing, Earth Singing, Elementalism, Illusion,
+      Conjunction, …); `weaves_known: []WeaveID` (each tagged
+      Common / Rare / Lost); `slots_per_level: map[int]{cur,max}`
+      (slot-based casting, **not mana** — levels 0–9). Casting
+      thresholds: Initiate `Int ≥ 10+level` & `Wis ≥ 10`; Wilder
+      `Cha ≥ 10+level` & `Wis ≥ 10+level`; Wilders cap at level-2
+      outside their Talents, Initiates cap at level-0. State:
+      `embraced` (full-round to enter; blocks rest/heal/sleep;
+      addictive), `madness: int` (men only — accrues while embraced;
+      Mental Stability feat slows; `Heal the Mind` weave reduces),
+      `stilled_state` (recoverable via the Lost `Restore the Power`
+      weave), `bonded_warder_id` / `bonded_to_aes_sedai_id` (via the
+      Conjunction Talent), `held_angreal_id` / `held_saangreal_id`
+      (adds power 1–10 to slot levels; cross-gender devices appear
+      inert), `circle_id` (linking — leader / members / required-men
+      ratio per Table 9-1), `aes_sedai_oaths` 3-oath bitmask + an
+      `ageless` cosmetic flag, `damane_collar_to: NPCID` (a'dam
+      binding). Data layout landed (`creature.Channeling` + the
+      polymorphic `channeling` table from `0008_create_creatures
+      .sql`); behavior pending: embrace lifecycle (full-round
+      enter, blocks rest/heal/sleep, voluntary release), per-tick
+      madness accrual for men with Mental Stability slow + `Heal
+      the Mind` reduction, slot consumption / 8h refresh from the
+      §8 `regen` bucket, circle linking math (Table 9-1 leader/
+      member/required-men ratios, pooled slot draw), a'dam bind/
+      unbind enforcement (collar-side commands, suppression while
+      collared), Warder bond effects, angreal/sa'angreal slot
+      boost with cross-gender inert behavior.
+- [ ] **Equipment slots and wear/wield logic** — WoT does not use a
+      D&D wear-slot bitmask. Discrete slots: `armor` (one body
+      armor), `shield` (separate from armor; bonuses stack),
+      `primary_wield` + `off_hand` (two-handed weapons consume both;
+      double weapons like quarterstaff/ashandarei = one item with
+      two attack profiles), `outfit` (Artisan's / Cadin'sor /
+      Courtier's / Explorer's / Gleeman's / Noble's / Peasant's /
+      Royal / Scholar's / Traveler's / Cold-weather — first free at
+      creation), `cloak` (Warder fancloth canonical), `backpack`
+      (primary container), `belt_pouches[]` (containers),
+      `held_in_hand` (transient — torch/lantern; competes with
+      weapon use), `mount` (separate aggregate with barding/saddle/
+      saddlebags), `worn_misc[]` (signet ring, Aiel buckler-strap —
+      no hard cap, narrative). Wear-flag validation against item
+      type, swap semantics, save/restore on login, affects
       reapplied on equip and stripped on remove, container-on-belt
       vs in-inventory distinction.
 - [~] **Currency model** — `internal/currency` package: four
@@ -406,19 +506,27 @@ will need on top of those tables.
       bucket from §8 (default 4 s). On `attack <target>` push both
       participants into a `Fight` aggregate keyed by room; each pulse
       resolves one round per combatant in initiative order
-      (`d20 + dex_mod`, ties broken by random). Players queue one
-      `combat-mode` command (`flee`, `kick`, cast a spell) per round.
-- [ ] Damage types and resistances — enum `slash/pierce/bludgeon/
-      fire/cold/lightning/acid/poison/holy/shadow/psychic`. Mobs and
-      items carry a `[]Resist{Type, Pct}`; `applyDamage(target, dmg,
-      type)` multiplies by `1 - resist + vuln`. Negative resist =
-      vulnerability. Surface in `examine` for inspectable creatures.
-- [ ] Hit/miss/dodge/parry rolls — attacker rolls `d20 + hit_bonus`
-      vs defender AC; on a hit, defender gets a dodge check
-      (`d20 + dex_mod` vs DC), then a parry check if wielding a
-      weapon. Crit on natural 20 doubles dice, fumble on natural 1
-      drops the weapon. All rolls go through a single `combat.Roll`
-      seam for deterministic tests.
+      (`d20 + init_modifier`, ties broken by Dex then random).
+      Players queue one combat-mode action (`flee`, `kick`,
+      `weave <name>`) per round. Multi-attack at BAB +6/+11/+16
+      grants extra iterative attacks at −5 each.
+- [ ] Damage types and resistances — WoT damage kinds: physical
+      `slash/pierce/bludgeon` (each weapon entry tags one), plus
+      One-Power / energy types from weave effects (`fire/cold/
+      lightning/air/earth/spirit`), `subdual` (separate pool, see
+      §9), and `taint` (Shadow corruption, bypasses most resists).
+      Mobs and items carry `[]Resist{Type, Pct}` and `damage_reduction`
+      (flat `DR x/—` or `DR x/<bypass>` keyword); `applyDamage(target,
+      dmg, type)` applies DR first, then `1 - resist + vuln`.
+      Negative resist = vulnerability. Surface in `examine`.
+- [ ] Hit/miss/dodge/parry rolls — attacker rolls `d20 + bab +
+      ability_mod + size_mod` vs defender **`defense`** (§9 — class
+      bonus + Dex + size + armor + shield + dodge). On hit, optional
+      parry check if wielding a weapon and not flat-footed. Crit on
+      natural 20 confirmed by a second roll vs defense (doubles
+      dice, weapon-specific threat range/multiplier); fumble on
+      natural 1 drops the weapon or grants AoO. All rolls go through
+      a single `combat.Roll` seam for deterministic tests.
 - [ ] Aggro / threat tables — `Fight.Threat map[CreatureID]int`,
       damage adds threat 1:1, healing adds threat to the healer
       from every hostile in the room scaled by 0.5. NPCs retarget
@@ -445,31 +553,56 @@ will need on top of those tables.
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,
-      hit_die, primary_stat, save_progression, skill_list). Multi-
-      class deferred. Race separately gates stat ranges and innate
-      abilities. Both selected during character-create after name +
-      stat-roll step.
-- [ ] Skill tree with practice / training — `character_skills`
-      (`character_id`, `skill_id`, `percent`). `practice <skill>`
-      at a guildmaster spends a practice point to raise the cap;
-      use raises percent toward cap on success and (slowly) on
-      failure. Caps and gain rates live in `skills` table seed.
-- [ ] Spell list with mana costs and reagents — `spells` table
-      (id, name, school, mana, cast_time_ticks, target_type,
-      reagents []ItemID, effect script ref). `cast <spell> [target]`
-      validates mana + reagents + line-of-sight, locks caster for
-      `cast_time` ticks (interrupt on damage), then resolves via
-      the effect script (§15).
-- [ ] Levels & XP curve — geometric curve (e.g. `xp(n) =
-      base * 1.6^(n-1)`) capped at level 100 v1. Level-up grants
-      hit die roll, mana/move pool growth, practice points, and
-      title slot. Stored on character; `train` command at trainer
-      mob spends accumulated stat trains.
+      hit_die, bab_progression, save_progression `{fort,ref,will}`,
+      class_skills, skill_points_per_level, weapon_armor_proficiency,
+      class_features by level). The seven WoT classes (Algai'd'siswai,
+      Armsman, Initiate, Noble, Wanderer, Wilder, Woodsman). Multi-
+      class supported via `class_levels: map[Class]int` summed for
+      `character_level`. Race (Human / Ogier) separately gates stat
+      ranges, height/weight, and innate abilities. Background
+      (eleven from §9) supplies starting gear, languages, height-mod.
+      All selected during character-create after the ability-score
+      roll/buy step.
+- [ ] Skill tree with ranks / training — `character_skills`
+      (`character_id`, `skill_id`, `ranks`, `is_class_skill`). Class-
+      skill cap = `character_level + 3`; cross-class cap = ½ that.
+      Skill points per level from class table (Int mod adds, ×4 at
+      1st level). Skill checks roll `d20 + ranks + ability_mod +
+      misc`. Caps and skill list live in `skills` table seed.
+- [ ] Weave (One Power) list with slot levels — replaces the
+      generic spell/mana model. `weaves` table (id, name, level
+      0–9, school/affinity (Air/Earth/Fire/Water/Spirit — multiple),
+      talent_required, rarity (`Common`/`Rare`/`Lost`), cast_time_
+      ticks, target_type, effect script ref). `weave <name>
+      [target]` validates: caster `embraced` (or full-round to
+      embrace), gender vs source, ability threshold (Initiate
+      Int/Wis or Wilder Cha/Wis ≥ 10+level), affinity covered (or
+      angreal compensates), free slot at that level, talent gating
+      for Talent-only weaves, line-of-sight. Locks caster for
+      `cast_time` ticks (interrupt on damage forces a Concentration
+      check), consumes a slot of that level (or higher), accrues
+      `madness` for men, then resolves via the effect script (§15).
+      No mana pool — slots refresh after 8h rest.
+- [ ] Levels & XP curve — d20 geometric XP table
+      (`xp(n) = 1000 × n × (n-1) / 2` style; cap level 20 v1, raise
+      later). Level-up grants: roll new HD for HP, +1 BAB by class
+      progression, save bumps, skill points, possibly a feat (every
+      3 levels) or ability increase (every 4), new class features
+      and (for channelers) new weave slots. Stored on character;
+      `train` command at a trainer NPC commits the level-up.
 - [ ] Affects / buffs / debuffs with durations — `creature_affects`
       list `(source_id, name, modifiers []StatMod, duration_ticks,
-      tick_effect)`. The `combat`/`regen` buckets decrement
-      durations; `tick_effect` fires per-tick (DoT, regen, fear
-      check). Stacking rules: same `(source, name)` refreshes;
+      tick_effect)`. Must support the WoT condition enum from §9:
+      `AbilityDamaged, AbilityDrained, Blinded, Checked, Cowering,
+      Dazed, Deafened, Disabled, Dying, Entangled, Exhausted,
+      Fatigued, FlatFooted, Frightened, Grappled, Held, Helpless,
+      Panicked, Paralyzed, Pinned, Prone, Shaken, Stable, Staggered,
+      Stunned, Unconscious`. Plus environmental flags driven by
+      surroundings rather than affects (`Flanked, Charging,
+      TotalDefense, FightingDefensively, Concealed%, Cover`). The
+      `combat`/`regen` buckets decrement durations; `tick_effect`
+      fires per-tick (DoT, regen, fear check, madness gain while
+      embraced). Stacking rules: same `(source, name)` refreshes;
       different sources stack up to a per-affect cap.
 - [ ] Cooldowns and global lag — per-skill `cooldown_until` on the
       character + the §4 `Command.Lag` global lag. Display in
