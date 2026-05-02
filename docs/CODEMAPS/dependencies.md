@@ -1,4 +1,4 @@
-<!-- Generated: 2026-04-30 | Files scanned: go.mod, go.sum | Token estimate: ~250 -->
+<!-- Generated: 2026-05-02 | Files scanned: go.mod, go.sum | Token estimate: ~300 -->
 
 # Dependencies
 

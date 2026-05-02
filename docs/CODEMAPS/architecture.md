@@ -1,88 +1,109 @@
-<!-- Generated: 2026-04-30 | Files scanned: ~30 (.go) | Token estimate: ~850 -->
+<!-- Generated: 2026-05-02 | Files scanned: ~45 (.go) | Token estimate: ~950 -->
 
 # Architecture
 
-WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters); the world layer ships rooms/exits/items/mobs as YAML-authored aggregates loaded into SQLite at boot, with `look` and `n/s/e/w/u/d` movement that persists across reconnects.
+WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters); the world layer ships rooms/exits/items/mobs as YAML-authored aggregates loaded into SQLite at boot, with `look`, movement (`n/s/e/w/u/d`/`ne`/`nw`/`se`/`sw`), and room persistence across reconnects. The scheduler manages heartbeat ticks, persistence autosave, and event dispatch. Session registry enables multi-connection awareness (`who`, `tell`, channels with per-character mute toggles).
 
 ## Layers
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│ cmd/server/main.go         listener + DI wiring                   │
-├───────────────────────────────────────────────────────────────────┤
-│ internal/mode/             Mode implementations                   │
-│   game / login / create / character_select / character_create     │
-│ internal/cmd/              Concrete commands                      │
-│   quit / who / help / colors / look / move-family (n/s/e/w/u/d)   │
-├───────────────────────────────────────────────────────────────────┤
-│ internal/auth/             bcrypt Hash / Verify                   │
-│ internal/repo/             Account + Character + Room/Exit/Item/  │
-│                             Mob repos (sqlite + memory impls;     │
-│                             shared contract tests)                │
-│ internal/world/            YAML loader: parse → validate → tx-    │
-│                             sync into rooms/exits/items/mobs.     │
-│                             //go:embed default world; WORLD_DIR   │
-│                             env var overrides for builders.       │
-│ internal/session/          Process-level session.Registry         │
-├───────────────────────────────────────────────────────────────────┤
-│ internal/db/               SQLite Open + embedded migrations      │
-├───────────────────────────────────────────────────────────────────┤
-│ telnet/                    protocol + I/O + dispatch core         │
-│   ├ server.go              RunSession, readLoop, dispatcher       │
-│   ├ session.go             Session, write lock, mode stack        │
-│   ├ iac.go                 IAC/SB negotiation                     │
-│   ├ command.go             Registry, Command, Dispatch (Auth chk) │
-│   ├ mode.go                Mode interface + ErrNoMode             │
-│   ├ completion.go          Tab-completion column layout           │
-│   ├ wrap.go                ANSI-aware word wrap                   │
-│   ├ color.go               SGR + RGB downsampling                 │
-│   └ ascii.go               Control-byte constants                 │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│ cmd/server/main.go         listener + DI wiring + graceful shutdown│
+├────────────────────────────────────────────────────────────────────┤
+│ internal/tick/             Scheduler (1 Hz) + named Buckets        │
+│ internal/persist/          Autosave manager + Save bucket sub      │
+│ internal/eventbus/         Typed pub/sub (PlayerEntered/Left)      │
+│ internal/session/          Process-level session.Registry          │
+│ internal/safego/           panic-recovery wrapper + LOG_LEVEL env  │
+├────────────────────────────────────────────────────────────────────┤
+│ internal/mode/             Mode stack implementations               │
+│   login / create / character_select / character_create / game      │
+│ internal/cmd/              Concrete commands (closures + singletons)
+│   quit / who / colors / help / look / move-family (n/s/e/w/u/d/   │
+│   ne/nw/se/sw) / teleport / say / tell / reply / channels /alias  │
+├────────────────────────────────────────────────────────────────────┤
+│ internal/auth/             bcrypt Hash / Verify                    │
+│ internal/repo/             Account + Character + Room/Exit/Item/   │
+│                             MobTemplate/MobInstance/Channeling/    │
+│                             Channel repos (sqlite + memory + test) │
+│ internal/creature/         Core + Abilities + Channeling models    │
+│ internal/currency/         Amount type + denomination conversions  │
+│ internal/world/            YAML loader: parse → validate → tx-sync │
+│                             into rooms/exits/items/mobs. Embedded  │
+│                             default; WORLD_DIR env overrides.      │
+├────────────────────────────────────────────────────────────────────┤
+│ internal/db/               SQLite Open + 11 embedded migrations     │
+├────────────────────────────────────────────────────────────────────┤
+│ telnet/                    protocol + I/O + mode/registry/dispatch │
+│   ├ server.go              RunSession, readLoop, dispatcher        │
+│   ├ session.go             Session, write lock, mode stack, auth   │
+│   ├ iac.go                 IAC/SB negotiation (TERM_TYPE/NAWS)     │
+│   ├ command.go             Registry, Lookup, Dispatch (Auth check) │
+│   ├ mode.go / completion   Mode interface + Tab completion         │
+│   ├ wrap.go / color.go     ANSI-aware wrap, SGR, RGB downsampling │
+│   └ ascii.go               Control-byte constants                  │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependency direction (no cycles): `cmd/server` → `internal/{mode,cmd,session,repo,db,auth}` → `telnet`. `telnet` is the foundational package and imports nothing internal.
+Dependency direction (no cycles): `cmd/server` → `internal/{tick,persist,eventbus,session,safego,mode,cmd,auth,repo,creature,currency,world,db}` → `telnet`. `telnet` is foundational and imports nothing internal.
 
 ## Boot
 
 ```
-main ─► db.Open(DB_DSN)                           runs embedded migrations
-     ─► repo.NewSQLite{Account,Character,Room,    wraps *sql.DB
-                       Exit,Item,Mob}Repo
-     ─► world.LoadAndSync(ctx, conn,              parses YAML, validates,
-                          world.SourceFS())        tx-inserts rooms/exits/
-                                                   items/mobs (no-op if
-                                                   already loaded). Aborts
-                                                   boot on validation fail.
-     ─► session.NewRegistry()                     process-level
-     ─► buildRegistry(rooms, exits, items, mobs,  closures over world repos
-                      characters)                  for look + move family
-     ─► mode.NewGame(registry)                    stateless, shared
-     ─► server{ accounts, characters, world repos,
-                sessions, newInitial: …NewLogin } per-conn factory
-     ─► net.Listen → Accept loop ─► srv.handleConnection per conn
+main ─► db.Open(DB_DSN)                      runs embedded migrations 0001-0011
+     ─► repo.NewSQLite{Account,Character,    wraps *sql.DB
+        Room,Exit,Item,MobTemplate,
+        MobInstance,Channeling,Channel}Repo
+     ─► channelRepo.List(ctx)                load channel catalog (ooc/gossip/newbie)
+     ─► world.LoadAndSync(ctx, conn,         parses YAML, validates,
+        world.SourceFS())                    tx-inserts all world aggregates
+                                             (no-op if rows exist). Aborts
+                                             boot on validation fail.
+     ─► session.NewRegistry()                process-level; tracks bind/unbind
+     ─► buildRegistry(…, channels)           closures + singletons; dynamic
+                                             channel commands registered from
+                                             catalog; registers say/tell/reply/who
+     ─► tick.New() + tick.NewBuckets        scheduler (1 Hz) + named buckets
+        (combat/regen/areaReset/Save)       (Save default 30s, calls persist.FlushAll)
+     ─► persist.New()                        autosave manager; saver registered
+        → saves.Register("character.lastPlayed", savePlayTimes) → buckets.Save.Subscribe
+     ─► eventbus.New()                       typed pub/sub (PlayerEntered/Left)
+     ─► mode.NewGame(registry)               stateless, shared
+     ─► server{…}                            all repos, registry, scheduler,
+                                             buckets, bus, saves, sessions,
+                                             newInitial factory
+     ─► scheduler.Start(ctx)                 heartbeat goroutine
+     ─► net.Listen → Accept loop             per-conn goroutines via safego.Go
 ```
 
 ## Per-connection lifecycle
 
 ```
-Accept ─► NewSession ─► writeBanner
-                   ─► PushMode(srv.newInitial())   = fresh Login
-                   ─► RunSession
-                                  │
-                       ┌──────────┴──────────┐
-                       ▼                     ▼
-                 readLoop (1 g/r)      runDispatcher (1 g/r)
-                 bytes ─► dispatchByte    inbox ─► Mode.Handle(ctx, ...)
-                       ─► inbox          ─► WriteRaw(prompt)
+Accept ─► NewSession ─► writeBanner ─► PushMode(srv.newInitial())  = fresh Login
+                                    ─► RunSession
+                                               │
+                                   ┌───────────┴──────────┐
+                                   ▼                      ▼
+                              readLoop (1 g/r)      runDispatcher (1 g/r)
+                              dispatchByte:         inbox ─► Mode.Handle(ctx)
+                                ├─ IAC/ANSI        ─► Registry.Dispatch(ctx)
+                                ├─ CR/LF           ─► Auth check + Run
+                                ├─ BS/DEL/HT       ─► WriteRaw(prompt)
+                                └─ printable
+                                   └─ inbox (cap 16)
 
-teardown defer:
-  - if s.AccountID != 0: sessions.Unbind(s.AccountID, s)  (compare-and-delete)
-  - s.Conn.Close()
+teardown:
+  ├─ readLoop exits on: EOF / idle 10m / flood (ErrInputFlooded)
+  ├─ runDispatcher drains inbox and stops without prompting
+  ├─ safego.Go wrapper recovers panics from either goroutine
+  ├─ if s.AccountID != 0: sessions.Unbind(s.AccountID, s)  (compare-and-delete)
+  └─ s.Conn.Close()
 ```
 
-- `readLoop` owns `Session.InputBuffer`. Parses IAC, ANSI, CR/LF, BS/DEL, HT, printable. Logged input is **redacted** when `s.InPasswordMode` is true.
-- `runDispatcher` consumes `s.inbox`, calls `mode.Handle(ctx, s, line)`. `ctx` is canceled by `RunSession` after the read loop exits, before the inbox is closed, so blocking handlers see cancellation.
-- Writes serialize on `Session.writeMu`; both goroutines (and any future emitter) go through `WriteRaw`.
+- `readLoop` owns `Session.InputBuffer`. Parses IAC, ANSI, CR/LF, BS/DEL, HT, printable, history (↑/↓), cursor motion (←/→/Home/End). **Redacts logged input** when `s.InPasswordMode` is true.
+- `runDispatcher` consumes `s.inbox`, calls `mode.Handle(ctx, s, line)`. `ctx` is canceled after readLoop exits, before inbox closes, so blocking handlers observe cancellation.
+- Writes serialize on `Session.writeMu`; both goroutines go through `WriteRaw`. `AuthLevel` (Guest/Player/Admin) checked at dispatch time, not mode entry.
+- Session tracks: `AccountID`, `CharacterID`, `CharacterName`, `CurrentRoomID` (persisted via `CharacterRepo.RecordRoom`), `LastTellFrom`, `LastInputAt` (for idle), `channelMuted` (crossMu-guarded bitmask).
 
 ## Auth pipeline
 

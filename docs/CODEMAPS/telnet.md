@@ -1,4 +1,4 @@
-<!-- Generated: 2026-04-30 | Files scanned: telnet/*.go (10 files, ~1.6k LOC) | Token estimate: ~900 -->
+<!-- Generated: 2026-05-02 | Files scanned: telnet/*.go (12 files) | Token estimate: ~950 -->
 
 # Telnet Package
 
@@ -9,27 +9,29 @@ Stand-in for `backend.md`: this is the only "service" the binary runs. The packa
 ```
 telnet.Session            per-connection state + write lock
   .Conn, .RemoteAddress, .TerminalType, .Width, .Height
-  .InputBuffer (read-goroutine-owned), .InPasswordMode, .ColorLevel
-  .WriteRaw([]byte)         serialized via writeMu
-  .WriteString(text)        cfmt.Sprint → WriteRaw
-  .WriteWrapped(text)       cfmt.Sprint → WrapText → CRLF → WriteRaw
+  .InputBuffer, .InPasswordMode, .ColorLevel
+  .AuthLevel, .AccountID, .CharacterID, .CharacterName
+  .CurrentRoomID, .LastTellFrom, .LastInputAt, .channelMuted (crossMu-guarded)
+  .WriteRaw([]byte), .WriteString, .WriteWrapped
   .PushMode/.PopMode/.ReplaceMode/.CurrentMode
-telnet.NewSession(conn)   constructor (returns nil on nil conn)
+  .SetChannelMuted / .IsChannelMuted / .ToggleChannelMuted / .ChannelMutedSnapshot
+telnet.NewSession(conn)   constructor
 
-telnet.RunSession(s)      negotiate → readLoop + runDispatcher → return on EOF/idle
-telnet.NegotiateTelnet    sends WILL SGA / DO SGA / DO TT / DO NAWS / WILL ECHO
-telnet.RequestTerminalType  IAC SB TT SEND IAC SE
-telnet.ReadIAC            IAC IAC → literal 0xFF; IAC SB → readSubnegotiation;
-                          IAC WILL/WONT/DO/DONT → consume opt; standalone GA/NOP/AYT/etc → no-op
-telnet.HandleSubnegotiation  TERM_TYPE → DetectColorLevel; NAWS → Width/Height
+telnet.RunSession(s)      negotiate → readLoop + runDispatcher → return
+telnet.NegotiateTelnet    WILL SGA / DO SGA / DO TT / DO NAWS / WILL ECHO
+telnet.RequestTerminalType  TERM_TYPE subnegotiation
+telnet.ReadIAC            parse IAC bytes: IAC IAC literal, IAC SB/WILL/DO/DONT/etc.
+telnet.HandleSubnegotiation  TERM_TYPE → color detection; NAWS → width/height
 
+telnet.AuthLevel enum     AuthGuest / AuthPlayer / AuthAdmin (checked at dispatch)
 telnet.Registry / Command / Context     command system
-telnet.Mode / Completer / Candidate     mode stack + tab completion
+telnet.Mode / Completer / Candidate     mode stack + completion
 
 telnet.DetectColorLevel(term) int
-telnet.SGR(codes...) string
-telnet.RenderRGBFG(level,r,g,b) / RenderRGBBG  truecolor → 256 → 16 fallback
-telnet.WrapText(text, width)              ANSI-aware word wrap
+telnet.SGR(codes...) string  (ANSI SGR codes)
+telnet.RenderRGBFG / RenderRGBBG  24-bit → 256 → 16 downsampling
+telnet.WrapText(text, width)  ANSI-aware word wrap
+telnet.History, LineEdit (stub)  command history + in-line editing
 ```
 
 ## Per-connection pipeline (`server.go`)
@@ -75,15 +77,17 @@ Dispatch(ctx, s, line)
 
 ```go
 type Mode interface {
-  Handle(*Session, string) error
+  Handle(ctx context.Context, s *Session, line string) error
   Prompt(*Session) string
   OnEnter(*Session) error
-  OnExit(*Session)  error
+  OnExit(*Session) error
 }
-type Completer interface { Complete(*Session, buffer string) []Candidate }
+type Completer interface {
+  Complete(s *Session, buffer string) []Candidate
+}
 ```
 
-`Session.modes` is a slice protected by `modeMu`. `PushMode` appends then calls `OnEnter`; `PopMode` trims then calls `OnExit`; `ReplaceMode` = pop + push. **Known issue:** `OnEnter` failure leaves the mode on the stack (tracked in `code_review_open_items.md`).
+`Session.modes` is a slice protected by `modeMu`. `PushMode` appends then calls `OnEnter`; on error, mode is removed immediately (fixed). `PopMode` trims + calls `OnExit`; `ReplaceMode` = pop + push. `Mode.Handle` receives `ctx` canceled when read loop exits, so blocking handlers observe cancellation. `AuthLevel` is checked at dispatch time (per-command gating), not mode entry.
 
 ## Tab completion (`completion.go`, `server.go`)
 

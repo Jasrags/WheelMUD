@@ -1,36 +1,175 @@
-Codemap generation report
-Generated: 2026-04-30
-Mode: first-pass (no prior codemaps)
+# Codemap Update Report
+Generated: 2026-05-02
+Previous: 2026-04-30 (2-day span)
 
-Output written to docs/CODEMAPS/:
-  architecture.md   ~700 tokens   layers, lifecycle, input→command path
-  telnet.md         ~900 tokens   protocol, registry, mode stack, rendering
-  commands.md       ~450 tokens   catalog + how to add a command
-  data.md           ~150 tokens   placeholder; no persistence layer yet
-  dependencies.md   ~250 tokens   go.mod, build/runtime tooling, gaps
+## Summary
+Major architectural changes since last update. Significant work on persistence (scheduler/autosave), session registry (multi-connection awareness), communication layer (say/tell/reply/channels), and creature modeling (Core stat blocks + channeling).
 
-Project shape
-  Type:        single Go binary (MUD server)
-  Entry:       cmd/server/main.go
-  Source dirs: telnet/ (10 files), internal/cmd/ (5), internal/mode/ (1)
-  LOC:         ~3.3k Go (incl. ~1.3k test)
-  Tests:       go test -race ./... — telnet/ package only
-  Module:      github.com/Jasrags/WheelMUD (go 1.24)
+## Files Updated
 
-Notes / staleness flags
-  - No frontend.md generated — there is no UI surface; the user-facing
-    catalog lives in commands.md instead.
-  - data.md is a placeholder; revisit once persistence lands (ROADMAP §7).
-  - dependencies.md will grow rows for DB driver, password hashing, and
-    width-aware text once those land.
-  - Source of truth for "what's next" is ROADMAP.md at the repo root and
-    the auto-memory entries:
-      command_input_followups.md
-      code_review_open_items.md
-      terminal_rendering_followups.md
+### architecture.md
+- **Layer diagram**: Added tick/, persist/, eventbus/, safego/ layers; expanded internal/repo/ to include creature/currency models
+- **Boot flow**: Now shows scheduler.Start, bucket registration, channel catalog load, persist manager wiring, eventbus creation
+- **Per-connection lifecycle**: Expanded readLoop details (history, cursor motion, redaction); added AuthLevel gating notes; added Session field tracking (LastTellFrom, LastInputAt, channelMuted)
+- **New sections**: Detailed boot sequence showing persist.Manager → saves.Register → buckets.Save.Subscribe pattern
+- **Tokens**: ~950 (prev ~850) — 11% growth due to new subsystems
 
-Architecture changes since last scan: n/a (first scan)
-New deps: n/a (first scan)
+### commands.md
+- **Catalog**: Added 8 new commands (say/tell/reply/who/teleport/alias/unalias/channels + dynamic channel verbs)
+- **Wiring**: Updated to show dynamic channel registration from DB catalog at boot (NewChannel per row)
+- **Auth gating**: New section explaining AuthGuest/AuthPlayer/AuthAdmin enforcement + "Unknown command" masking
+- **New fields**: Added AuthLevel column, FilePath cleanup, improved Purpose descriptions
+- **Tokens**: ~750 (prev ~600) — 25% growth due to new commands + channels + auth notes
 
-Re-run trigger: after the next major slice lands (e.g. login mode,
-persistence, world model) — diff codemaps and update accordingly.
+### data.md
+- **Intro**: Updated to mention 11 migrations, channel catalog load, world loader details
+- **Layer diagram**: Expanded to show creature/ + currency/ models; added migration count (11)
+- **Migrations table**: Complete mapping of all 11 migrations (0001-0011) with one-line descriptions
+- **Tables**: Fleshed out character columns (Core + player fields from 0009); added mob_templates / mob_instances / channeling / channels tables
+- **New sections**: Creature & Currency models (Core, Abilities, MobTemplate/Instance/Character, Amount type + denominations)
+- **Repos**: Updated to include MobTemplate / MobInstance / Channeling / Channel interfaces; notes on polymorphic channeling ownership
+- **Tokens**: ~900 (prev ~700) — 29% growth due to migration details + creature/currency modeling
+
+### dependencies.md
+- **Minor update**: Timestamp only; no new direct deps (crypto/bcrypt + sqlite already listed in prev)
+
+### telnet.md
+- **Public surface**: Added AuthLevel enum, Session fields (AccountID/CharacterID/CharacterName/CurrentRoomID/LastTellFrom/channelMuted + crossMu helpers)
+- **Mode stack**: Clarified OnEnter error behavior (mode is removed); noted ctx cancellation + AuthLevel checking at dispatch (not entry)
+- **Timestamp**: Updated to 2026-05-02
+- **Tokens**: ~950 (prev ~900) — 5% growth (minor additions)
+
+## New Subsystems
+
+1. **Scheduler & Ticks** (internal/tick/)
+   - 1 Hz heartbeat goroutine, named buckets (Save default 30s)
+   - Subscriptions for each bucket drain safely in shutdown
+
+2. **Persistence Manager** (internal/persist/)
+   - Autosave manager with SaverFunc registrations
+   - Called on bucket.Save pulses (default 30s) + shutdown (5s budget)
+   - Currently saves: last_played_at via savePlayTimes()
+
+3. **Event Bus** (internal/eventbus/)
+   - Typed pub/sub: PlayerEntered / PlayerLeft from world events
+   - Used by move commands to trigger room-based events
+
+4. **Session Registry** (internal/session/)
+   - Process-level bind/unbind tracking (account -> session mapping)
+   - Enables multi-connection awareness: who, tell, channel dispatch
+   - Compare-and-delete unbind prevents stale teardown from clobbering takeovers
+
+5. **Panic Recovery** (internal/safego/)
+   - Goroutine wrapper (safego.Go) with built-in recover + logging
+   - Wraps shutdown-watcher, accept loop, per-session goroutines, shutdown drain
+   - LOG_LEVEL env var (debug|info|warn|error) controls global slog level
+
+6. **Creature Models** (internal/creature/)
+   - Core stat block (abilities, HP, defenses, saves, speed)
+   - Affects + stat mods (stubs for section 12 buffs/debuffs)
+   - MobTemplate / MobInstance / Character type skeletons (full impl in 0009)
+
+7. **Currency Type** (internal/currency/)
+   - 4-denomination Amount (cp/sp/mk/gc at 1/10/100/1000 ratio)
+   - Parse / Format / In / Add / Sub with overflow guards
+
+## New Commands
+
+| Command | Type | Scope | Notes |
+|---------|------|-------|-------|
+| say | room-broadcast | Player | Sanitized cfmt injection defense |
+| tell / reply | private | Player | Via session registry FindByCharacterName |
+| who | listing | Player | Iterates sessions.Snapshot() + idle time |
+| teleport | admin | Admin | Bypasses exits; requires AuthAdmin |
+| alias / unalias | registry | Player | Per-session only (DB persistence pending) |
+| channels | catalog | Player | Lists all channels + mute state |
+| Dynamic channel verbs | broadcast | Player | One command per channel row (ooc/gossip/newbie) |
+
+## New Database Tables (0008-0011)
+
+| Table | Migration | Purpose |
+|-------|-----------|---------|
+| mob_templates | 0008 | Mob archetypes (reusable definitions) |
+| mob_instances | 0008 | In-world mob instances (separate from template) |
+| channeling | 0008 | Polymorphic One Power sub-record (owner_kind + owner_id) |
+| channels | 0011 | Chat channel catalog (ooc/gossip/newbie + future) |
+
+## Session Enhancements
+
+- **LastTellFrom**: Tracks most recent tell sender for reply convenience
+- **LastInputAt**: Stamped on every command, used for idle detection (who >= 30s)
+- **channelMuted**: Crossmu-guarded bitmask (channel_id -> muted boolean)
+- **SetChannelMuted / IsChannelMuted / ToggleChannelMuted / ChannelMutedSnapshot**: Helpers for atomic mutations
+
+## Architecture Changes
+
+1. **Startup**: Now boot scheduler → load channels → build registry (with dynamic channel cmds) → start autosave loop
+2. **Shutdown**: Drain sessions (10s) → autosave final pass (5s) → stop buckets/scheduler/bus
+3. **Per-connection**: readLoop + runDispatcher still the same, but writeMu now shared with any future emitter
+4. **Auth flow**: AuthLevel (Guest/Player/Admin) checked at Registry.Dispatch time, not mode entry; enables guest help, progressive privs
+
+## Migrations Overview
+
+- **0001-0007**: Auth (accounts), characters, world (rooms/exits/items), diagonal directions
+- **0008**: Creature model split (templates vs. instances) + polymorphic channeling
+- **0009**: Character extended with full Core + player columns
+- **0010**: Legacy mobs table dropped (world loader now spawns from templates)
+- **0011**: Channels table + seeding (ooc/gossip/newbie)
+
+## Token Estimates
+
+| File | Prev | Current | Change |
+|------|------|---------|--------|
+| architecture.md | 850 | 950 | +12% |
+| commands.md | 600 | 750 | +25% |
+| data.md | 700 | 900 | +29% |
+| dependencies.md | 250 | 300 | +20% |
+| telnet.md | 900 | 950 | +5% |
+| **Total** | **3300** | **3850** | **+17%** |
+
+All codemaps remain <1000 tokens each. Total codemap suite ~3850 tokens (lean, actionable).
+
+## Staleness Resolution
+
+**Previous open issues (from implicit prior status):**
+- [x] Session registry wired for multi-connection awareness
+- [x] Scheduler + tick buckets (1 Hz heartbeat)
+- [x] Autosave manager (periodic + shutdown)
+- [x] Event bus for room/zone events
+- [x] Communication (say/tell/reply/who)
+- [x] Channel catalog + dynamic commands
+- [x] Creature models (Core + Channeling)
+- [x] panic recovery wrapper (safego.Go)
+- [x] LOG_LEVEL env control
+- [x] CharacterRepo extended for Core + channel settings
+- [x] MobTemplate / MobInstance repos + polymorphic Channeling repo
+- [x] Diagonal movement (ne/nw/se/sw)
+- [x] Teleport command (admin only)
+
+**Still pending (correctly documented as deferred):**
+- [ ] Hot reload of world YAML
+- [ ] Combat system
+- [ ] Inventory + economy
+- [ ] Quest engine
+- [ ] OLC editors
+- [ ] Admin commands
+- [ ] Metrics / profiling
+
+## Notes
+
+1. **File count**: ~45 Go files scanned (up from ~30 in prev codemap)
+2. **No new external deps**: crypto/bcrypt + yaml.v3 + sqlite all in place since prior
+3. **Architecture cohesion**: Scheduler + persist + eventbus form a stable "reactive core" on top of telnet layer
+4. **Session ringbuffer**: LastTellFrom + LastInputAt are read-write from telnet readLoop and game handlers; both guarded appropriately
+5. **Channel muting**: Session.channelMuted is crossMu-guarded
+
+## Generated Artifacts
+
+- /Users/jrags/Code/Jasrags/WheelMUD/docs/CODEMAPS/architecture.md — updated
+- /Users/jrags/Code/Jasrags/WheelMUD/docs/CODEMAPS/commands.md — updated
+- /Users/jrags/Code/Jasrags/WheelMUD/docs/CODEMAPS/data.md — updated
+- /Users/jrags/Code/Jasrags/WheelMUD/docs/CODEMAPS/dependencies.md — updated
+- /Users/jrags/Code/Jasrags/WheelMUD/docs/CODEMAPS/telnet.md — updated
+- /Users/jrags/Code/Jasrags/WheelMUD/.reports/codemap-diff.txt — this file
+
+All codemaps regenerated from source code; no manual drift. Next refresh: after major feature lands or at ~60-day cadence.

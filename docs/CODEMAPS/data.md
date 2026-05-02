@@ -1,49 +1,70 @@
-<!-- Generated: 2026-04-30 | Files scanned: internal/db/*, internal/repo/*, internal/auth/*, internal/world/*, migrations | Token estimate: ~700 -->
+<!-- Generated: 2026-05-02 | Files scanned: internal/db/*, internal/repo/*, internal/auth/*, internal/world/*, internal/creature/*, migrations | Token estimate: ~900 -->
 
 # Data
 
-SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). Migrations are embedded into the binary and applied at boot. `cmd/server/main.go` opens the DB on startup, runs `Migrate`, populates the world tables via `internal/world.LoadAndSync` (YAML → SQL), and constructs the SQLite-backed repos (accounts, characters, rooms, exits, items, mobs) that the modes and commands consume.
+SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). 11 migrations (0001-0011) are embedded and applied at boot. `cmd/server/main.go` opens the DB, runs migrations, loads channel catalog from DB, populates world tables via `internal/world.LoadAndSync` (YAML → SQL), and constructs the SQLite-backed repos (accounts, characters, rooms, exits, items, mob_templates, mob_instances, channeling, channels) that modes and commands consume.
 
 ## Layers
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│ Modes + commands (internal/mode, internal/cmd)             │  depend on
-├────────────────────────────────────────────────────────────┤   the repo
-│ internal/repo/  AccountRepo │ CharacterRepo │ RoomRepo     │  *interfaces*
-│                 ExitRepo    │ ItemRepo      │ MobRepo      │
-├────────────────────────────────────────────────────────────┤
-│ SQLite{Account,Character,Room,Exit,Item,Mob}Repo  (prod)   │
-│ Memory{Account,Character,Room,Exit,Item,Mob}Repo  (tests)  │
-├────────────────────────────────────────────────────────────┤
-│ internal/db.Open / Migrate                  *sql.DB + SQL  │
-├────────────────────────────────────────────────────────────┤
-│ modernc.org/sqlite                          driver         │
-└────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ Modes + commands (internal/mode, internal/cmd)         depend on│
+├────────────────────────────────────────────────────────────────┤  repo
+│ internal/repo/  AccountRepo    CharacterRepo  RoomRepo        │ *interfaces*
+│                 ExitRepo       ItemRepo       MobTemplate      │ (Creature
+│                 MobInstance    Channeling     Channel          │  /Currency
+├────────────────────────────────────────────────────────────────┤  models)
+│ SQLite{Account,Character,Room,Exit,Item,MobTemplate,MobInstance,
+│   Channeling,Channel}Repo  (prod)                             │
+│ Memory{Account,Character,Room,Exit,Item,MobTemplate,MobInstance,
+│   Channeling,Channel}Repo  (tests)                            │
+├────────────────────────────────────────────────────────────────┤
+│ internal/creature/     Core, Abilities, Channeling models     │
+│ internal/currency/     Amount type                            │
+├────────────────────────────────────────────────────────────────┤
+│ internal/db.Open / Migrate              *sql.DB + 11 migrations│
+├────────────────────────────────────────────────────────────────┤
+│ modernc.org/sqlite                      driver                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
-## Migrations
+## Migrations (0001-0011)
 
-Location: `internal/db/migrations/NNNN_description.sql`, embedded via `//go:embed all:migrations`.
+| Migration | Purpose |
+|---|---|
+| `0001_create_accounts.sql` | accounts table + lockout index |
+| `0002_create_characters.sql` | characters + FK cascade to accounts |
+| `0003_create_world.sql` | rooms / exits / items / legacy mobs (flat) |
+| `0004_seed_starter_zone.sql` | 3-room demo zone (wipe + external_id in 0006) |
+| `0005_add_character_room.sql` | `characters.current_room_id` (no FK) |
+| `0006_world_external_id.sql` | Add `external_id` columns to rooms/items/mobs, wipe seed |
+| `0007_widen_exit_directions.sql` | Widen direction CHECK (n/s/e/w/u/d → +ne/nw/se/sw) |
+| `0008_create_creatures.sql` | mob_templates, mob_instances, polymorphic channeling table |
+| `0009_extend_characters.sql` | Add Full Core + player columns to characters (race/background/class/xp/coin/etc.) |
+| `0010_drop_legacy_mobs.sql` | Drop legacy flat mobs table (world loader now spawns from templates) |
+| `0011_create_channels.sql` | channels table (id, name, description), seeded with ooc/gossip/newbie |
 
 Runner (`internal/db/db.go::Migrate`):
 - Ensures `schema_migrations(version, applied_at)` exists.
-- Loads applied versions, sorts files lexically, applies any unrecorded ones inside a single transaction each (DDL + the `INSERT INTO schema_migrations`).
-- Idempotent — `Migrate` is safe to call repeatedly.
+- Loads applied versions, sorts files lexically, applies unrecorded ones (one tx per migration).
+- Idempotent — safe to call repeatedly.
 
-Pragmas set on every `Open`: `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`.
+Pragmas set on `Open`: `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`.
 
 ## Tables
 
 | Table | Migration | Columns |
 |---|---|---|
 | `schema_migrations` | (bootstrap) | `version PK, applied_at` |
-| `accounts` | `0001_create_accounts.sql` | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until` + partial index on `locked_until` |
-| `characters` | `0002_create_characters.sql` (+ `0005_add_character_room.sql` for `current_room_id`) | `id, account_id (FK accounts.id ON DELETE CASCADE), name, name_lower (unique), created_at, last_played_at, current_room_id` (defaults to `1` = starter room) |
-| `rooms` | `0003_create_world.sql` (+ `0006_world_external_id.sql` for `external_id`) | `id, external_id (unique), name, short_desc, long_desc, created_at` |
-| `exits` | `0003_create_world.sql` | `id, from_room_id (FK rooms ON DELETE CASCADE), to_room_id (FK rooms ON DELETE CASCADE), direction CHECK in (n/s/e/w/u/d)`, unique `(from_room_id, direction)` |
-| `items` | `0003_create_world.sql` (+ `0006_world_external_id.sql` for `external_id`) | `id, external_id (unique), name, name_lower, short_desc, room_id (nullable, FK rooms ON DELETE SET NULL), created_at` |
-| `mobs` | `0003_create_world.sql` (+ `0006_world_external_id.sql` for `external_id`) | `id, external_id (unique), name, name_lower, short_desc, room_id (nullable, FK rooms ON DELETE SET NULL), created_at` |
+| `accounts` | 0001 | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until` + partial index on `locked_until` |
+| `characters` | 0002/0005/0009 | `id, account_id FK, name, name_lower (unique), created_at, last_played_at, current_room_id` + Core (str/dex/con/int/wis/cha, hp, defense, etc.) + player (race/background/class_levels JSON/xp/coin/bank/stance/fame/infamy/etc.) |
+| `rooms` | 0003/0006 | `id, external_id (unique), zone, name, short_desc, long_desc, created_at` |
+| `exits` | 0003/0007 | `id, from_room_id FK, to_room_id FK, direction CHECK (n/s/e/w/u/d/ne/nw/se/sw)`, unique `(from_room_id, direction)` |
+| `items` | 0003/0006 | `id, external_id (unique), name, name_lower, short_desc, room_id FK nullable, created_at` |
+| `mob_templates` | 0008 | `id, external_id (unique), name, name_lower, short_desc, created_at` + Core stat block + mob-specific fields |
+| `mob_instances` | 0008 | `id, template_id FK, room_id FK nullable, created_at` (instance state separate from archetype) |
+| `channeling` | 0008 | `owner_kind (enum: 'mob_template'/'mob_instance'/'character'), owner_id, gender_source, channeler_type, affinity JSON, talents JSON, weaves_known JSON, slots_per_level JSON, embraced, madness, stilled, bonded_warder_id, bonded_aes_sedai_id, held_angreal_id, held_saangreal_id, circle_id, aes_sedai_oaths, damane_collar_to` — polymorphic via `(owner_kind, owner_id)` |
+| `channels` | 0011 | `id, name (unique), description` — seeded with ooc/gossip/newbie |
 
 **World data flow**: `0004_seed_starter_zone.sql` was the original SQL seed for the 3-room demo zone. `0006_world_external_id.sql` wipes that seed, adds `external_id` columns, and resets the autoincrement sequences. The runtime now populates the world via `internal/world.LoadAndSync` reading YAML — see "World loader" below. Room id `1` is still the starter (`repo.StarterRoomID`); the loader pins the YAML room flagged `starter: true` to that id explicitly.
 
@@ -117,33 +138,45 @@ Errors are formatted with `file:line` so `data/world/starter/rooms.yaml:42: …`
 Interface (`internal/repo/character.go`):
 
 ```
-Create(ctx, Character)              → Character, error  (defaults CurrentRoomID to StarterRoomID)
-FindByName(ctx, name)               → Character, error  (case-insensitive)
-ListByAccount(ctx, accountID)       → []Character, error (recent-first, then name)
-RecordPlay(ctx, id, t)              → error             (last_played_at)
-RecordRoom(ctx, id, roomID)         → error             (current_room_id; called on every move)
+Create(ctx, Character)                      → Character, error
+FindByName(ctx, name)                       → Character, error  (case-insensitive)
+ListByAccount(ctx, accountID)               → []Character, error
+RecordPlay(ctx, id, t)                      → error  (updates last_played_at on autosave pulse)
+RecordRoom(ctx, id, roomID)                 → error  (write-through on every move)
+RecordCore(ctx, id, core)                   → error  (combat HP / condition updates)
+RecordChannelSettings(ctx, id, settings)    → error  (channel_settings_json blob)
 ```
 
-`SQLiteCharacterRepo` + `MemoryCharacterRepo`; shared contract test in `character_test.go`.
+SQLite + Memory impls; shared contract test exercises both. `RecordCore` is write-through from combat; `RecordChannelSettings` syncs mute toggles from `Session.channelMuted` (crossMu-guarded bitmask).
 
-## World repos (RoomRepo / ExitRepo / ItemRepo / MobRepo)
+## World repos
 
 ```
-RoomRepo.FindByID(ctx, id)                              → Room, error  (ErrRoomNotFound)
-RoomRepo.FindByExternalID(ctx, externalID)              → Room, error  (ErrRoomNotFound)
-RoomRepo.Create(ctx, Room)                              → Room, error  (ErrInvalidExternalID, ErrDuplicateExternalID)
-ExitRepo.ListFrom(ctx, fromRoomID)                      → []Exit, error (sorted by direction)
-ExitRepo.FindByDirection(ctx, fromRoomID, dir)          → Exit, error  (ErrExitNotFound)
-ExitRepo.Create(ctx, Exit)                              → Exit, error  (ErrDuplicateExit)
-ItemRepo.ListInRoom(ctx, roomID)                        → []Item, error (sorted by name_lower)
-ItemRepo.Create(ctx, Item)                              → Item, error  (sentinels above)
-MobRepo.ListInRoom(ctx, roomID)                         → []Mob, error
-MobRepo.Create(ctx, Mob)                                → Mob, error
+RoomRepo.FindByID(ctx, id)                   → Room, error
+RoomRepo.Create(ctx, Room)                   → Room, error
+
+ExitRepo.ListFrom(ctx, fromRoomID)           → []Exit, error  (sorted by direction)
+ExitRepo.FindByDirection(ctx, fromRoomID, direction) → Exit, error
+ExitRepo.Create(ctx, Exit)                   → Exit, error
+
+ItemRepo.ListInRoom(ctx, roomID)             → []Item, error
+ItemRepo.Create(ctx, Item)                   → Item, error
+
+MobTemplateRepo.FindByID(ctx, id)            → MobTemplate, error
+MobTemplateRepo.Create(ctx, MobTemplate)     → MobTemplate, error
+
+MobInstanceRepo.ListInRoom(ctx, roomID)      → []MobInstance, error
+MobInstanceRepo.FindByID(ctx, id)            → MobInstance, error
+MobInstanceRepo.Create(ctx, MobInstance)     → MobInstance, error
+
+ChannelingRepo.FindByOwner(ctx, kind, ownerID) → Channeling, error
+ChannelingRepo.Upsert(ctx, Channeling)       → error
+
+ChannelRepo.List(ctx)                        → []Channel, error  (catalog load at boot)
+ChannelRepo.FindByName(ctx, name)            → Channel, error
 ```
 
-Direction codes (`repo.DirNorth..DirDown`) are single-byte strings (`n/s/e/w/u/d`) matching the DB CHECK constraint. The `look`/`move` commands translate the long names (`north`, ...) at the boundary.
-
-`SQLite*Repo` and `Memory*Repo` for each of the four. Memory variants expose `Insert(...)` for test fixtures (skips ExternalID validation); production code (the YAML loader's transaction path) uses raw SQL inserts inside its own tx rather than going through `Create` so that all four kinds land atomically. The repo `Create` methods cover ad-hoc insertion (e.g. via tests of `Create` itself) and will service future authoring paths like OLC.
+Direction codes (single-char: `n/s/e/w/u/d/ne/nw/se/sw`) match DB CHECK. Commands translate long names (`north`) at boundary. `ChannelingRepo` is polymorphic — `(owner_kind, owner_id)` keys can be mob_template / mob_instance / character. YAML loader runs raw SQL inserts in one tx so all world kinds land atomically; `Create` covers test + future OLC edits.
 
 ## Login flow (where this layer is consumed)
 
@@ -178,12 +211,26 @@ Create mode follows the same shape but goes username → Hash(password) → conf
 | `*Login` mode (per conn) | login → success/teardown | Per-connection — built fresh by `srv.newInitial()` factory |
 | `telnet.Registry` | server lifetime | Built once, read-only across sessions |
 
+## Creature & Currency models
+
+**`internal/creature/creature.go`** defines the stat block shared by mobs and characters:
+- `Core` — base attributes (name, size, type, gender, alignment), ability scores (Str/Dex/Con/Int/Wis/Cha), HP, defenses, saves, speed, movement types.
+- `Abilities` — individual ability with current/max/inherent (for drain vs. damage tracking).
+- `Affect`, `StatMod` — buff/debuff stubs for §12 (duration ticks, effects).
+- `Equipment` — slot enum + equipment tracking (wield, wear).
+- `MobTemplate`, `MobInstance`, `Character` — type skeletons landed. Character extends mob with PC-specific fields (account_id FK, class_levels JSON, race/background, XP, coin, fame/infamy, quest log, etc.) — all column families from 0009.
+
+**`internal/currency/amount.go`** — Amount type:
+- Four denominations at fixed ratios (1 cp / 10 sp / 100 mk / 1000 gc).
+- `New(gc, mk, sp, cp) Amount`, `Parse("1gc 2mk ...")`, `Format()` (greedy largest-first), `In(coin)`.
+- `Add` / `Sub` with overflow guards. Stored as signed copper pennies on `characters.coin` column.
+
 ## Pending
 
-- Hot-reload of YAML zones without a DB wipe + restart — needs reset semantics (what to do with characters in deleted rooms, items moved between zones, etc.).
-- Periodic + shutdown autosave (player state — characters' rooms today, inventory + xp later).
-- True FK on `characters.current_room_id` — needs a table-rebuild migration; see comment in `0005_add_character_room.sql`.
-- Item/mob template-vs-instance split — only minimal placeholder schemas today; lifecycle (spawn/despawn, inventory ownership) lands with §11/§14.
-- CHECK constraints on `accounts` (length / charset) — see `persistence_followups.md` item 4.
-- Down-migration / rollback path — see `persistence_followups.md` item 1.
-- Backup / vacuum / WAL checkpoint policy.
+- Hot-reload of world YAML without restart (soft-delete via `deleted_at` flag, character relocation on room delete).
+- Item/mob polymorphic inventory (creature inventory vs. room floor vs. containers).
+- Dirty-bit autosave for combat HP / mob state / affect tick counters (rooms/items/character core already write-through).
+- True FK on `characters.current_room_id` (table-rebuild migration).
+- CHECK constraints on accounts (username length / charset rules).
+- Down-migration / rollback path.
+- Backup / VACUUM / WAL checkpoint automation.
