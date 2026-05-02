@@ -571,6 +571,9 @@ type MobTemplate struct {
 	TaintImmune           bool
 	FadeOnLinkMasterTimer time.Duration
 
+	ShortDesc string
+	LongDesc  string
+
 	// nil for non-channelers.
 	Channeling *Channeling
 }

@@ -356,10 +356,14 @@ will need on top of those tables.
       Migrations `0008_create_creatures.sql` (mob_templates,
       mob_instances, polymorphic channeling) and
       `0009_extend_characters.sql` (Core + player columns) applied.
-      Pending: `MobTemplateRepo` / `MobInstanceRepo` /
-      `ChannelingRepo` (SQLite + memory + contract tests),
-      extending `repo.CharacterRepo` to load/persist the new Core
-      + player columns, world loader writing templates instead of
+      `MobTemplateRepo`, `MobInstanceRepo`, and `ChannelingRepo`
+      (interfaces + SQLite + memory + contract tests) landed in
+      `internal/repo/{mob_template,mob_instance,channeling}_*.go`;
+      `ChannelingRepo` keys off a polymorphic `(OwnerKind, owner_id)`
+      so the same row schema serves PCs, mob templates, and mob
+      instances.
+      Pending: extending `repo.CharacterRepo` to load/persist the
+      new Core + player columns, world loader writing templates instead of
       the legacy flat `mobs` table, char-create rolling abilities
       / picking race / class / background / starting HP & defense,
       `look`/`examine` rendering mob instances, and seed catalogs
