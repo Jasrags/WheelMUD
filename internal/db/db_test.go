@@ -39,6 +39,73 @@ func TestOpen_AppliesMigrationsOnce(t *testing.T) {
 	}
 }
 
+func TestOpen_ZonesSchema(t *testing.T) {
+	ctx := context.Background()
+	conn, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	// zones table exists and is queryable.
+	var count int
+	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM zones`).Scan(&count); err != nil {
+		t.Fatalf("query zones: %v", err)
+	}
+
+	// rooms.zone_id column was added by migration 0016.
+	if _, err := conn.ExecContext(ctx, `SELECT zone_id FROM rooms LIMIT 0`); err != nil {
+		t.Fatalf("rooms.zone_id missing: %v", err)
+	}
+
+	// CHECK rejects an invalid reset_mode.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name, reset_mode) VALUES (?, ?, ?)`,
+		"bad_mode", "Bad Mode", "blah")
+	if err == nil {
+		t.Fatal("expected CHECK violation on reset_mode='blah', got nil")
+	}
+
+	// CHECK rejects min_level < 1.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name, min_level) VALUES (?, ?, ?)`,
+		"bad_min", "Bad Min", 0)
+	if err == nil {
+		t.Fatal("expected CHECK violation on min_level=0, got nil")
+	}
+
+	// CHECK rejects max_level < min_level.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name, min_level, max_level) VALUES (?, ?, ?, ?)`,
+		"bad_range", "Bad Range", 10, 5)
+	if err == nil {
+		t.Fatal("expected CHECK violation on max_level<min_level, got nil")
+	}
+
+	// CHECK rejects negative reset_interval_s.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name, reset_interval_s) VALUES (?, ?, ?)`,
+		"bad_interval", "Bad Interval", -5)
+	if err == nil {
+		t.Fatal("expected CHECK violation on reset_interval_s=-5, got nil")
+	}
+
+	// Happy-path insert with all defaults works.
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name) VALUES (?, ?)`,
+		"ok", "OK"); err != nil {
+		t.Fatalf("happy-path zone insert: %v", err)
+	}
+
+	// UNIQUE on external_id rejects a duplicate.
+	_, err = conn.ExecContext(ctx,
+		`INSERT INTO zones(external_id, name) VALUES (?, ?)`,
+		"ok", "OK Again")
+	if err == nil {
+		t.Fatal("expected UNIQUE violation on duplicate external_id, got nil")
+	}
+}
+
 func TestOpen_EnablesPragmas(t *testing.T) {
 	ctx := context.Background()
 	conn, err := Open(ctx, ":memory:")
