@@ -301,14 +301,57 @@ func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[stri
 func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[string]int64) error {
 	for _, it := range items {
 		roomID := roomIDs[it.Room]
+		// Validation has already proved Type/Quality/Flags/Stats are
+		// well-formed, so the conversions below cannot fail in
+		// practice — but we still propagate any error rather than
+		// panic, since a future loader change might decouple them.
+		t := repo.ItemType(it.Type)
+		if t == "" {
+			t = repo.ItemTypeTrash
+		}
+		q := repo.ItemQuality(it.Quality)
+		if q == "" {
+			q = repo.QualityNormal
+		}
+		value, err := decodeItemValue(it.Value)
+		if err != nil {
+			return fmt.Errorf("insert item %q: %w", it.ID, err)
+		}
+		stats, err := convertItemStats(it)
+		if err != nil {
+			return fmt.Errorf("insert item %q: %w", it.ID, err)
+		}
+		statsJSON, err := encodeItemStatsJSON(stats)
+		if err != nil {
+			return fmt.Errorf("insert item %q: %w", it.ID, err)
+		}
+		flags := decodeItemFlags(it.Flags)
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id) VALUES (?, ?, ?, ?, ?)`,
+			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id,
+				type, weight_lbs, value_cp, quality, flags, stats_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			it.ID, it.Name, strings.ToLower(it.Name), it.Short, roomID,
+			string(t), it.Weight, int64(value), string(q),
+			int64(flags), statsJSON,
 		); err != nil {
 			return fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
 	}
 	return nil
+}
+
+// encodeItemStatsJSON marshals the typed stats struct produced by
+// convertItemStats to the wire-format the items.stats_json column
+// expects. Nil → "{}" so the column NOT NULL contract holds.
+func encodeItemStatsJSON(s repo.ItemStats) (string, error) {
+	if s == nil {
+		return "{}", nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return "", fmt.Errorf("encode stats: %w", err)
+	}
+	return string(b), nil
 }
 
 // insertMobs writes each YAML mob entry as a (mob_template,

@@ -171,6 +171,134 @@ func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_ItemTaxonomyRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"smith/zone.yaml":  &fstest.MapFile{Data: []byte("id: smith\nname: Smithy\n")},
+		"smith/rooms.yaml": &fstest.MapFile{Data: []byte("- id: smith.shop\n  starter: true\n  name: Forge\n  long: Hot.\n")},
+		"smith/items.yaml": &fstest.MapFile{Data: []byte(`
+- id: smith.longsword
+  room: smith.shop
+  name: a longsword
+  short: A well-kept blade.
+  type: weapon
+  weight: 4
+  value: "15mk"
+  quality: masterwork
+  flags: [magic, glow]
+  stats:
+    proficiency: martial
+    size: medium
+    range: melee
+    damage: 1d8
+    threat_low: 19
+    crit_mult: 2
+    damage_type: [S]
+    special: [finesse]
+- id: smith.iron_key
+  room: smith.shop
+  name: an iron key
+  type: key
+  weight: 0
+  stats:
+    key_id: keep.gate
+- id: smith.pebble
+  room: smith.shop
+  name: a small pebble
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	items := repo.NewSQLiteItemRepo(conn)
+	got, err := items.ListInRoom(ctx, repo.StarterRoomID)
+	if err != nil {
+		t.Fatalf("ListInRoom: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 items, got %d: %+v", len(got), got)
+	}
+	byID := map[string]repo.Item{}
+	for _, it := range got {
+		byID[it.ExternalID] = it
+	}
+
+	sword := byID["smith.longsword"]
+	if sword.Type != repo.ItemTypeWeapon || sword.Quality != repo.QualityMasterwork {
+		t.Errorf("sword type/quality wrong: %+v", sword)
+	}
+	if sword.Weight != 4 || sword.Value != 1500 {
+		t.Errorf("sword weight/value wrong: weight=%g value=%d", sword.Weight, int64(sword.Value))
+	}
+	if !sword.HasFlag(repo.FlagMagic) || !sword.HasFlag(repo.FlagGlow) {
+		t.Errorf("sword flags wrong: %b", sword.Flags)
+	}
+	ws, ok := sword.Stats.(*repo.WeaponStats)
+	if !ok || ws.Damage != "1d8" || ws.ThreatLow != 19 || len(ws.Special) != 1 {
+		t.Errorf("sword weapon stats wrong: %+v", sword.Stats)
+	}
+
+	key := byID["smith.iron_key"]
+	if key.Type != repo.ItemTypeKey {
+		t.Errorf("key type wrong: %s", key.Type)
+	}
+	ks, ok := key.Stats.(*repo.KeyStats)
+	if !ok || ks.KeyID != "keep.gate" {
+		t.Errorf("key stats wrong: %+v", key.Stats)
+	}
+
+	pebble := byID["smith.pebble"]
+	if pebble.Type != repo.ItemTypeTrash {
+		t.Errorf("untyped item should default to trash; got %s", pebble.Type)
+	}
+}
+
+func TestLoadAndSync_RejectsUnknownItemType(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/items.yaml": &fstest.MapFile{Data: []byte("- id: z.bad\n  room: z.r\n  name: bad\n  type: floomf\n")},
+	}
+	if err := LoadAndSync(ctx, conn, worldFS); err == nil ||
+		!strings.Contains(err.Error(), "unknown type") {
+		t.Fatalf("want unknown-type error, got %v", err)
+	}
+}
+
+func TestLoadAndSync_RejectsUnknownItemFlag(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/items.yaml": &fstest.MapFile{Data: []byte("- id: z.bad\n  room: z.r\n  name: bad\n  flags: [unknownflag]\n")},
+	}
+	if err := LoadAndSync(ctx, conn, worldFS); err == nil ||
+		!strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("want unknown-flag error, got %v", err)
+	}
+}
+
 func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

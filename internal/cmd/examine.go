@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -104,7 +105,34 @@ func renderItem(it repo.Item) string {
 	if desc := strings.TrimSpace(it.ShortDesc); desc != "" {
 		b.WriteString(toCRLF(desc))
 		b.WriteString("\r\n")
-	} else {
+	}
+	// Taxonomy fields (§9 migration 0015). Hidden when the item is
+	// trash and weightless and worthless — the common case for the
+	// pre-taxonomy "a small pebble" rows; surfaced once a builder
+	// has actually filled in stats so a player can see what it is.
+	if it.Type != "" && it.Type != repo.ItemTypeTrash {
+		b.WriteString("{{Type:}}::yellow|bold ")
+		b.WriteString("{{")
+		b.WriteString(string(it.Type))
+		b.WriteString("}}::white\r\n")
+	}
+	if it.Quality != "" && it.Quality != repo.QualityNormal {
+		b.WriteString("{{Quality:}}::yellow|bold ")
+		b.WriteString("{{")
+		b.WriteString(string(it.Quality))
+		b.WriteString("}}::white\r\n")
+	}
+	if it.Weight > 0 {
+		b.WriteString("{{Weight:}}::yellow|bold ")
+		b.WriteString(fmt.Sprintf("{{%g lb}}::white\r\n", it.Weight))
+	}
+	if it.Value > 0 {
+		b.WriteString("{{Value:}}::yellow|bold ")
+		b.WriteString("{{")
+		b.WriteString(it.Value.Format())
+		b.WriteString("}}::white\r\n")
+	}
+	if it.ShortDesc == "" && it.Type == repo.ItemTypeTrash {
 		b.WriteString("{{You see nothing special about it.}}::gray\r\n")
 	}
 	return b.String()

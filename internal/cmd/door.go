@@ -65,6 +65,14 @@ func playerHasKey(ctx context.Context, s *telnet.Session, exit repo.Exit, items 
 		return false
 	}
 	for _, it := range roomItems {
+		// Prefer the typed KeyStats.KeyID — that's the contract once
+		// item taxonomy (§9) lands. Fall through to ExternalID match
+		// so legacy items authored before migration 0015 still work.
+		if it.Type == repo.ItemTypeKey {
+			if ks, ok := it.Stats.(*repo.KeyStats); ok && ks.KeyID == exit.KeyExternalID {
+				return true
+			}
+		}
 		if it.ExternalID == exit.KeyExternalID {
 			return true
 		}

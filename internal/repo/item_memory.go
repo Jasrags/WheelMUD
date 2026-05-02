@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,21 @@ func (r *MemoryItemRepo) Create(_ context.Context, i Item) (Item, error) {
 	if i.ExternalID == "" {
 		return Item{}, ErrInvalidExternalID
 	}
+	if i.Type == "" {
+		i.Type = ItemTypeTrash
+	}
+	if !i.Type.IsValid() {
+		return Item{}, fmt.Errorf("invalid item type %q", i.Type)
+	}
+	if i.Quality == "" {
+		i.Quality = QualityNormal
+	}
+	if !i.Quality.IsValid() {
+		return Item{}, fmt.Errorf("invalid item quality %q", i.Quality)
+	}
+	if !statsTypeMatches(i.Type, i.Stats) {
+		return Item{}, ErrItemStatsTypeMismatch
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.byExt[i.ExternalID]; dup {
@@ -50,6 +66,12 @@ func (r *MemoryItemRepo) insertLocked(i Item) Item {
 	}
 	if i.NameLower == "" {
 		i.NameLower = strings.ToLower(i.Name)
+	}
+	if i.Type == "" {
+		i.Type = ItemTypeTrash
+	}
+	if i.Quality == "" {
+		i.Quality = QualityNormal
 	}
 	if i.CreatedAt.IsZero() {
 		i.CreatedAt = time.Now().UTC()

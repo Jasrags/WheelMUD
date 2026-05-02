@@ -358,16 +358,36 @@ will need on top of those tables.
       sibling `zone_resets` table (load mob X into room Y up to count
       Z; load item into room/container; set door state; equip mob).
       Resets fire from the §8 `areaReset` bucket.
-- [~] **Item / object** — `repo.Item` covers id, room/zone, name,
-      description, `external_id`. Pending: type enum (`weapon`,
-      `armor`, `container`, `consumable`, `light`, `key`, `scroll`,
-      `wand`, `currency`, `trash`), weight, value (in base currency),
-      wear-slot bitmask, material, condition/durability, item flags
-      (`notake`, `nodrop`, `nosell`, `bind-on-pickup`, `magic`,
-      `glow`, `hum`), level requirement, class/align restrictions,
-      affects list (stat mods, resistances, regen) with duration for
-      consumables, charges for wands/scrolls, type-specific stat blob
-      (weapon dice + damage type, armor AC, light fuel ticks, key id).
+- [~] **Item / object** — taxonomy schema landed (migration 0015).
+      `repo.Item` carries `Type` enum (`weapon` / `armor` / `shield` /
+      `container` / `consumable` / `light` / `key` / `tool` /
+      `clothing` / `food` / `trade_good` / `trash`), `Weight` (lb),
+      `Value` (`currency.Amount` in cp), `Quality` (`normal` /
+      `masterwork` / `masterpiece` / `power_wrought`), `Flags` bitset
+      (`notake` / `nodrop` / `nosell` / `bind_on_pickup` / `magic` /
+      `glow` / `hum` / `trade_good`), and a polymorphic
+      `stats_json` blob decoded into typed structs:
+      `WeaponStats` (proficiency / size / range / damage dice /
+      threat range / crit mult / range increment / B-P-S types /
+      special tags), `ArmorStats` (weight class / bonus / max-dex /
+      check penalty / speed), `ShieldStats` (kind / bonus / check
+      penalty), `ContainerStats` (lb + cuft + liquid pints + depth
+      cap + weight multiplier), `ConsumableStats` (charges +
+      effect-id forward ref), `LightStats` (radius + fuel ticks),
+      `KeyStats` (key id), `ToolStats` (skill tag + charges). YAML
+      schema accepts `type:`, `weight:`, `value: "15mk"` (parsed
+      via `currency.Parse`), `quality:`, `flags: [...]`, and a
+      type-discriminated `stats:` sub-block; unknown types and
+      flags fail at validate time. `examine` surfaces type / quality
+      / weight / formatted value when set. `lock` / `unlock` prefer
+      typed `KeyStats.KeyID` matches over the legacy ExternalID
+      fallback. Pending: combat damage resolution against
+      `WeaponStats` (§11), wear/wield slot management (§9 equipment
+      slots bullet), encumbrance / carry-weight (§14), don timers,
+      masterwork/masterpiece attack/AC effects, Reputation deltas,
+      container nesting + `take` / `put` / `open container` (§14),
+      light radius affecting room visibility (§10), Power-wrought
+      unbreakable handling.
 - [ ] **Container semantics** — capacity (weight + slot count),
       open/closed/locked state sharing the door schema, content
       visibility flag (`see-inside`), nested-container depth cap,

@@ -167,6 +167,30 @@ func validateItems(items []Item, rooms []Room) error {
 			return fmt.Errorf("%s:%d: item %q references unknown room %q",
 				it.SourceFile, it.Line, it.ID, it.Room)
 		}
+		if it.Weight < 0 {
+			return fmt.Errorf("%s:%d: item %q has negative weight %g",
+				it.SourceFile, it.Line, it.ID, it.Weight)
+		}
+		if it.Type != "" && !repo.ItemType(it.Type).IsValid() {
+			return fmt.Errorf("%s:%d: item %q has unknown type %q",
+				it.SourceFile, it.Line, it.ID, it.Type)
+		}
+		if it.Quality != "" && !repo.ItemQuality(it.Quality).IsValid() {
+			return fmt.Errorf("%s:%d: item %q has unknown quality %q",
+				it.SourceFile, it.Line, it.ID, it.Quality)
+		}
+		for _, f := range it.Flags {
+			if _, ok := itemFlagByName[f]; !ok {
+				return fmt.Errorf("%s:%d: item %q has unknown flag %q",
+					it.SourceFile, it.Line, it.ID, f)
+			}
+		}
+		if _, err := decodeItemValue(it.Value); err != nil {
+			return fmt.Errorf("%s:%d: item %q: %w", it.SourceFile, it.Line, it.ID, err)
+		}
+		if _, err := convertItemStats(it); err != nil {
+			return fmt.Errorf("%s:%d: item %q: %w", it.SourceFile, it.Line, it.ID, err)
+		}
 	}
 	return nil
 }

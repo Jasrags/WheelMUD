@@ -120,12 +120,25 @@ type Coords struct {
 	Z int `yaml:"z"`
 }
 
-// Item is one entry in `items.yaml`.
+// Item is one entry in `items.yaml`. The Type/Weight/Value/Quality/
+// Flags/Stats fields land in migration 0015 (§9 Item taxonomy).
+// Builders may omit any of them — defaults are type=trash, weight=0,
+// value=0, quality=normal, no flags, empty stats. The Stats sub-block
+// is YAML-decoded as a generic map and converted to the typed struct
+// inside the loader so a typo in `weapon: damage` fails at validate
+// time instead of silently zeroing.
 type Item struct {
 	ID    string `yaml:"id"`
 	Room  string `yaml:"room"`
 	Name  string `yaml:"name"`
 	Short string `yaml:"short"`
+
+	Type    string         `yaml:"type"`
+	Weight  float64        `yaml:"weight"`
+	Value   string         `yaml:"value"`   // currency.Parse — "5 mk", "2 gc 1sp"
+	Quality string         `yaml:"quality"` // normal | masterwork | masterpiece | power_wrought
+	Flags   []string       `yaml:"flags"`   // notake, nodrop, ...
+	Stats   map[string]any `yaml:"stats"`   // type-discriminated sub-block
 
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
