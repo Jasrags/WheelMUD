@@ -1,0 +1,83 @@
+package repo
+
+import (
+	"context"
+	"sort"
+	"sync"
+)
+
+// MemoryZoneRepo is an in-memory ZoneRepo for tests. Concurrent-safe.
+type MemoryZoneRepo struct {
+	mu    sync.Mutex
+	zones []Zone
+	maxID int64
+}
+
+func NewMemoryZoneRepo() *MemoryZoneRepo { return &MemoryZoneRepo{} }
+
+// Insert adds a zone directly without uniqueness checks. Test fixtures
+// use this; production code (the YAML loader) goes through Create.
+func (r *MemoryZoneRepo) Insert(z Zone) Zone {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.insertLocked(z)
+}
+
+func (r *MemoryZoneRepo) Create(_ context.Context, z Zone) (Zone, error) {
+	if z.ResetMode == "" {
+		z.ResetMode = ZoneResetEmpty
+	}
+	if !z.ResetMode.IsValid() {
+		return Zone{}, ErrInvalidResetMode
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.zones {
+		if existing.ExternalID == z.ExternalID {
+			return Zone{}, ErrDuplicateZone
+		}
+	}
+	return r.insertLocked(z), nil
+}
+
+func (r *MemoryZoneRepo) insertLocked(z Zone) Zone {
+	if z.ID == 0 {
+		r.maxID++
+		z.ID = r.maxID
+	} else if z.ID > r.maxID {
+		r.maxID = z.ID
+	}
+	r.zones = append(r.zones, z)
+	return z
+}
+
+func (r *MemoryZoneRepo) GetByID(_ context.Context, id int64) (Zone, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, z := range r.zones {
+		if z.ID == id {
+			return z, nil
+		}
+	}
+	return Zone{}, ErrZoneNotFound
+}
+
+func (r *MemoryZoneRepo) GetByExternalID(_ context.Context, externalID string) (Zone, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, z := range r.zones {
+		if z.ExternalID == externalID {
+			return z, nil
+		}
+	}
+	return Zone{}, ErrZoneNotFound
+}
+
+func (r *MemoryZoneRepo) List(_ context.Context) ([]Zone, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Zone, len(r.zones))
+	copy(out, r.zones)
+	sort.Slice(out, func(i, j int) bool { return out[i].ExternalID < out[j].ExternalID })
+	return out, nil
+}
