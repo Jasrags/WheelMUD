@@ -45,6 +45,11 @@ type Room struct {
 	LightLevel *int      `yaml:"light_level"` // pointer so 0 ≠ "unspecified"
 	Coords     *Coords   `yaml:"coords"`
 
+	// Descriptions: keyword -> long-form text, rendered by
+	// `look <keyword>`. Keys are lowercased on insert by the repo so
+	// authoring case doesn't matter.
+	Descriptions map[string]string `yaml:"descriptions"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 }

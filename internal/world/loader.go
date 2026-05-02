@@ -3,6 +3,7 @@ package world
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -230,15 +231,30 @@ func roomInsertValues(r Room) (string, []any) {
 	if r.Coords != nil {
 		x, y, z = r.Coords.X, r.Coords.Y, r.Coords.Z
 	}
+	extraJSON := "{}"
+	if len(r.Descriptions) > 0 {
+		normalized := make(map[string]string, len(r.Descriptions))
+		for k, v := range r.Descriptions {
+			normalized[strings.ToLower(strings.TrimSpace(k))] = v
+		}
+		raw, err := json.Marshal(normalized)
+		if err != nil {
+			// validate() rejected non-string maps; this should be
+			// unreachable, but fall back to "{}" rather than panicking.
+			extraJSON = "{}"
+		} else {
+			extraJSON = string(raw)
+		}
+	}
 	cols := `external_id, name, short_desc, long_desc,
 		indoors, nopvp, noteleport, dark, silent, peaceful,
-		sector, light_level, coord_x, coord_y, coord_z`
+		sector, light_level, coord_x, coord_y, coord_z, extra_descs_json`
 	vals := []any{
 		r.ID, r.Name, r.Short, r.Long,
 		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
 		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
 		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
-		sector, light, x, y, z,
+		sector, light, x, y, z, extraJSON,
 	}
 	return cols, vals
 }

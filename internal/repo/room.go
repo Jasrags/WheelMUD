@@ -56,6 +56,11 @@ type Room struct {
 	CoordX     int
 	CoordY     int
 	CoordZ     int
+	// ExtraDescs maps lowercased keyword -> long-form description.
+	// `look <noun>` resolves against this map. Keys are normalized to
+	// lowercase on write so lookups are case-insensitive without
+	// rewriting the rendered text.
+	ExtraDescs map[string]string
 	CreatedAt  time.Time
 }
 

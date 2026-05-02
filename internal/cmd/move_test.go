@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/world"
@@ -70,6 +71,34 @@ func TestMove_SectorGatesAirUnderwater(t *testing.T) {
 	}
 	if s.CurrentRoomID != 1 {
 		t.Fatalf("CurrentRoomID drifted to %d", s.CurrentRoomID)
+	}
+}
+
+func TestMove_FlySpeedAllowsAir(t *testing.T) {
+	rooms, exits, items, mobs := seedWorld(t)
+	chars := repo.NewMemoryCharacterRepo()
+
+	rooms.Insert(repo.Room{ID: 4, Name: "Open Sky", Sector: repo.SectorAir})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 4, Direction: repo.DirUp})
+
+	flyer, _ := chars.Create(context.Background(), repo.Character{
+		AccountID: 1, Name: "Wing",
+		Core: creature.Core{Name: "Wing", Speed: creature.Speed{BaseFt: 30, FlyFt: 60}},
+	})
+
+	s, conn := bufSession(t)
+	s.CharacterID = flyer.ID
+	s.CharacterName = flyer.Name
+	s.CurrentRoomID = 1
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	up := findCmd(t, family, "up")
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "up"}
+	if err := up.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.CurrentRoomID != 4 {
+		t.Fatalf("flyer should have reached air room; got CurrentRoomID = %d, output: %q", s.CurrentRoomID, conn.String())
 	}
 }
 

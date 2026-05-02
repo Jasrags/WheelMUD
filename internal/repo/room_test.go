@@ -146,6 +146,50 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		}
 	})
 
+	t.Run(name+"/extra_descs_roundtrip_lowercased", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{
+			ExternalID: "fountain.plaza", Name: "Plaza",
+			ExtraDescs: map[string]string{
+				"Fountain": "A marble fountain spills clear water.",
+				"  Statue ": "A weathered hero salutes the sky.",
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.ExtraDescs["fountain"] == "" {
+			t.Errorf("missing 'fountain' key after lowercase normalization: %+v", got.ExtraDescs)
+		}
+		if got.ExtraDescs["statue"] == "" {
+			t.Errorf("missing 'statue' key after trim+lowercase: %+v", got.ExtraDescs)
+		}
+		if _, mixedCase := got.ExtraDescs["Fountain"]; mixedCase {
+			t.Errorf("uppercase key leaked through normalization")
+		}
+	})
+
+	t.Run(name+"/extra_descs_empty_is_nil", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{ExternalID: "blank", Name: "Blank"})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.ExtraDescs != nil {
+			t.Errorf("ExtraDescs = %+v, want nil for empty map", got.ExtraDescs)
+		}
+	})
+
 	t.Run(name+"/find_missing", func(t *testing.T) {
 		r := newRepo(t)
 		_, err := r.FindByID(context.Background(), 99999)

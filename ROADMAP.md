@@ -317,19 +317,23 @@ will need on top of those tables.
       `external_id`, `RoomFlags` (`indoors` / `nopvp` / `noteleport`
       / `dark` / `silent` / `peaceful`), `Sector` enum (city, forest,
       field, hills, mountain, desert, water, underwater, air,
-      underground), `LightLevel`, and `coord_x/y/z` (migration 0012).
-      YAML schema accepts `flags:`, `sector:`, `light_level:`, and
-      `coords:` blocks; defaults are outdoors / city / fully lit /
-      origin. Behavior wired: `look` renders "pitch black" when
-      `dark=true && light_level=0` (hides desc/items/mobs); `tp`
-      refuses destinations with `noteleport`; `say` is swallowed in
-      `silent` rooms; `move` blocks `air`/`underwater` sectors
-      pending §11/§12 fly/swim affects (the message says "you cannot
-      fly/swim"). Pending: ambient/extra descriptions keyed by
-      phrase (`look fountain`) — needs §14 keyword resolution; auto
-      day/night light level cycling — needs a clock source; per-room
-      reset hooks — block on §9 zone schema; `coords` consumed by
-      `map`/`track` — block on §10.
+      underground), `LightLevel`, `coord_x/y/z` (migration 0012),
+      and `ExtraDescs` keyword map (migration 0013, JSON column).
+      YAML schema accepts `flags:`, `sector:`, `light_level:`,
+      `coords:`, and `descriptions:` blocks; defaults are outdoors
+      / city / fully lit / origin / no extras. Behavior wired:
+      `look` (no args) renders the room and pitch-blacks dark+0
+      light rooms; `look <noun>` resolves against `ExtraDescs`
+      (case-insensitive) and falls back to "nothing special" on
+      miss; `tp` refuses `noteleport` rooms; `say` is swallowed in
+      `silent` rooms; `move` consults the mover's
+      `creature.Speed` to gate `air`/`underwater` (FlyFt/SwimFt
+      requirements; zero-speed defaults to "blocked"); `whereami`
+      command surfaces id/sector/flags/light/coords/keywords for
+      builders. Pending: auto day/night light cycling (needs a
+      clock source); per-room reset hooks (block on §9 zone
+      schema); `coords` consumed by `map`/`track` rendering (block
+      on §10).
 - [~] **Exit** — `repo.Exit` has `from_room_id`, `direction`, `to_room_id`.
       Pending: door flags (`closed`, `locked`, `pickable`, `hidden`,
       `nopass`), key item id, lock difficulty, exit-specific

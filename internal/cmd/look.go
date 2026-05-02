@@ -24,19 +24,53 @@ var directionLongName = map[string]string{
 	repo.DirSouthwest: "southwest",
 }
 
-// NewLook builds the look command. It reads the room, exits, items, and
-// mobs anchored at Session.CurrentRoomID and renders them. Empty
-// subsections are omitted entirely.
+// NewLook builds the look command. With no args it renders the current
+// room (description, exits, items, mobs). With a noun it resolves the
+// noun against the room's ExtraDescs map (e.g. `look fountain`); if no
+// keyword matches, the player is told there's nothing special to see.
+// Mob/item inspection is delegated to the `examine` command so each
+// verb has a single concern.
 func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "look",
 		Aliases: []string{"l"},
-		Help:    "Look at your surroundings",
+		Help:    "Look at your surroundings; `look <keyword>` for room details",
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
-			return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs)
+			if len(c.Args) == 0 {
+				return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs)
+			}
+			return lookKeyword(c, rooms, strings.Join(c.Args, " "))
 		},
 	}
+}
+
+// lookKeyword renders an entry from the room's ExtraDescs map. The
+// noun is matched case-insensitively after trimming. Pitch-black rooms
+// suppress the lookup so dark-room ambience stays consistent with the
+// no-arg path.
+func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string) error {
+	noun = strings.ToLower(strings.TrimSpace(noun))
+	if noun == "" {
+		return RenderRoom(c.Ctx, c.Session, rooms, nil, nil, nil)
+	}
+	if c.Session.CurrentRoomID == 0 {
+		return c.Session.WriteString("{{You are nowhere in particular.}}::red\r\n")
+	}
+	room, err := rooms.FindByID(c.Ctx, c.Session.CurrentRoomID)
+	if err != nil {
+		if errors.Is(err, repo.ErrRoomNotFound) {
+			return c.Session.WriteString("{{The room around you has gone missing. Tell an admin.}}::red\r\n")
+		}
+		return c.Session.WriteString("{{Could not look around right now.}}::red\r\n")
+	}
+	if room.Flags.Dark && room.LightLevel <= 0 {
+		return c.Session.WriteString("{{It is pitch black — you can't see a thing.}}::gray\r\n")
+	}
+	if desc, ok := room.ExtraDescs[noun]; ok && desc != "" {
+		return c.Session.WriteString(toCRLF(desc) + "\r\n")
+	}
+	return c.Session.WriteString("{{You see nothing special.}}::gray\r\n")
 }
 
 // RenderRoom produces the standard "you are here" view for the session's

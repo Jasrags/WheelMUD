@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,13 @@ func (r *MemoryRoomRepo) Create(_ context.Context, room Room) (Room, error) {
 	}
 	if room.Sector == "" {
 		room.Sector = SectorCity
+	}
+	if len(room.ExtraDescs) > 0 {
+		normalized := make(map[string]string, len(room.ExtraDescs))
+		for k, v := range room.ExtraDescs {
+			normalized[strings.ToLower(strings.TrimSpace(k))] = v
+		}
+		room.ExtraDescs = normalized
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

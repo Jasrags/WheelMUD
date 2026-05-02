@@ -3,8 +3,10 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -16,9 +18,9 @@ func NewSQLiteRoomRepo(db *sql.DB) *SQLiteRoomRepo {
 	return &SQLiteRoomRepo{db: db}
 }
 
-const roomSelectCols = `id, external_id, name, short_desc, long_desc,
-	indoors, nopvp, noteleport, dark, silent, peaceful,
-	sector, light_level, coord_x, coord_y, coord_z, created_at`
+const roomSelectCols = `id, external_id, name, short_desc, long_desc, ` +
+	`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
+	`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 
 func (r *SQLiteRoomRepo) FindByID(ctx context.Context, id int64) (Room, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -42,21 +44,22 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 	if room.Sector == "" {
 		room.Sector = SectorCity
 	}
-	// LightLevel is taken at face value: 0 is pitch black and is a
-	// legitimate authoring choice for caves and night-only rooms.
-	// Callers (YAML loader, seed code) own defaulting to
-	// DefaultLightLevel when the source omitted the field.
 
-	insertCols := `external_id, name, short_desc, long_desc,
-		indoors, nopvp, noteleport, dark, silent, peaceful,
-		sector, light_level, coord_x, coord_y, coord_z, created_at`
+	extraJSON, err := marshalExtraDescs(room.ExtraDescs)
+	if err != nil {
+		return Room{}, fmt.Errorf("marshal extra_descs: %w", err)
+	}
+
+	insertCols := `external_id, name, short_desc, long_desc, ` +
+		`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
+		`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 	insertVals := []any{
 		room.ExternalID, room.Name, room.ShortDesc, room.LongDesc,
 		boolToInt(room.Flags.Indoors), boolToInt(room.Flags.NoPVP),
 		boolToInt(room.Flags.NoTeleport), boolToInt(room.Flags.Dark),
 		boolToInt(room.Flags.Silent), boolToInt(room.Flags.Peaceful),
 		string(room.Sector), room.LightLevel, room.CoordX, room.CoordY, room.CoordZ,
-		room.CreatedAt,
+		extraJSON, room.CreatedAt,
 	}
 
 	if room.ID != 0 {
@@ -88,15 +91,16 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 
 func scanRoom(row *sql.Row) (Room, error) {
 	var (
-		room                                                Room
-		indoors, nopvp, noteleport, dark, silent, peaceful  int
-		sector                                              string
+		room                                               Room
+		indoors, nopvp, noteleport, dark, silent, peaceful int
+		sector                                             string
+		extraJSON                                          string
 	)
 	err := row.Scan(
 		&room.ID, &room.ExternalID, &room.Name, &room.ShortDesc, &room.LongDesc,
 		&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful,
 		&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ,
-		&room.CreatedAt,
+		&extraJSON, &room.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, ErrRoomNotFound
@@ -113,6 +117,11 @@ func scanRoom(row *sql.Row) (Room, error) {
 		Peaceful:   peaceful != 0,
 	}
 	room.Sector = Sector(sector)
+	descs, err := unmarshalExtraDescs(extraJSON)
+	if err != nil {
+		return Room{}, fmt.Errorf("scan room extra_descs (id=%d): %w", room.ID, err)
+	}
+	room.ExtraDescs = descs
 	return room, nil
 }
 
@@ -123,3 +132,35 @@ func mapRoomInsertErr(err error) error {
 	return fmt.Errorf("insert room: %w", err)
 }
 
+// marshalExtraDescs returns the JSON object form of the keyword map.
+// Keys are lowercased so look <Word> matches `word` in the map without
+// rewriting the long-form text. Empty / nil maps marshal to "{}" so
+// the column matches the schema default.
+func marshalExtraDescs(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "{}", nil
+	}
+	normalized := make(map[string]string, len(m))
+	for k, v := range m {
+		normalized[strings.ToLower(strings.TrimSpace(k))] = v
+	}
+	out, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func unmarshalExtraDescs(raw string) (map[string]string, error) {
+	if raw == "" || raw == "{}" {
+		return nil, nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}

@@ -202,6 +202,53 @@ func TestLook_DarkRoomHidesContents(t *testing.T) {
 	}
 }
 
+func TestLook_KeywordHitRendersExtraDesc(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, Name: "Plaza", LongDesc: "Cobblestones.",
+		ExtraDescs: map[string]string{
+			"fountain": "A marble fountain spills clear water into a basin.",
+		},
+	})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	look := NewLook(rooms, exits, items, mobs)
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	s.AuthLevel = telnet.AuthPlayer
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "look", Args: []string{"Fountain"}}
+	if err := look.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(conn.String(), "marble fountain") {
+		t.Fatalf("expected fountain desc; got %q", conn.String())
+	}
+}
+
+func TestLook_KeywordMissFallsThrough(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Plaza", LongDesc: "Cobblestones."})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	look := NewLook(rooms, exits, items, mobs)
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	s.AuthLevel = telnet.AuthPlayer
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "look", Args: []string{"dragon"}}
+	if err := look.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(conn.String(), "nothing special") {
+		t.Fatalf("expected miss message; got %q", conn.String())
+	}
+}
+
 // TestLook_EmitsANSIEscapes confirms the cfmt path actually produces
 // SGR sequences — guards against a future regression where someone
 // switches WriteString back to WriteRaw and silently strips colour.

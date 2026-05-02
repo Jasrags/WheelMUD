@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/world"
@@ -78,7 +80,8 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 	dest, err := rooms.FindByID(c.Ctx, exit.ToRoomID)
 	switch {
 	case err == nil:
-		if msg, blocked := sectorGate(dest.Sector); blocked {
+		speed := moverSpeed(c.Ctx, characters, s.CharacterName)
+		if msg, blocked := sectorGate(dest.Sector, speed); blocked {
 			return s.WriteRaw([]byte(msg + "\r\n"))
 		}
 	case errors.Is(err, repo.ErrRoomNotFound):
@@ -120,16 +123,40 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 }
 
 // sectorGate returns a refusal message + true when the destination
-// terrain requires a movement mode the mover doesn't have. Once
-// creature.Speed.Fly/Swim is reachable from the session this becomes
-// a per-character check instead of a blanket refusal.
-func sectorGate(sector repo.Sector) (string, bool) {
+// terrain requires a movement mode the mover doesn't have. Air needs
+// Speed.FlyFt > 0; underwater needs Speed.SwimFt > 0. A zero-value
+// Speed (passed when the mover is unauthenticated or the lookup
+// failed) means no specialized modes — the safe default for an
+// anonymous mover is "blocked".
+func sectorGate(sector repo.Sector, speed creature.Speed) (string, bool) {
 	switch sector {
 	case repo.SectorAir:
+		if speed.FlyFt > 0 {
+			return "", false
+		}
 		return "The air offers no purchase — you cannot fly.", true
 	case repo.SectorUnderwater:
+		if speed.SwimFt > 0 {
+			return "", false
+		}
 		return "The water closes over your head — you cannot swim that deep.", true
 	default:
 		return "", false
 	}
+}
+
+// moverSpeed loads the mover's Speed for sector-gating decisions. A
+// failed lookup returns the zero Speed, which falls back to the safe
+// default (block air/underwater). The lookup uses CharacterName since
+// CharacterRepo only exposes FindByName today; if a session has no
+// CharacterName (test session, mid-login), we get the same zero Speed.
+func moverSpeed(ctx context.Context, characters repo.CharacterRepo, name string) creature.Speed {
+	if characters == nil || name == "" {
+		return creature.Speed{}
+	}
+	c, err := characters.FindByName(ctx, name)
+	if err != nil {
+		return creature.Speed{}
+	}
+	return c.Core.Speed
 }
