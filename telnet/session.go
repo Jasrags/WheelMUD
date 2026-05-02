@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/i582/cfmt/cmd/cfmt"
 )
@@ -73,6 +74,17 @@ type Session struct {
 	CharacterID   int64
 	CharacterName string
 	CurrentRoomID int64
+
+	// LastTellFrom is the character name of the last sender of a
+	// `tell` to this session, so `reply <text>` knows who to write
+	// back to. Cleared when the sender's session ends — readers
+	// must tolerate a stale name (target session gone).
+	LastTellFrom string
+
+	// LastInputAt is updated by Registry.Dispatch on every command
+	// the session runs; `who` reads it to show idle time. Same
+	// dispatcher-owned ownership rules as the fields above.
+	LastInputAt time.Time
 
 	writeMu sync.Mutex
 

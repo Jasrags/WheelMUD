@@ -8,6 +8,7 @@
 package session
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -57,6 +58,22 @@ func (r *Registry) Lookup(accountID int64) *telnet.Session {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.bound[accountID]
+}
+
+// FindByCharacterName returns the bound session whose
+// Session.CharacterName matches name (case-insensitive), or nil. The
+// `tell` command uses this to resolve a recipient. O(n) over bound
+// accounts — fine for hundreds of players, would want indexing for
+// thousands.
+func (r *Registry) FindByCharacterName(name string) *telnet.Session {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, s := range r.bound {
+		if strings.EqualFold(s.CharacterName, name) {
+			return s
+		}
+	}
+	return nil
 }
 
 // Snapshot returns a copy of the current bindings. Useful for the

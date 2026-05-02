@@ -50,6 +50,14 @@ func (b *bufConn) String() string {
 	return b.buf.String()
 }
 
+// Reset clears the captured output. Used by tests that send
+// multiple commands and want to assert only on the latest write.
+func (b *bufConn) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
 func (b *bufConn) LocalAddr() net.Addr                { return fakeAddr{} }
 func (b *bufConn) RemoteAddr() net.Addr               { return fakeAddr{} }
 func (b *bufConn) SetDeadline(_ time.Time) error      { return nil }

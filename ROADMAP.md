@@ -628,15 +628,20 @@ will need on top of those tables.
 
 ## 13. Communication
 
-- [ ] `say` (room-scoped) — emits `You say, "<text>"` to caller and
-      `<Name> says, "<text>"` to other room occupants. Strips control
-      chars, caps length (e.g. 1024). Hooks the §15 NPC `on_say`
-      trigger so dialogue can react.
-- [ ] `tell` / `whisper` (private) — `tell` is global by character
-      name (resolved through `session.Registry`), `whisper` is room-
-      local and visible to bystanders ("X whispers something to Y").
-      Maintain a `LastTellFrom` on `Session` so `reply <text>` works.
-      Blocked by ignore list and `nochannels` flag.
+- [x] `say` (room-scoped) — `internal/cmd/comm.go::NewSay`. Emits
+      `You say, "<text>"` to the caller and `<Name> says, "<text>"`
+      to every other session whose CurrentRoomID matches the
+      speaker's room. `sanitizeChat` strips control bytes, caps at
+      1024 runes, and defangs cfmt template syntax (`{{ }} ::`)
+      so a player can't inject styling. NPC `on_say` trigger
+      hookup lands with §15.
+- [~] `tell` / `whisper` (private) — `tell` shipped
+      (`internal/cmd/comm.go::NewTell`); resolves the recipient via
+      `session.Registry.FindByCharacterName`, sets the recipient's
+      `Session.LastTellFrom`, and renders both sides. `reply <text>`
+      writes back to LastTellFrom (`NewReply`). Pending: `whisper`
+      (room-local with bystanders), ignore-list filtering, and the
+      `nochannels` flag — all blocked on §6 / §13 ignore plumbing.
 - [ ] `shout` / `yell` (zone-wide) — broadcast to every session whose
       character is in the same `zone_id`. Higher cost (small move
       drain) to discourage spam. Suppressed in `silent` rooms.
@@ -646,10 +651,15 @@ will need on top of those tables.
       mute. Dispatch via the §8 event bus so admin tools can snoop.
       Built-in: `ooc`, `gossip`, `newbie` (auto-leave at level 10),
       `auction`, `clan` (filtered by clan id).
-- [~] `who` — currently shows only the caller's character name; full
-      multi-session listing waits on iterating `session.Registry`
-      (§6). v1 list: name, level, class, idle time, AFK flag,
-      title; sortable by `who level`/`who class <name>`.
+- [~] `who` — `internal/cmd/who.go::NewWho` iterates
+      `session.Registry.Snapshot()`, renders each bound session
+      with its character name, "(you)" marker, and idle time
+      (≥30s) computed from `Session.LastInputAt` (stamped by the
+      dispatcher on every command). Sessions still in login /
+      character-select render as `(connecting)` so `who` can't be
+      used to enumerate IPs. Pending: class / level / title columns
+      (blocked on char-create populating those fields), AFK flag,
+      and sort filters (`who level` / `who class <name>`).
 - [ ] Ignore list / mute — per-character `ignored_names []string`
       capped at 50; tells/whispers/channel messages from ignored
       names are silently dropped on the receiver side. Admin

@@ -201,7 +201,15 @@ func closeDB(conn *sql.DB) {
 
 func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
-	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
+	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		cmd.NewWho(sessions),
+		cmd.NewSay(sessions),
+		cmd.NewTell(sessions),
+		cmd.NewReply(sessions),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewAlias(), cmd.NewUnalias()); err != nil {

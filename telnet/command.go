@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AuthLevel marks the privilege a command requires. Registry.Dispatch
@@ -194,6 +195,10 @@ func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error 
 	if line == "" {
 		return nil
 	}
+	// Stamp activity at dispatch entry so `who` idle time and any
+	// future AFK timer reflect the moment the player typed, not the
+	// moment the command finished.
+	s.LastInputAt = time.Now().UTC()
 	// User-level aliases are resolved once before lookup so a chained
 	// alias-of-alias can't recurse. expandAlias is a no-op when no
 	// matching alias exists or when the session has no table.
