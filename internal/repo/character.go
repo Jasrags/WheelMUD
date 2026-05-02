@@ -4,11 +4,25 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 )
 
 // Character is a play-able persona owned by an Account. Names are
 // globally unique (case-insensitive); login enforces single-active-
 // character once multi-session policy lands.
+//
+// The Core stat block (abilities, HP, defense, saves, speed,
+// conditions, position flags, DR/resists) is shared with mobs via
+// creature.Core. Player-only fields (race, class levels, xp,
+// reputation, wealth, idle/fatigue timers, bound room) live as
+// peers next to Core.
+//
+// Note: CurrentRoomID stays top-level rather than folding into
+// Core.CurrentRoomID. The character's room column predates Core
+// and is consumed by mode/postauth + Session bootstrap; keeping the
+// repo bind for it stable avoids touching every caller.
 type Character struct {
 	ID            int64
 	AccountID     int64
@@ -17,6 +31,51 @@ type Character struct {
 	CreatedAt     time.Time
 	LastPlayedAt  *time.Time
 	CurrentRoomID int64
+
+	// Shared stat block. Core.ID / Core.CurrentRoomID are not used
+	// for characters — the top-level fields are the source of truth.
+	Core creature.Core
+
+	// Player-only fields (migration 0009).
+	Race          creature.Race
+	Background    creature.Background
+	ClassLevels   map[creature.Class]int8
+
+	XP             int64
+	PracticePoints int16
+
+	HeightCm   int16
+	WeightKg   int16
+	Age        int16
+	Handedness creature.Hand
+
+	Fame        int32
+	Infamy      int32
+	InfamyShare float32
+
+	Coin        currency.Amount
+	BankBalance currency.Amount
+
+	Encumbrance  creature.Load
+	FatigueUntil time.Time
+	Position     creature.Stance // standing/sitting/sleeping/fighting
+	IdleSince    time.Time
+
+	BoundRoomID   int64
+	PlayedSeconds int64
+	LastLogin     time.Time
+
+	// JSON-encoded catalogs and bag-of-things. Plumbed end-to-end
+	// so the round-trip is verified, but typed and consumed by
+	// later roadmap items (§12 feats/skills, §14 equipment/
+	// inventory, §15 quests/dialogue).
+	Feats         []int32
+	Skills        map[int32]creature.SkillRanks
+	ClassFeatures []int32
+	QuestLog      []creature.QuestProgress
+	DialogueState map[int64]creature.DialogueCursor
+	Equipment     creature.Equipment
+	Inventory     []int64
 }
 
 // CharacterRepo is the persistence boundary character-select / character-
@@ -37,6 +96,11 @@ type CharacterRepo interface {
 	// commands call this on every successful move so a reconnect drops
 	// the character back where they were.
 	RecordRoom(ctx context.Context, id, roomID int64) error
+	// RecordCore persists the live mutable stat-block fields (HP,
+	// subdual, conditions, position-flags, affects). Combat / regen
+	// / weave-resolution paths call this; immutable fields like
+	// abilities and class are untouched.
+	RecordCore(ctx context.Context, id int64, hpCurrent, subdual int32, conditions creature.Condition, positionFlags creature.PositionFlags) error
 }
 
 var (

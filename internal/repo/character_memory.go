@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Jasrags/WheelMUD/internal/creature"
 )
 
 // MemoryCharacterRepo is an in-memory CharacterRepo for tests.
@@ -34,6 +36,9 @@ func (r *MemoryCharacterRepo) Create(_ context.Context, c Character) (Character,
 	}
 	if c.CurrentRoomID == 0 {
 		c.CurrentRoomID = StarterRoomID
+	}
+	if c.BoundRoomID == 0 {
+		c.BoundRoomID = StarterRoomID
 	}
 	stored := c
 	r.byLower[c.NameLower] = &stored
@@ -94,6 +99,21 @@ func (r *MemoryCharacterRepo) RecordRoom(_ context.Context, id, roomID int64) er
 	for _, c := range r.byLower {
 		if c.ID == id {
 			c.CurrentRoomID = roomID
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordCore(_ context.Context, id int64, hp, subdual int32, cond creature.Condition, pos creature.PositionFlags) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.Core.HPCurrent = hp
+			c.Core.Subdual = subdual
+			c.Core.Conditions = cond
+			c.Core.Position = pos
 			return nil
 		}
 	}

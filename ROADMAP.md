@@ -370,8 +370,14 @@ will need on top of those tables.
       World loader migrated to spawn from templates
       (`0010_drop_legacy_mobs.sql` removes the legacy flat table);
       `look`/`move`/`teleport` read from `MobInstanceRepo`.
-      Pending: extending `repo.CharacterRepo` to load/persist the
-      new Core + player columns, char-create rolling abilities
+      `repo.CharacterRepo` extended to load/persist the full Core
+      stat block + player columns from migration 0009 (race,
+      background, class levels, XP, coin/bank, stance, fame/
+      infamy, JSON catalogs for feats / skills / equipment /
+      inventory / quests / dialogue) plus a `RecordCore` method
+      for combat HP/condition updates; round-trip test covers
+      every column class.
+      Pending: char-create rolling abilities
       / picking race / class / background / starting HP & defense,
       richer YAML schema for builders (template/spawn split with
       counts), `examine` rendering full mob detail, and seed catalogs

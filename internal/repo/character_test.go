@@ -3,9 +3,12 @@ package repo
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/db"
 )
 
@@ -117,6 +120,130 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 		if found.CurrentRoomID != 42 {
 			t.Fatalf("CurrentRoomID = %d, want 42", found.CurrentRoomID)
+		}
+	})
+
+	t.Run(name+"/full_core_and_player_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		want := Character{
+			AccountID: acc.ID,
+			Name:      "Rand",
+			Core: creature.Core{
+				Size: creature.SizeMedium, Type: creature.TypeHumanoid,
+				Gender: creature.GenderMale, Alignment: creature.PostureGood,
+				Abilities: creature.Abilities{
+					Str: creature.AbilityScore{Current: 14, Max: 14, Inherent: 14},
+					Dex: creature.AbilityScore{Current: 16, Max: 16, Inherent: 16},
+					Con: creature.AbilityScore{Current: 13, Max: 13, Inherent: 13},
+					Int: creature.AbilityScore{Current: 12, Max: 12, Inherent: 12},
+					Wis: creature.AbilityScore{Current: 11, Max: 11, Inherent: 11},
+					Cha: creature.AbilityScore{Current: 15, Max: 15, Inherent: 15},
+				},
+				HPCurrent: 8, HPMax: 10, Subdual: 0, HitDice: "1d10",
+				Defense: 14,
+				Saves:   creature.Saves{Fort: 1, Ref: 3, Will: 0},
+				InitMod: 3, BAB: 1,
+				Speed:    creature.Speed{BaseFt: 30},
+				ReachFt:  5, FaceFt: 5, ThreatFt: 5,
+				Conditions: creature.CondFatigued,
+				Position:   creature.PosCharging,
+				Specials:   creature.QualLowLightVision,
+				DR:         []creature.DamageReduction{{Amount: 1}},
+				Resists:    []creature.Resist{{Type: creature.DamageFire, Pct: 10}},
+			},
+			Race:        creature.RaceHuman,
+			Background:  creature.BackgroundAiel,
+			ClassLevels: map[creature.Class]int8{creature.ClassAlgaiDSiswai: 1},
+			XP:          1000,
+			Feats:       []int32{42},
+			Skills:      map[int32]creature.SkillRanks{7: {Ranks: 4, IsClassSkill: true}},
+			HeightCm:    195, WeightKg: 88, Age: 20,
+			Handedness: creature.HandRight,
+			Fame:       12, Infamy: 3, InfamyShare: 0.2,
+			Coin:        currency.Amount(123),
+			BankBalance: currency.Amount(456),
+			Position:    creature.StanceFighting,
+			Encumbrance: creature.LoadLight,
+			BoundRoomID:   StarterRoomID,
+			PlayedSeconds: 7200,
+			LastLogin:     time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC),
+			Inventory:     []int64{11, 22},
+		}
+		got, err := cr.Create(ctx, want)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		fetched, err := cr.FindByName(ctx, "Rand")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if fetched.ID != got.ID {
+			t.Fatalf("id roundtrip: got %d want %d", fetched.ID, got.ID)
+		}
+		if fetched.Core.HPCurrent != 8 || fetched.Core.HPMax != 10 || fetched.Core.Defense != 14 {
+			t.Fatalf("Core mismatch: %+v", fetched.Core)
+		}
+		if fetched.Core.Abilities != want.Core.Abilities {
+			t.Fatalf("Abilities mismatch: got %+v want %+v", fetched.Core.Abilities, want.Core.Abilities)
+		}
+		if fetched.Core.Conditions != creature.CondFatigued || fetched.Core.Position != creature.PosCharging {
+			t.Fatalf("conditions/position mismatch: %+v", fetched.Core)
+		}
+		if !reflect.DeepEqual(fetched.Core.DR, want.Core.DR) {
+			t.Fatalf("DR mismatch: %+v", fetched.Core.DR)
+		}
+		if !reflect.DeepEqual(fetched.Core.Resists, want.Core.Resists) {
+			t.Fatalf("Resists mismatch: %+v", fetched.Core.Resists)
+		}
+		if fetched.Race != want.Race || fetched.Background != want.Background {
+			t.Fatalf("race/background mismatch: %v / %v", fetched.Race, fetched.Background)
+		}
+		if !reflect.DeepEqual(fetched.ClassLevels, want.ClassLevels) {
+			t.Fatalf("ClassLevels mismatch: %+v", fetched.ClassLevels)
+		}
+		if fetched.XP != want.XP || fetched.HeightCm != want.HeightCm {
+			t.Fatalf("xp/height mismatch")
+		}
+		if fetched.Coin != want.Coin || fetched.BankBalance != want.BankBalance {
+			t.Fatalf("wealth mismatch: coin=%d bank=%d", fetched.Coin, fetched.BankBalance)
+		}
+		if fetched.Position != creature.StanceFighting {
+			t.Fatalf("Stance mismatch: %v", fetched.Position)
+		}
+		if !fetched.LastLogin.Equal(want.LastLogin) {
+			t.Fatalf("LastLogin mismatch: %v", fetched.LastLogin)
+		}
+		if !reflect.DeepEqual(fetched.Inventory, want.Inventory) {
+			t.Fatalf("Inventory mismatch: %v", fetched.Inventory)
+		}
+	})
+
+	t.Run(name+"/record_core_persists", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Mat",
+			Core: creature.Core{HPCurrent: 10, HPMax: 10}})
+		if err := cr.RecordCore(ctx, c.ID, 4, 1, creature.CondStunned, creature.PosFlanked); err != nil {
+			t.Fatalf("RecordCore: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Mat")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.Core.HPCurrent != 4 || got.Core.Subdual != 1 ||
+			got.Core.Conditions != creature.CondStunned || got.Core.Position != creature.PosFlanked {
+			t.Fatalf("RecordCore did not persist: %+v", got.Core)
+		}
+	})
+
+	t.Run(name+"/record_core_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordCore(context.Background(), 9999, 0, 0, 0, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
 		}
 	})
 
