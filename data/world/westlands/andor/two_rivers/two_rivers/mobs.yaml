@@ -1,0 +1,14 @@
+- id: tr.nynaeve_almeara
+  room: tr.winespring_water
+  name: Nynaeve al'Meara
+  short: a young woman in a green dress crouches by the bank, gathering herbs
+
+- id: tr.tam_althor
+  room: tr.althor_farm
+  name: Tam al'Thor
+  short: a quiet, broad-shouldered farmer leans on a hayfork beside the barn
+
+- id: tr.heron
+  room: tr.mire
+  name: a grey heron
+  short: a grey heron stands motionless on one leg in the shallows

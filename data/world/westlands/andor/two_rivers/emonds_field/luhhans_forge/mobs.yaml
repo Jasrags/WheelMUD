@@ -1,0 +1,9 @@
+- id: tr.haral_luhhan
+  room: tr.emonds_field.luhhans_forge.workshop
+  name: Master Haral Luhhan
+  short: a thick-armed, leather-aproned smith works a strip of iron at the anvil
+
+- id: tr.alsbet_luhhan
+  room: tr.emonds_field.luhhans_forge.back_room
+  name: Mistress Alsbet Luhhan
+  short: a tall, capable woman counts a stack of finished hinges into a sack

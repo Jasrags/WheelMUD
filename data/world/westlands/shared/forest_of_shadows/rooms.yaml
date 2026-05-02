@@ -1,0 +1,13 @@
+- id: shared.forest_of_shadows.northern_margin
+  name: The Forest of Shadows — northern margin
+  short: The trees crowd close at the southern edge of the Two Rivers.
+  long: |
+    Old oaks and twisted blackthorns close in around you. The path fades
+    among the leaves; the air is colder here, and the birds have fallen
+    silent. None of the elder folk in Deven Ride will say what lies
+    further south.
+  exits:
+    n: tr.deven_ride
+  flags:
+    noteleport: true
+  sector: forest

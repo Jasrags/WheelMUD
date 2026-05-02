@@ -1,0 +1,12 @@
+- id: tr.watch_hill
+  name: Watch Hill
+  short: A modest hilltop village watching the road.
+  long: |
+    Thatched roofs cluster around an old fire pit where, in elder
+    days, the men of the Two Rivers lit a beacon at the first sign of
+    trouble from the north. The smell of bread drifts from the village
+    oven.
+  exits:
+    n: tr.north_road.taren_south
+    s: tr.north_road.central
+  sector: city

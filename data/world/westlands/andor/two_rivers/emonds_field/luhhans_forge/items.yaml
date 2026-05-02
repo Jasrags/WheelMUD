@@ -1,0 +1,23 @@
+- id: tr.forge_hammer
+  room: tr.emonds_field.luhhans_forge.workshop
+  name: a smith's hammer
+  short: a heavy, well-balanced hammer rests on the anvil
+  type: weapon
+  weight: 4.0
+  value: 2sp
+  quality: masterwork
+  stats:
+    proficiency: simple
+    size: medium
+    range: melee
+    damage: "1d6"
+    damage_type:
+      - B
+
+- id: tr.forge_horseshoe
+  room: tr.emonds_field.luhhans_forge.back_room
+  name: a plain horseshoe
+  short: a plain iron horseshoe, still bright from the file
+  type: trash
+  weight: 1.0
+  value: 5cp

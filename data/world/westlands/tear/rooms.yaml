@@ -1,0 +1,10 @@
+- id: stub.tear
+  name: Tear — The Stone (planned)
+  short: Placeholder for the kingdom of Tear.
+  long: |
+    The Stone of Tear looms somewhere over the Erinin in your imagination.
+    No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

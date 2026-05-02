@@ -1,0 +1,9 @@
+- id: tr.bran_alvere
+  room: tr.emonds_field.winespring_inn.common
+  name: Bran al'Vere
+  short: the round-faced mayor of Emond's Field stands behind the bar, drying a tankard
+
+- id: tr.marin_alvere
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: Marin al'Vere
+  short: a brisk, broad-shouldered woman pares vegetables at the deal table

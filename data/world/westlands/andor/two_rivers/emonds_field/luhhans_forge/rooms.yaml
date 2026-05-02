@@ -1,0 +1,41 @@
+- id: tr.emonds_field.luhhans_forge.workshop
+  name: Master Luhhan's Workshop
+  short: A bright, hot smithy ringing with hammer-blows.
+  long: |
+    The forge fire roars in a stone hearth against the south wall, fed
+    by a great wood-and-leather bellows. A second anvil — Master
+    Luhhan keeps two — stands at the centre of the floor, surrounded
+    by a clutter of tongs, files, hammers, and half-finished work.
+    Strips of hot iron lie cooling on a brick shelf. A door opens into
+    the back room to the north; the yard lies south.
+  exits:
+    s: tr.emonds_field.forge_yard
+    n: tr.emonds_field.luhhans_forge.back_room
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+  descriptions:
+    fire: |
+      The forge fire glows the soft yellow that smiths watch for —
+      hot enough to redden iron through, but not so fierce it burns
+      the metal away.
+    bellows: |
+      The bellows is taller than a tall man and worked by a long pole
+      bolted to the wall. It wheezes with each pull like a tired old
+      bull.
+
+- id: tr.emonds_field.luhhans_forge.back_room
+  name: The Forge Back Room
+  short: A dim storeroom hung with finished work.
+  long: |
+    Plain horseshoes hang in nailed rows along one wall; bundled
+    fittings, hinges, and door-bands fill the shelves. A broad-bladed
+    farmer's scythe leans in one corner beside a half-mended plough.
+    The smell of cold iron and linseed oil is strong here.
+  exits:
+    s: tr.emonds_field.luhhans_forge.workshop
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city

@@ -1,0 +1,10 @@
+- id: ocean.sea_of_storms.open_water
+  name: The Sea of Storms — Open Water (planned)
+  short: Placeholder for the great southern sea.
+  long: |
+    Deep blue swells run south to the isles of the Sea Folk in your
+    imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: water

@@ -1,0 +1,10 @@
+- id: seanchan.gateway
+  name: Seanchan — Distant Shores (planned)
+  short: Placeholder for the empire across the Aryth Ocean.
+  long: |
+    Beyond the western horizon, white-walled cities rise in your
+    imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

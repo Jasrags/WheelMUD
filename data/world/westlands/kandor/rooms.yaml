@@ -1,0 +1,10 @@
+- id: stub.kandor
+  name: Kandor — Chachin (planned)
+  short: Placeholder for the Borderland of Kandor.
+  long: |
+    The trade city of Chachin sprawls somewhere north in your imagination.
+    No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

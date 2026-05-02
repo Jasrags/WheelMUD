@@ -1,0 +1,10 @@
+- id: stub.illian
+  name: Illian — The Square of Tammaz (planned)
+  short: Placeholder for the kingdom of Illian.
+  long: |
+    The Great Hunt of the Horn is sworn in this square in your imagination.
+    No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

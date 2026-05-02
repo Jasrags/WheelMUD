@@ -1,0 +1,11 @@
+- id: aiel_waste.gateway
+  name: The Aiel Waste — Edge of the Threefold Land (planned)
+  short: Placeholder for the Aiel Waste.
+  long: |
+    Red sand stretches east as far as the eye can carry in your
+    imagination. The air shimmers above the rock. No content has been
+    authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: desert

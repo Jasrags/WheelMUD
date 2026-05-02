@@ -1,0 +1,25 @@
+- id: tr.taren_ferry
+  name: Taren Ferry
+  short: A ramshackle village clinging to the south bank of the Taren.
+  long: |
+    Plank houses lean against one another on stilts driven into the
+    muddy bank. The Taren itself runs broad and grey to the north,
+    swallowing the morning mist; a hand-cranked ferry sits beached on
+    the shingle, rope coiled like a sleeping snake beside it. The
+    North Road begins here and runs south.
+  exits:
+    s: tr.north_road.taren_south
+    w: tr.eldenores_veil
+  sector: city
+
+- id: tr.eldenores_veil
+  name: Eldenore's Veil
+  short: A lonely stone overlook above the river.
+  long: |
+    A weathered cairn marks this spit of high ground above the Taren.
+    Local children whisper that an Aes Sedai once watched her enemies
+    drown from this very spot — their mothers tell them off for
+    repeating it.
+  exits:
+    e: tr.taren_ferry
+  sector: hills

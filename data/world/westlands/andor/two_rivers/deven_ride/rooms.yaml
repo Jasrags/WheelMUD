@@ -1,0 +1,11 @@
+- id: tr.deven_ride
+  name: Deven Ride
+  short: A small village at the southern reach of the road.
+  long: |
+    Stone cottages cluster around a watering trough where shepherds
+    bring their flocks down from the southern pastures. Beyond the
+    village the road dwindles into a footpath through the trees.
+  exits:
+    n: tr.north_road.south
+    s: shared.forest_of_shadows.northern_margin
+  sector: city

@@ -1,0 +1,17 @@
+- id: tr.mill_meal_sack
+  room: tr.emonds_field.thanes_mill.floor
+  name: a sack of fresh meal
+  short: a coarse sack of fresh-ground oat meal leans against a stone
+  type: container
+  weight: 40.0
+  value: 6sp
+  quality: normal
+
+- id: tr.mill_grain_sack
+  room: tr.emonds_field.thanes_mill.loft
+  name: a sack of barley
+  short: a heavy sack of unground barley sits among its fellows in the loft
+  type: container
+  weight: 50.0
+  value: 5sp
+  quality: normal

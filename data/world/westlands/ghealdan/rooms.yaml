@@ -1,0 +1,10 @@
+- id: stub.ghealdan
+  name: Ghealdan — A Borderless Plain (planned)
+  short: Placeholder for the kingdom of Ghealdan.
+  long: |
+    The hills of Ghealdan stretch southward beyond the Mountains of Mist
+    in your imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: hills

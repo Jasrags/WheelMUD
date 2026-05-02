@@ -1,0 +1,10 @@
+- id: ocean.aryth.open_water
+  name: The Aryth Ocean — Open Water (planned)
+  short: Placeholder for the great western ocean.
+  long: |
+    Slate-grey swells run on toward Seanchan in your imagination. No
+    content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: water

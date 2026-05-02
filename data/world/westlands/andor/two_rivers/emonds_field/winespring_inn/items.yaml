@@ -1,0 +1,35 @@
+- id: tr.inn_kettle
+  room: tr.emonds_field.winespring_inn.common
+  name: a dented kettle
+  short: a dented copper kettle whistles gently on the iron crane
+  type: trash
+  weight: 4.0
+  flags:
+    - notake
+
+- id: tr.inn_tankard
+  room: tr.emonds_field.winespring_inn.common
+  name: a pewter tankard
+  short: a battered pewter tankard sits on the bar, half-full of cider
+  type: container
+  weight: 1.0
+  value: 4cp
+  quality: normal
+
+- id: tr.kitchen_loaf
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: a loaf of dark bread
+  short: a fresh loaf of dark bread cools on the deal table
+  type: food
+  weight: 1.5
+  value: 2cp
+  quality: normal
+
+- id: tr.council_pitcher
+  room: tr.emonds_field.winespring_inn.hall
+  name: a pewter pitcher
+  short: a heavy pewter pitcher beaded with cool water sits on the sideboard
+  type: container
+  weight: 3.0
+  value: 1sp
+  quality: normal

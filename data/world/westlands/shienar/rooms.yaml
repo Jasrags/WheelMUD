@@ -1,0 +1,10 @@
+- id: stub.shienar
+  name: Shienar — Fal Dara Gate (planned)
+  short: Placeholder for the Borderland of Shienar.
+  long: |
+    Beyond the gates of Fal Dara, the Blight burns black in your
+    imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

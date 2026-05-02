@@ -1,0 +1,10 @@
+- id: stub.amadicia
+  name: Amadicia — Southern Hills (planned)
+  short: Placeholder for the kingdom of Amadicia.
+  long: |
+    The Fortress of the Light stands somewhere south of here in your
+    imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: hills

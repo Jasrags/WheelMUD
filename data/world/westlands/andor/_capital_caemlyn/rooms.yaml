@@ -1,0 +1,11 @@
+- id: stub.andor.caemlyn
+  name: Caemlyn — Inner City (planned)
+  short: A placeholder for the capital of Andor.
+  long: |
+    The grand white walls of Caemlyn rise around you in your imagination,
+    but no detail has been shaped here yet. Builders will later flesh out
+    the New City, the Inner City, the Royal Palace, and the streets between.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

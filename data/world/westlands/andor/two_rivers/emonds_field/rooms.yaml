@@ -1,0 +1,140 @@
+# Emond's Field — village commons & exterior POI yards.
+# The Green is the starter room; building interiors live in their own
+# sub-zones (winespring_inn, luhhans_forge, thanes_mill).
+
+- id: tr.emonds_field.green
+  starter: true
+  name: Emond's Field — the Green
+  short: The heart of the Two Rivers, before the Winespring Inn.
+  long: |
+    A wide green opens at the centre of the village. Children chase one
+    another through the close-cropped grass; a dog flops in the shade
+    of an ancient oak. The bubbling Winespring lies away to the west,
+    and the whitewashed bulk of the Winespring Inn closes the green to
+    the east. To the north stands Master Luhhan's forge, smoke rising
+    in a thin grey thread from its chimney. A small footbridge crosses
+    the Winespring Water to the northeast, leading toward Jon Thane's
+    mill. Roads run away to every side.
+  exits:
+    n: tr.emonds_field.forge_yard
+    s: tr.emonds_field.south_road
+    e: tr.emonds_field.inn_yard
+    w: tr.emonds_field.winespring
+    ne: tr.emonds_field.bridge_central
+    nw: tr.north_road.central
+  flags:
+    peaceful: true
+  sector: city
+  descriptions:
+    oak: |
+      The old oak at the centre of the green is broader than three men
+      could span, its lower branches worn smooth by generations of
+      climbing children.
+    dog: |
+      A black-and-tan sheepdog watches the green with one eye open,
+      indifferent to anything smaller than a wolf.
+
+- id: tr.emonds_field.winespring
+  name: The Winespring
+  short: A rocky pool where the Winespring Water rises.
+  long: |
+    Cold water bubbles up from a fissure in a moss-covered boulder and
+    spills, glittering, into a clear pool. The pool feeds the
+    Winespring Water, which runs east through the village. They say
+    the spring has flowed since the Breaking of the World, and the
+    water tastes faintly of summer wine.
+  exits:
+    e: tr.emonds_field.green
+    w: tr.quarry_road
+  flags:
+    peaceful: true
+  sector: water
+  descriptions:
+    pool: |
+      The pool is no more than a man's height across, but ankle-cold
+      even in high summer. Smooth river-stones line the bottom.
+    boulder: |
+      Initials and dates have been scratched into the moss-furred
+      boulder by generations of village children. None are legible.
+
+- id: tr.emonds_field.forge_yard
+  name: Master Luhhan's Yard
+  short: A sooty yard before the village smithy.
+  long: |
+    Coal dust blackens the trodden earth. A water trough crusted with
+    iron scale sits beside the forge door, and an anvil, scarred by a
+    thousand careful blows, stands under a shake-roofed lean-to. The
+    door of the smithy stands open to the north; ringing hammer-blows
+    drift out into the yard.
+  exits:
+    s: tr.emonds_field.green
+    n: tr.emonds_field.luhhans_forge.workshop
+  sector: city
+  descriptions:
+    anvil: |
+      Master Luhhan's anvil is mottled black and silver, its horn worn
+      bright by years of finishing work. A horseshoe lies cooling
+      across it.
+
+- id: tr.emonds_field.inn_yard
+  name: Before the Winespring Inn
+  short: A swept cobbled yard before the village inn.
+  long: |
+    The Winespring Inn rises here in two stories of whitewashed
+    fieldstone, its slate roof steep against the Two Rivers rains. A
+    brass lantern hangs above the door, lit even by day. A signpost on
+    the road points east — the OLD ROAD — to Deven Ride and the
+    forest beyond.
+  exits:
+    w: tr.emonds_field.green
+    e: tr.emonds_field.winespring_inn.common
+  sector: city
+  descriptions:
+    sign: |
+      The signpost is weathered grey and leans gently east. The hand
+      reads, in worn black paint: OLD ROAD — DEVEN RIDE — FOREST OF
+      SHADOWS.
+
+- id: tr.emonds_field.bridge_central
+  name: The Village Bridge
+  short: A low stone bridge over the Winespring Water.
+  long: |
+    A handsome arch of mortared fieldstone carries the village path
+    over the Winespring Water. Mosses cling to the underside of the
+    arch; minnows dart in the clear current beneath. Jon Thane's mill
+    stands a little further along the north bank.
+  exits:
+    sw: tr.emonds_field.green
+    n: tr.emonds_field.mill_yard
+  sector: city
+
+- id: tr.emonds_field.mill_yard
+  name: Jon Thane's Yard
+  short: A flour-dusted yard before the village mill.
+  long: |
+    Stone-ground meal-dust whitens every surface. Empty grain sacks
+    lean in stacks beside the mill door, and the great wooden wheel
+    creaks slowly in the millrace beside the building. The smell of
+    fresh-cut oats hangs in the air.
+  exits:
+    s: tr.emonds_field.bridge_central
+    n: tr.emonds_field.thanes_mill.floor
+  sector: city
+  descriptions:
+    wheel: |
+      The mill wheel is taller than two men, its paddles dark with
+      damp. It turns with a slow, patient creak in the rush of the
+      Winespring Water.
+
+- id: tr.emonds_field.south_road
+  name: The Old Road, leaving Emond's Field
+  short: A short stretch of road south out of the village.
+  long: |
+    The last of the village houses fall behind you here. A neat row
+    of plum trees lines the verge, and the road runs gently south
+    through the open fields toward the bend that leads on to Deven
+    Ride.
+  exits:
+    n: tr.emonds_field.green
+    s: tr.north_road.south
+  sector: field

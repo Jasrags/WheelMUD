@@ -1,0 +1,10 @@
+- id: stub.arafel
+  name: Arafel — Shol Arbela (planned)
+  short: Placeholder for the Borderland of Arafel.
+  long: |
+    Shol Arbela, the City of Ten Thousand Bells, lies somewhere north
+    in your imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

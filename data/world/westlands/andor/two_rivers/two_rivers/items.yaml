@@ -1,0 +1,14 @@
+- id: tr.whetstone
+  room: tr.quarry_road
+  name: an old whetstone
+  short: an old whetstone, worn to a saddle, sits on a fence post
+
+- id: tr.heron_feather
+  room: tr.mire
+  name: a heron feather
+  short: a single grey heron feather lies caught on a sprig of reed
+
+- id: tr.tabac_pouch
+  room: tr.althor_farm
+  name: a leather tabac pouch
+  short: a small leather pouch, soft with age, smelling sweetly of tabac

@@ -1,0 +1,9 @@
+- id: tr.ferry_rope
+  room: tr.taren_ferry
+  name: a coiled ferry rope
+  short: a thick hempen rope, frayed and tar-stained, lies coiled by the bank
+
+- id: tr.cairn_stone
+  room: tr.eldenores_veil
+  name: a smooth river stone
+  short: a smooth river stone has been left atop the cairn

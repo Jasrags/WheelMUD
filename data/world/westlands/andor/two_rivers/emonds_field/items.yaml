@@ -1,0 +1,33 @@
+- id: tr.inn_lantern
+  room: tr.emonds_field.inn_yard
+  name: a brass lantern
+  short: a brass lantern hangs above the Winespring Inn's door, lit even by day
+  type: trash
+  weight: 2.0
+  flags:
+    - notake
+
+- id: tr.smithy_anvil
+  room: tr.emonds_field.forge_yard
+  name: Master Luhhan's anvil
+  short: a scarred iron anvil stands under a shake-roofed lean-to
+  type: trash
+  weight: 350.0
+  flags:
+    - notake
+
+- id: tr.spring_dipper
+  room: tr.emonds_field.winespring
+  name: a wooden dipper
+  short: a wooden dipper, paled with use, hangs from a peg beside the spring
+  type: container
+  weight: 0.5
+  value: 2cp
+  quality: normal
+
+- id: tr.bridge_pebble
+  room: tr.emonds_field.bridge_central
+  name: a flat river pebble
+  short: a flat, palm-smooth pebble has been left on the parapet of the bridge
+  type: trash
+  weight: 0.1

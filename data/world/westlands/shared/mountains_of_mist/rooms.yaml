@@ -1,0 +1,12 @@
+- id: shared.mountains_of_mist.foothills
+  name: Foothills of the Mountains of Mist
+  short: The land breaks upward into stone.
+  long: |
+    Bare rock and patches of stubborn grass. Sheep tracks climb on into
+    the cloud, where the high peaks of the Mountains of Mist swallow
+    every living thing. No one in living memory has crossed and returned.
+  exits:
+    e: tr.sand_hills
+  flags:
+    noteleport: true
+  sector: mountain

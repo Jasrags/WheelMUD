@@ -1,0 +1,10 @@
+- id: stub.arad_doman
+  name: Arad Doman — Northern Coast (planned)
+  short: Placeholder for the kingdom of Arad Doman.
+  long: |
+    The pale-stone harbours of Bandar Eban lie somewhere to the west in
+    your imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

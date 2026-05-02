@@ -1,0 +1,12 @@
+- id: shared.the_blight.border
+  name: The Blight — Border (planned)
+  short: Placeholder for the corrupted lands north of the Borderlands.
+  long: |
+    Black thorns and weeping leaves choke the slope ahead in your
+    imagination. The air is wrong. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+    dark: true
+  sector: forest
+  light_level: 2

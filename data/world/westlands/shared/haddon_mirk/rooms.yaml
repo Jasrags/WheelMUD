@@ -1,0 +1,10 @@
+- id: shared.haddon_mirk
+  name: Haddon Mirk (planned)
+  short: Placeholder for the trackless wood east of Tear.
+  long: |
+    Black water and rotting roots tangle the way through Haddon Mirk in
+    your imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: forest

@@ -1,0 +1,10 @@
+- id: shared.caralain_grass
+  name: Caralain Grass (planned)
+  short: Placeholder for the great northern grasslands.
+  long: |
+    A sea of grass rolls on in every direction in your imagination. No
+    content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: field

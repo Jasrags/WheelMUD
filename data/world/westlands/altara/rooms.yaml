@@ -1,0 +1,10 @@
+- id: stub.altara
+  name: Altara — Open Country (planned)
+  short: Placeholder for the kingdom of Altara.
+  long: |
+    Ebou Dar shimmers somewhere on the southern coast in your imagination.
+    No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: field

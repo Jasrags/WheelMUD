@@ -1,0 +1,102 @@
+# The Winespring Inn — interior. Common room is the hub; kitchen,
+# private hall, and two upstairs guest rooms branch from it.
+
+- id: tr.emonds_field.winespring_inn.common
+  name: The Winespring Inn — Common Room
+  short: A warm, low-beamed taproom hung with horse brasses.
+  long: |
+    A long pine bar runs the width of the room, its top dimpled by
+    decades of tankards. Rows of horse brasses, copper pots, and
+    smoke-darkened beams hang overhead; a great stone fireplace, even
+    in summer banked with embers, takes up the whole north wall. Round
+    tables and stout chairs are scattered through the room. A door to
+    the south leads back out into the inn yard; another to the east
+    opens on the kitchen. A narrow stair climbs to the guest rooms,
+    and a smaller door behind the bar opens on a private hall.
+  exits:
+    s: tr.emonds_field.inn_yard
+    e: tr.emonds_field.winespring_inn.kitchen
+    n: tr.emonds_field.winespring_inn.hall
+    u: tr.emonds_field.winespring_inn.guest_a
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+  descriptions:
+    fireplace: |
+      The fireplace could roast a whole sheep. A blackened iron crane
+      hangs above the embers; a dented kettle sits on it, gently
+      whistling.
+    bar: |
+      The bar is a single pine plank, scarred in a hundred places where
+      knives have stuck and tankards have slipped. It has been waxed so
+      often the wood seems almost amber.
+
+- id: tr.emonds_field.winespring_inn.kitchen
+  name: The Inn Kitchen
+  short: A bright, busy kitchen smelling of bread and broth.
+  long: |
+    Strings of onions and bunches of dried herbs hang from the rafters.
+    A great range, iron-black and glowing red along its bottom, takes
+    up the eastern wall; a long deal table runs through the middle of
+    the room, scrubbed pale by years of work. The clatter of pots and
+    the hiss of fat in a pan fill the air.
+  exits:
+    w: tr.emonds_field.winespring_inn.common
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+
+- id: tr.emonds_field.winespring_inn.hall
+  name: The Private Hall
+  short: A small hall used for village business.
+  long: |
+    A round table of dark oak fills most of the room. Six high-backed
+    chairs surround it, each marked on its back with a simple device
+    burned into the wood — the seats of the Village Council. A
+    sideboard against the wall holds a pewter pitcher and a row of
+    plain cups. The room smells faintly of beeswax and pipe smoke.
+  exits:
+    s: tr.emonds_field.winespring_inn.common
+  flags:
+    indoors: true
+    peaceful: true
+    silent: true
+  sector: city
+  descriptions:
+    table: |
+      The table is older than the inn itself. Generations of council
+      meetings have left rings of candle wax and the occasional
+      knife-mark on its surface.
+
+- id: tr.emonds_field.winespring_inn.guest_a
+  name: Guest Room — North
+  short: A neat, plain bedroom over the common room.
+  long: |
+    A single rope-strung bed under a quilt of patchwork takes up most
+    of the room. A washstand holds a chipped pitcher and basin; a
+    small shuttered window looks out across the village green. A short
+    landing connects this room to its twin on the south side of the
+    stair.
+  exits:
+    d: tr.emonds_field.winespring_inn.common
+    s: tr.emonds_field.winespring_inn.guest_b
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+
+- id: tr.emonds_field.winespring_inn.guest_b
+  name: Guest Room — South
+  short: A neat, plain bedroom over the kitchen.
+  long: |
+    Warmer than its twin from the kitchen below, this small room holds
+    a narrow bed, a stool, and a cedar chest at the foot. A shuttered
+    window looks east toward the Old Road and the Waterwood far beyond.
+  exits:
+    n: tr.emonds_field.winespring_inn.guest_a
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city

@@ -1,0 +1,10 @@
+- id: stub.murandy
+  name: Murandy — Lugard Road (planned)
+  short: Placeholder for the kingdom of Murandy.
+  long: |
+    The market city of Lugard rises somewhere along the road in your
+    imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: field

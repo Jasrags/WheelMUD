@@ -1,0 +1,10 @@
+- id: stub.saldaea
+  name: Saldaea — Maradon (planned)
+  short: Placeholder for the Borderland of Saldaea.
+  long: |
+    The fortress city of Maradon stands somewhere north against the
+    Blight in your imagination. No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

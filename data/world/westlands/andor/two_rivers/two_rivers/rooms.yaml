@@ -1,0 +1,133 @@
+# --- North Road spine -------------------------------------------------------
+
+- id: tr.north_road.taren_south
+  name: The North Road, near Taren Ferry
+  short: A muddy stretch of road south of the ferry.
+  long: |
+    Wagon ruts trace deep grooves through the wet earth. The river
+    falls behind you to the north; ahead the road climbs gently toward
+    Watch Hill.
+  exits:
+    n: tr.taren_ferry
+    s: tr.watch_hill
+  sector: field
+
+- id: tr.north_road.central
+  name: The North Road, in open country
+  short: Open farmland flanks the road on both sides.
+  long: |
+    Hedgerows of blackthorn and hawthorn wall the road in. To the west
+    the Westwood rises in a dark green line; to the east, low fields
+    roll away toward the Waterwood.
+  exits:
+    n: tr.watch_hill
+    se: tr.emonds_field.green
+    w: tr.westwood.north
+  sector: field
+
+- id: tr.north_road.south
+  name: The North Road, south of Emond's Field
+  short: The road bends away toward Deven Ride.
+  long: |
+    The hedgerows give way to scattered oaks. A south wind brings the
+    faint reek of the marshes far ahead.
+  exits:
+    n: tr.emonds_field.south_road
+    s: tr.deven_ride
+    w: tr.westwood.south
+  sector: field
+
+# --- Westwood ---------------------------------------------------------------
+
+- id: tr.westwood.north
+  name: The Westwood — north
+  short: Pillared firs stretch away westward.
+  long: |
+    The forest floor is thick with russet needles. Sun spears down in
+    narrow shafts where deer have nibbled the lower branches bare.
+  exits:
+    e: tr.north_road.central
+  sector: forest
+
+- id: tr.westwood.south
+  name: The Westwood — south
+  short: A darker, older stand of trees.
+  long: |
+    The firs give way to ancient oaks here. Moss carpets the trunks
+    knee-deep, and the wind rarely reaches the ground.
+  exits:
+    e: tr.north_road.south
+  sector: forest
+
+# --- Quarry Road / west arm -------------------------------------------------
+
+- id: tr.quarry_road
+  name: Quarry Road
+  short: A rutted track running west from Emond's Field.
+  long: |
+    Cart tracks run through the long grass. A lone signpost leans
+    westward — the carving worn but still readable: AL'THOR FARM.
+  exits:
+    e: tr.emonds_field.winespring
+    w: tr.althor_farm
+  sector: field
+
+- id: tr.althor_farm
+  name: Al'Thor Farm
+  short: A tidy upland farmstead at the edge of the hills.
+  long: |
+    A low farmhouse of fieldstone and a sturdy barn sit behind a
+    drystone wall. Sheep crop the slope behind the barn; tabac dries
+    in the loft. A path winds further west toward the Sand Hills.
+  exits:
+    e: tr.quarry_road
+    w: tr.sand_hills
+  sector: field
+
+- id: tr.sand_hills
+  name: The Sand Hills
+  short: Pale, wind-bitten dunes at the foot of the mountains.
+  long: |
+    Stunted juniper grips the slopes. The Mountains of Mist rear up to
+    the west, their lower flanks already swallowed by cloud.
+  exits:
+    e: tr.althor_farm
+    w: shared.mountains_of_mist.foothills
+  sector: hills
+
+# --- East: Winespring Water → Waterwood → Mire ------------------------------
+
+- id: tr.winespring_water
+  name: The Winespring Water
+  short: A clear stream running east of Emond's Field.
+  long: |
+    Stones smooth as river-glass line the bank. Watercress sways in the
+    current. Children fish here in summer; women come at dawn for
+    laundry and gossip.
+  exits:
+    w: tr.emonds_field.bridge_central
+    e: tr.waterwood
+  sector: water
+
+- id: tr.waterwood
+  name: The Waterwood
+  short: A tangled wetland forest east of the Two Rivers.
+  long: |
+    The trees stand half-drowned in still black water. Reeds rattle at
+    every footfall; the sky overhead is broken into a hundred glinting
+    fragments by the leaves.
+  exits:
+    w: tr.winespring_water
+    s: tr.mire
+  sector: forest
+
+- id: tr.mire
+  name: The Mire
+  short: A treacherous marsh at the southeast of the region.
+  long: |
+    The water deepens here into a labyrinth of channels and floating
+    weed. Frogs boom from the reeds; a heron unfolds itself from a
+    deadfall and lifts away on long, deliberate wings.
+  exits:
+    n: tr.waterwood
+  sector: water

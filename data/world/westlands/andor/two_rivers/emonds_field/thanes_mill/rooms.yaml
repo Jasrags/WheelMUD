@@ -1,0 +1,37 @@
+- id: tr.emonds_field.thanes_mill.floor
+  name: The Mill Floor
+  short: A flour-dusted millhouse loud with grinding stone.
+  long: |
+    A pair of round mill-stones turn slowly in the centre of the
+    floor, fed by a wooden hopper from above and pouring a steady
+    stream of pale meal into a broad chest below. The whole building
+    shakes faintly with the work of the wheel outside. Sacks of grain
+    and meal are stacked along every wall; a steep wooden ladder
+    climbs to the loft above. The yard lies south.
+  exits:
+    s: tr.emonds_field.mill_yard
+    u: tr.emonds_field.thanes_mill.loft
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+  descriptions:
+    stones: |
+      The mill-stones are pale grey and broader than a wagon wheel.
+      Their grinding faces are dressed in a careful spiral pattern of
+      grooves that walk the meal outward as they turn.
+
+- id: tr.emonds_field.thanes_mill.loft
+  name: The Mill Loft
+  short: A low, dusty loft above the mill floor.
+  long: |
+    Sacks of unground grain are stacked head-high along the walls,
+    leaving a narrow lane down the middle. A square hopper-mouth in
+    the floor feeds the stones below. Sunlight slants in through
+    chinks in the boards, and the air dances with grain-dust.
+  exits:
+    d: tr.emonds_field.thanes_mill.floor
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city

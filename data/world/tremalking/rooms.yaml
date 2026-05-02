@@ -1,0 +1,11 @@
+- id: tremalking.harbor
+  name: Tremalking — Sea Folk Harbor (planned)
+  short: Placeholder for the Atha'an Miere isles.
+  long: |
+    Painted hulls bob at anchor in your imagination, sails dyed in
+    every color the deep ocean trades. No content has been authored
+    here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

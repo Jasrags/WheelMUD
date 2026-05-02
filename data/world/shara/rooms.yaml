@@ -1,0 +1,11 @@
+- id: shara.gateway
+  name: Shara — Beyond the Spine (planned)
+  short: Placeholder for the closed lands east of the Aiel Waste.
+  long: |
+    Sealed beyond the Cliffs of Dawn, the lands of Shara hide their face
+    from outsiders in your imagination. No content has been authored
+    here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city

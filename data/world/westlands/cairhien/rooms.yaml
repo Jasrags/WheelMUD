@@ -1,0 +1,10 @@
+- id: stub.cairhien
+  name: Cairhien — Topless Towers (planned)
+  short: Placeholder for the kingdom of Cairhien.
+  long: |
+    The unfinished towers of Cairhien claw at the sky in your imagination.
+    No content has been authored here yet.
+  flags:
+    noteleport: true
+    peaceful: true
+  sector: city
