@@ -42,6 +42,7 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	s.CharacterID = c.ID
 	s.CharacterName = c.Name
 	s.CurrentRoomID = c.CurrentRoomID
+	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
 	if s.CurrentRoomID == 0 {
 		// Defensive: a character row missing a room id (e.g. created

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/i582/cfmt/cmd/cfmt"
 )
 
@@ -74,6 +75,11 @@ type Session struct {
 	CharacterID   int64
 	CharacterName string
 	CurrentRoomID int64
+	// Speed is the mover's movement-mode capability block. Populated
+	// in postauth.promoteToGame from the loaded character's Core.Speed
+	// and read by the move family for sector gating (FlyFt for air,
+	// SwimFt for underwater). Refresh when an effect changes mode.
+	Speed creature.Speed
 
 	// crossMu guards the few session fields that are written by one
 	// goroutine and read by another: lastTellFrom (set by senders'

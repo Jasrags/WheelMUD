@@ -22,7 +22,7 @@ func TestWhereAmI_RendersAllFields(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	s.AuthLevel = telnet.AuthPlayer
+	s.AuthLevel = telnet.AuthAdmin
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "whereami"}
 	if err := cmd.Run(ctx); err != nil {
@@ -46,7 +46,7 @@ func TestWhereAmI_NowhereSession(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
 	cmd := NewWhereAmI(rooms)
 	s, conn := bufSession(t)
-	s.AuthLevel = telnet.AuthPlayer
+	s.AuthLevel = telnet.AuthAdmin
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "whereami"}
 	if err := cmd.Run(ctx); err != nil {

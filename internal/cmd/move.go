@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 
@@ -80,8 +79,7 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 	dest, err := rooms.FindByID(c.Ctx, exit.ToRoomID)
 	switch {
 	case err == nil:
-		speed := moverSpeed(c.Ctx, characters, s.CharacterName)
-		if msg, blocked := sectorGate(dest.Sector, speed); blocked {
+		if msg, blocked := sectorGate(dest.Sector, s.Speed); blocked {
 			return s.WriteRaw([]byte(msg + "\r\n"))
 		}
 	case errors.Is(err, repo.ErrRoomNotFound):
@@ -145,18 +143,3 @@ func sectorGate(sector repo.Sector, speed creature.Speed) (string, bool) {
 	}
 }
 
-// moverSpeed loads the mover's Speed for sector-gating decisions. A
-// failed lookup returns the zero Speed, which falls back to the safe
-// default (block air/underwater). The lookup uses CharacterName since
-// CharacterRepo only exposes FindByName today; if a session has no
-// CharacterName (test session, mid-login), we get the same zero Speed.
-func moverSpeed(ctx context.Context, characters repo.CharacterRepo, name string) creature.Speed {
-	if characters == nil || name == "" {
-		return creature.Speed{}
-	}
-	c, err := characters.FindByName(ctx, name)
-	if err != nil {
-		return creature.Speed{}
-	}
-	return c.Core.Speed
-}

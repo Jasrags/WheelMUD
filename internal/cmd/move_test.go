@@ -90,6 +90,10 @@ func TestMove_FlySpeedAllowsAir(t *testing.T) {
 	s.CharacterID = flyer.ID
 	s.CharacterName = flyer.Name
 	s.CurrentRoomID = 1
+	// Speed is dispatcher-owned in-world state populated by
+	// promoteToGame in production; tests set it directly to mirror
+	// the post-login state.
+	s.Speed = flyer.Core.Speed
 	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
 	up := findCmd(t, family, "up")
 

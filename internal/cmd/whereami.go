@@ -9,16 +9,17 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// NewWhereAmI builds the room-debug command. Useful for builders /
-// admins to verify that flag, sector, light, and coord columns landed
-// the way the YAML implies. AuthPlayer for now so it's available
-// without a privileged role; promote to AuthAdmin alongside teleport
-// when an admin tier exists.
+// NewWhereAmI builds the room-debug command. Reveals internal ids,
+// every flag, and the full ExtraDescs keyword set, so it is gated at
+// AuthAdmin — exposing this to players bypasses look's deliberate
+// per-keyword reveal. The command is registered today but unreachable
+// until an admin role lands; promote a session via teleport-style
+// elevation when that mechanism exists.
 func NewWhereAmI(rooms repo.RoomRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "whereami",
 		Help: "Show the current room's id, sector, flags, light, and coords",
-		Auth: telnet.AuthPlayer,
+		Auth: telnet.AuthAdmin,
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			if s.CurrentRoomID == 0 {
