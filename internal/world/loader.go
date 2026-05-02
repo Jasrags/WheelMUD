@@ -139,7 +139,11 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 	}
 	defer tx.Rollback()
 
-	roomIDs, err := insertRooms(ctx, tx, w.Rooms)
+	zoneIDs, err := insertZones(ctx, tx, w.Zones)
+	if err != nil {
+		return err
+	}
+	roomIDs, err := insertRooms(ctx, tx, w.Rooms, zoneIDs)
 	if err != nil {
 		return err
 	}
@@ -159,9 +163,71 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 	return nil
 }
 
+// insertZones writes every zone row and returns a map from
+// external_id → int id so insertRooms can stamp rooms.zone_id without
+// re-querying. Defaults are applied here (not in the YAML struct) so
+// authoring stays terse and the schema's documented defaults remain
+// the single source of truth: builder="", levels=1..60,
+// reset_interval_s=600, reset_mode="empty", climate="", ambient=[].
+//
+// Validation has already proved zone external_ids are unique and the
+// reset_mode is one of the known values, so the only failure path
+// here is a transport-level driver error.
+func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int64, error) {
+	out := make(map[string]int64, len(zones))
+	for _, z := range zones {
+		minLevel, maxLevel := 1, 60
+		if z.LevelRange != nil {
+			minLevel, maxLevel = z.LevelRange.Min, z.LevelRange.Max
+		}
+		resetInterval := z.ResetIntervalS
+		if resetInterval == 0 {
+			resetInterval = 600
+		}
+		resetMode := z.ResetMode
+		if resetMode == "" {
+			resetMode = string(repo.ZoneResetEmpty)
+		}
+		ambientJSON := "[]"
+		if len(z.Ambient) > 0 {
+			raw, err := json.Marshal(z.Ambient)
+			if err != nil {
+				// Marshal of []string can't fail in practice;
+				// fall back to "[]" rather than panic.
+				ambientJSON = "[]"
+			} else {
+				ambientJSON = string(raw)
+			}
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO zones(external_id, name, builder,
+				min_level, max_level, reset_interval_s, reset_mode,
+				climate, ambient_json)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			z.ID, z.Name, z.Builder,
+			minLevel, maxLevel, resetInterval, resetMode,
+			z.Climate, ambientJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert zone %q: %w", z.ID, err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("last insert id for zone %q: %w", z.ID, err)
+		}
+		out[z.ID] = id
+	}
+	return out, nil
+}
+
 // insertRooms inserts every room and returns a map from external_id ->
 // int id. The starter room is inserted first with an explicit id=1 so
 // repo.StarterRoomID stays accurate.
+//
+// zoneIDs maps zone external_id → int id; insertRooms looks up each
+// room's owning zone (stamped during parseZone) and supplies it as
+// rooms.zone_id. A room whose ZoneExternalID is absent from the map
+// is a loader bug — fail loud rather than silently writing zone_id=0.
 //
 // Note: this writes raw SQL into *sql.Tx instead of going through
 // repo.RoomRepo.Create. The repo Create takes *sql.DB, so calling it
@@ -170,8 +236,16 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 // transactional. Atomicity across all four kinds matters more here
 // than reuse, so the column list is duplicated. Keep the INSERT
 // columns in sync with room_sqlite.go::Create if either changes.
-func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int64, error) {
+func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[string]int64) (map[string]int64, error) {
 	out := make(map[string]int64, len(rooms))
+
+	resolveZone := func(r Room) (int64, error) {
+		id, ok := zoneIDs[r.ZoneExternalID]
+		if !ok {
+			return 0, fmt.Errorf("room %q references unknown zone %q", r.ID, r.ZoneExternalID)
+		}
+		return id, nil
+	}
 
 	// Validation has already established exactly one starter exists.
 	var starterIdx int
@@ -183,7 +257,11 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 	}
 
 	starter := rooms[starterIdx]
-	starterCols, starterVals := roomInsertValues(starter)
+	starterZoneID, err := resolveZone(starter)
+	if err != nil {
+		return nil, err
+	}
+	starterCols, starterVals := roomInsertValues(starter, starterZoneID)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO rooms(id, `+starterCols+`) VALUES (?, `+repo.Placeholders(len(starterVals))+`)`,
 		append([]any{repo.StarterRoomID}, starterVals...)...,
@@ -196,7 +274,11 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 		if i == starterIdx {
 			continue
 		}
-		cols, vals := roomInsertValues(r)
+		zoneID, err := resolveZone(r)
+		if err != nil {
+			return nil, err
+		}
+		cols, vals := roomInsertValues(r, zoneID)
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO rooms(`+cols+`) VALUES (`+repo.Placeholders(len(vals))+`)`,
 			vals...,
@@ -215,8 +297,9 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 
 // roomInsertValues materializes the column list + values for one room
 // row, applying defaults (sector=city, light=DefaultLightLevel for
-// non-dark rooms) when the YAML left them blank.
-func roomInsertValues(r Room) (string, []any) {
+// non-dark rooms) when the YAML left them blank. zoneID is the
+// rooms.zone_id value resolved by insertRooms.
+func roomInsertValues(r Room, zoneID int64) (string, []any) {
 	sector := r.Sector
 	if sector == "" {
 		sector = string(repo.SectorCity)
@@ -248,13 +331,15 @@ func roomInsertValues(r Room) (string, []any) {
 	}
 	cols := `external_id, name, short_desc, long_desc,
 		indoors, nopvp, noteleport, dark, silent, peaceful,
-		sector, light_level, coord_x, coord_y, coord_z, extra_descs_json`
+		sector, light_level, coord_x, coord_y, coord_z, extra_descs_json,
+		zone_id`
 	vals := []any{
 		r.ID, r.Name, r.Short, r.Long,
 		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
 		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
 		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
 		sector, light, x, y, z, extraJSON,
+		zoneID,
 	}
 	return cols, vals
 }

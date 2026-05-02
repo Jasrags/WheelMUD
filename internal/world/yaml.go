@@ -16,15 +16,52 @@ import (
 )
 
 // Zone is the metadata for a single zone folder. The folder name on
-// disk is the zone's source-of-truth identifier; this struct just
-// carries the human display name and any future per-zone settings.
+// disk is the zone's source-of-truth identifier; this struct carries
+// the human display name plus the per-zone behavior fields the
+// runtime keys off of (level gating, reset cadence, ambient ticker,
+// climate). Every behavior field is optional in YAML — defaults are
+// applied at insert time so authoring stays terse for stub zones.
 type Zone struct {
-	ID   string `yaml:"id"`
-	Name string `yaml:"name"`
+	ID      string `yaml:"id"`
+	Name    string `yaml:"name"`
+	Builder string `yaml:"builder"`
+
+	// LevelRange is advisory content gating. nil → 1..60 default
+	// applied at insert time. Pointer so a missing block stays
+	// distinguishable from {min:0, max:0} and surfaces as the default.
+	LevelRange *LevelRange `yaml:"level_range"`
+
+	// ResetIntervalS is how often the §9 areaReset bucket fires this
+	// zone, in seconds. 0 → 600 (10 minutes) default applied at
+	// insert time. Set explicitly to a value > 0 to override.
+	ResetIntervalS int `yaml:"reset_interval_s"`
+
+	// ResetMode is one of "always" / "empty" / "never". Empty string
+	// → "empty" default applied at insert time. Validation rejects
+	// any other value.
+	ResetMode string `yaml:"reset_mode"`
+
+	// Climate is a free-text bucket consumed by §10 ambient/weather
+	// rendering ("temperate", "arid", "blighted", ...). Empty is fine.
+	Climate string `yaml:"climate"`
+
+	// Ambient is the rotating set of zone-wide ambient lines emitted
+	// by §10's ambient ticker. Empty list disables the ticker for
+	// this zone.
+	Ambient []string `yaml:"ambient"`
 
 	// SourceDir is the folder this zone was loaded from, populated by
 	// the loader after Decode. Used in error messages.
 	SourceDir string `yaml:"-"`
+}
+
+// LevelRange mirrors the zones.min_level / max_level columns. Both
+// fields default to 0 when unmarshaled from a missing block; the
+// loader replaces a nil *LevelRange with the schema defaults. When
+// the block is present, validation enforces min >= 1 and max >= min.
+type LevelRange struct {
+	Min int `yaml:"min"`
+	Max int `yaml:"max"`
 }
 
 // Room is one entry in `rooms.yaml`. The loader walks rooms[].exits
@@ -52,6 +89,11 @@ type Room struct {
 
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
+
+	// ZoneExternalID is stamped by the loader after parseZone so
+	// downstream insertion knows which zones row this room belongs
+	// to. Not authored in YAML; the directory wins.
+	ZoneExternalID string `yaml:"-"`
 }
 
 // Exit is a YAML-side exit entry. Supports two authoring forms:
@@ -186,6 +228,12 @@ func parseZone(src fs.FS, dir string) (Zone, []Room, []Item, []Mob, error) {
 	}
 	if len(rooms) == 0 {
 		return Zone{}, nil, nil, nil, fmt.Errorf("%s: zone has no rooms", roomsPath)
+	}
+	// Stamp every room with its owning zone's external id so
+	// insertRooms can resolve it to a zones.id without re-walking
+	// the source tree.
+	for i := range rooms {
+		rooms[i].ZoneExternalID = z.ID
 	}
 
 	items, err := decodeItems(src, path.Join(dir, "items.yaml"))

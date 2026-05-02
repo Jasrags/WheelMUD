@@ -299,6 +299,172 @@ func TestLoadAndSync_RejectsUnknownItemFlag(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_ZoneMetadataAndRoomLink(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"alpha/zone.yaml": &fstest.MapFile{Data: []byte(`
+id: alpha
+name: Alpha Town
+builder: jrags
+level_range: { min: 2, max: 8 }
+reset_interval_s: 1200
+reset_mode: always
+climate: temperate
+ambient:
+  - The wind shifts in the eaves.
+  - A bell tolls somewhere distant.
+`)},
+		"alpha/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: alpha.start
+  starter: true
+  name: Alpha Plaza
+  short: An open plaza.
+  long: Cobbles spread out under your feet.
+  exits:
+    n: alpha.north
+- id: alpha.north
+  name: Alpha North
+  short: A road north.
+  long: A road runs north.
+  exits:
+    s: alpha.start
+`)},
+		// A second zone with all defaults exercised, in a different
+		// directory depth — proves the loader handles nested layouts
+		// like the production data tree.
+		"region/beta/zone.yaml":  &fstest.MapFile{Data: []byte("id: beta\nname: Beta\n")},
+		"region/beta/rooms.yaml": &fstest.MapFile{Data: []byte("- id: beta.r\n  name: BR\n  long: x\n")},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	zones := repo.NewSQLiteZoneRepo(conn)
+	all, err := zones.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("zone count = %d, want 2", len(all))
+	}
+
+	alpha, err := zones.GetByExternalID(ctx, "alpha")
+	if err != nil {
+		t.Fatalf("GetByExternalID(alpha): %v", err)
+	}
+	if alpha.Builder != "jrags" {
+		t.Errorf("Builder = %q, want jrags", alpha.Builder)
+	}
+	if alpha.MinLevel != 2 || alpha.MaxLevel != 8 {
+		t.Errorf("level range = %d-%d, want 2-8", alpha.MinLevel, alpha.MaxLevel)
+	}
+	if alpha.ResetIntervalS != 1200 {
+		t.Errorf("ResetIntervalS = %d, want 1200", alpha.ResetIntervalS)
+	}
+	if alpha.ResetMode != repo.ZoneResetAlways {
+		t.Errorf("ResetMode = %q, want always", alpha.ResetMode)
+	}
+	if alpha.Climate != "temperate" {
+		t.Errorf("Climate = %q", alpha.Climate)
+	}
+	if len(alpha.Ambient) != 2 {
+		t.Errorf("Ambient len = %d, want 2", len(alpha.Ambient))
+	}
+
+	// Beta exercises every default.
+	beta, err := zones.GetByExternalID(ctx, "beta")
+	if err != nil {
+		t.Fatalf("GetByExternalID(beta): %v", err)
+	}
+	if beta.MinLevel != 1 || beta.MaxLevel != 60 {
+		t.Errorf("default level range = %d-%d, want 1-60", beta.MinLevel, beta.MaxLevel)
+	}
+	if beta.ResetIntervalS != 600 {
+		t.Errorf("default ResetIntervalS = %d, want 600", beta.ResetIntervalS)
+	}
+	if beta.ResetMode != repo.ZoneResetEmpty {
+		t.Errorf("default ResetMode = %q, want empty", beta.ResetMode)
+	}
+	if beta.Builder != "" || beta.Climate != "" {
+		t.Errorf("defaults clobbered: builder=%q climate=%q", beta.Builder, beta.Climate)
+	}
+	if len(beta.Ambient) != 0 {
+		t.Errorf("default Ambient = %v, want empty", beta.Ambient)
+	}
+
+	// Every room must point at its owning zone.
+	rows, err := conn.QueryContext(ctx,
+		`SELECT external_id, zone_id FROM rooms ORDER BY external_id`)
+	if err != nil {
+		t.Fatalf("query rooms: %v", err)
+	}
+	defer rows.Close()
+	want := map[string]int64{
+		"alpha.start": alpha.ID,
+		"alpha.north": alpha.ID,
+		"beta.r":      beta.ID,
+	}
+	got := make(map[string]int64, len(want))
+	for rows.Next() {
+		var ext string
+		var zid int64
+		if err := rows.Scan(&ext, &zid); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[ext] = zid
+	}
+	for ext, wantID := range want {
+		if got[ext] != wantID {
+			t.Errorf("room %q zone_id = %d, want %d", ext, got[ext], wantID)
+		}
+	}
+}
+
+func TestLoadAndSync_DuplicateZoneIDRejected(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"a/zone.yaml":  &fstest.MapFile{Data: []byte("id: dup\nname: A\n")},
+		"a/rooms.yaml": &fstest.MapFile{Data: []byte("- id: a.r\n  starter: true\n  name: A\n  long: x\n")},
+		"b/zone.yaml":  &fstest.MapFile{Data: []byte("id: dup\nname: B\n")},
+		"b/rooms.yaml": &fstest.MapFile{Data: []byte("- id: b.r\n  name: B\n  long: x\n")},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil || !strings.Contains(err.Error(), "duplicate zone id") {
+		t.Fatalf("err = %v, want duplicate-zone-id error", err)
+	}
+}
+
+func TestLoadAndSync_InvalidResetModeRejected(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\nreset_mode: blah\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil || !strings.Contains(err.Error(), "invalid reset_mode") {
+		t.Fatalf("err = %v, want invalid-reset-mode error", err)
+	}
+}
+
 func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

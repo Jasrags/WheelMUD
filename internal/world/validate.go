@@ -11,6 +11,9 @@ import (
 // loader never produces a partial DB load. Errors are formatted with
 // the originating file:line so a builder can jump straight to the YAML.
 func validate(w *World) error {
+	if err := validateZones(w.Zones); err != nil {
+		return err
+	}
 	if err := validateRoomIDs(w.Rooms); err != nil {
 		return err
 	}
@@ -45,6 +48,54 @@ func validExternalID(s string) bool {
 		}
 	}
 	return true
+}
+
+// validateZones enforces zone-level invariants: external_id format +
+// uniqueness, reset_mode in the known enum, level range bounds,
+// non-negative reset interval. Catching these here means the SQLite
+// CHECK constraints in migration 0016 are a backstop, not the front
+// line — the loader can return a builder-friendly error pointing at
+// the offending zone.yaml instead of a generic SQL "constraint failed".
+func validateZones(zones []Zone) error {
+	seen := make(map[string]Zone, len(zones))
+	for _, z := range zones {
+		// SourceDir is a directory like "starter" or
+		// "westlands/andor/two_rivers/emonds_field"; "<dir>/zone.yaml"
+		// is the file builders expect to edit.
+		zonePath := z.SourceDir + "/zone.yaml"
+		if !validExternalID(z.ID) {
+			return fmt.Errorf("%s: invalid zone id %q (must be non-empty ASCII, no whitespace)", zonePath, z.ID)
+		}
+		if prev, dup := seen[z.ID]; dup {
+			return fmt.Errorf("%s: duplicate zone id %q (also at %s/zone.yaml)", zonePath, z.ID, prev.SourceDir)
+		}
+		if z.ResetMode != "" && !validZoneResetModes[z.ResetMode] {
+			return fmt.Errorf("%s: zone %q has invalid reset_mode %q (want always|empty|never)",
+				zonePath, z.ID, z.ResetMode)
+		}
+		if z.ResetIntervalS < 0 {
+			return fmt.Errorf("%s: zone %q has negative reset_interval_s %d",
+				zonePath, z.ID, z.ResetIntervalS)
+		}
+		if z.LevelRange != nil {
+			if z.LevelRange.Min < 1 {
+				return fmt.Errorf("%s: zone %q level_range.min %d < 1",
+					zonePath, z.ID, z.LevelRange.Min)
+			}
+			if z.LevelRange.Max < z.LevelRange.Min {
+				return fmt.Errorf("%s: zone %q level_range.max %d < min %d",
+					zonePath, z.ID, z.LevelRange.Max, z.LevelRange.Min)
+			}
+		}
+		seen[z.ID] = z
+	}
+	return nil
+}
+
+var validZoneResetModes = map[string]bool{
+	"always": true,
+	"empty":  true,
+	"never":  true,
 }
 
 func validateRoomIDs(rooms []Room) error {
