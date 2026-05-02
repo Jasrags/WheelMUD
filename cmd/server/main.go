@@ -313,6 +313,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewExamine(items, mobs)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus)...); err != nil {
 		return nil, err
 	}

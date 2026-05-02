@@ -513,10 +513,17 @@ will need on top of those tables.
       <dir>`, `pick <dir>`. Movement through a closed door auto-fails
       with "The door is closed."; `nopass` exits never auto-open.
       Key match by item id; lockpick uses a skill check (§12).
-- [ ] `examine` for detailed inspection — `examine <target>` resolves
-      against room mobs, room items, inventory, and equipment in that
-      order. Renders the long description, condition (for items),
-      visible affects (for mobs), and contents (for open containers).
+- [~] `examine` for detailed inspection — `examine <target>` shipped
+      (`internal/cmd/examine.go`). Resolves against room mobs first
+      (by Core.Name token-prefix / substring), then room items (by
+      Item.Name). Mob view renders name, a coarse HP descriptor
+      ("perfect health" / "wounded" / "barely standing"), condition
+      bitset decoded to labels, and named Affects. Item view renders
+      name + ShortDesc. Pending: inventory + equipment lookup
+      (waits on §14 inventory tables / repos), container contents
+      (waits on §9 container semantics), keyword-disambiguation
+      (`2.guard` syntax — also a §14 follow-up), and richer item
+      condition/durability once items grow a stat block.
 - [ ] `map` / mini-map ASCII rendering — BFS from the current room
       out to a configurable depth (default 3), lay out by exit
       direction onto a grid (north decreases y, east increases x),
