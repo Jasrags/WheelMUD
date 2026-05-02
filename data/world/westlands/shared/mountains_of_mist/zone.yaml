@@ -1,2 +1,9 @@
 id: shared_mountains_of_mist
 name: Mountains of Mist
+level_range: { min: 8, max: 20 }
+reset_interval_s: 1800
+reset_mode: empty
+climate: alpine
+ambient:
+  - Wind keens across the bare rock above.
+  - Cloud rolls down off the high passes and swallows the slope.

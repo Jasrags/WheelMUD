@@ -1,2 +1,4 @@
 id: ocean_sea_of_storms
 name: The Sea of Storms
+reset_mode: never
+climate: maritime

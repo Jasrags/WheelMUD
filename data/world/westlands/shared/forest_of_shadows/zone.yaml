@@ -1,2 +1,9 @@
 id: shared_forest_of_shadows
 name: Forest of Shadows
+level_range: { min: 5, max: 15 }
+reset_interval_s: 1500
+reset_mode: empty
+climate: deepwood
+ambient:
+  - Branches creak somewhere close by, though no wind moves the leaves.
+  - The undergrowth rustles, then falls abruptly silent.

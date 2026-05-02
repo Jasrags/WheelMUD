@@ -1,2 +1,12 @@
 id: two_rivers
 name: The Two Rivers — Wilderness
+builder: jrags
+level_range: { min: 1, max: 6 }
+reset_interval_s: 1200
+reset_mode: empty
+climate: temperate
+ambient:
+  - A red-shouldered hawk wheels overhead on the morning thermals.
+  - Wind moves through the hedgerows with a soft, steady hiss.
+  - Somewhere downwind, sheep bleat in a fenced pasture.
+  - The smell of woodsmoke drifts from a distant chimney.

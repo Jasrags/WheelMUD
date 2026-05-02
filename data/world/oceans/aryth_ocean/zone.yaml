@@ -1,2 +1,4 @@
 id: ocean_aryth
 name: The Aryth Ocean
+reset_mode: never
+climate: maritime

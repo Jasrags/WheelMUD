@@ -1,2 +1,4 @@
 id: kandor
 name: Kandor (planned)
+reset_mode: never
+climate: borderland

@@ -1,2 +1,4 @@
 id: aiel_waste
 name: The Aiel Waste
+reset_mode: never
+climate: arid

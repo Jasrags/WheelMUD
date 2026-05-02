@@ -1,2 +1,5 @@
 id: shared_the_blight
 name: The Blight
+level_range: { min: 25, max: 60 }
+reset_mode: never
+climate: blighted

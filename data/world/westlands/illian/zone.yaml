@@ -1,2 +1,4 @@
 id: illian
 name: Illian (planned)
+reset_mode: never
+climate: coastal

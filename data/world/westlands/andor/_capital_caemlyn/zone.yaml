@@ -1,2 +1,4 @@
 id: andor_caemlyn
 name: Caemlyn (planned)
+reset_mode: never
+climate: temperate

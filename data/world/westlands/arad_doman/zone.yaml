@@ -1,2 +1,4 @@
 id: arad_doman
 name: Arad Doman (planned)
+reset_mode: never
+climate: coastal

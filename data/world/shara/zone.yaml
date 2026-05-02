@@ -1,2 +1,4 @@
 id: shara
 name: Shara (planned)
+reset_mode: never
+climate: arid

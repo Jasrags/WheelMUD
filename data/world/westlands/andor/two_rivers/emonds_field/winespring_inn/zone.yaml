@@ -1,2 +1,11 @@
 id: emonds_field_winespring_inn
 name: The Winespring Inn
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - A log shifts in the great fireplace and sends up a brief shower of sparks.
+  - Bran al'Vere whistles tunelessly to himself behind the bar.
+  - The clatter of pots drifts in from the kitchen.

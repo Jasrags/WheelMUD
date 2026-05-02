@@ -1,2 +1,4 @@
 id: tarabon
 name: Tarabon (planned)
+reset_mode: never
+climate: coastal

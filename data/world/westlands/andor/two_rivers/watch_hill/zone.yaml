@@ -1,2 +1,11 @@
 id: watch_hill
 name: Watch Hill
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - The smell of fresh bread drifts from the village oven.
+  - A dog barks once, sharply, somewhere on the slope below.
+  - The watch fire hisses softly under its bank of ash.

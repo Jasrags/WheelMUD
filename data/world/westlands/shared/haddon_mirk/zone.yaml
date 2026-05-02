@@ -1,2 +1,4 @@
 id: shared_haddon_mirk
 name: Haddon Mirk
+reset_mode: never
+climate: swamp

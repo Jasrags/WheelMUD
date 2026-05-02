@@ -1,2 +1,4 @@
 id: murandy
 name: Murandy (planned)
+reset_mode: never
+climate: temperate

@@ -1,2 +1,4 @@
 id: tremalking
 name: Tremalking
+reset_mode: never
+climate: tropical

@@ -1,2 +1,4 @@
 id: shienar
 name: Shienar (planned)
+reset_mode: never
+climate: borderland

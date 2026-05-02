@@ -1,2 +1,4 @@
 id: ghealdan
 name: Ghealdan (planned)
+reset_mode: never
+climate: temperate

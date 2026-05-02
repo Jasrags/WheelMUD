@@ -1,2 +1,11 @@
 id: deven_ride
 name: Deven Ride
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - Sheep crowd around the watering trough, jostling for room.
+  - A south wind brings the faint, green smell of the marshes.
+  - Pipe smoke drifts from a doorway down the lane.

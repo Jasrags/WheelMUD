@@ -1,2 +1,4 @@
 id: shared_caralain_grass
 name: Caralain Grass
+reset_mode: never
+climate: grassland

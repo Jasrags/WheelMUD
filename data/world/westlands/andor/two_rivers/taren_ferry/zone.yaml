@@ -1,2 +1,11 @@
 id: taren_ferry
 name: Taren Ferry
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - Cold mist coils up off the Taren and unwinds among the stilt-houses.
+  - The ferry rope creaks against its post in the slow current.
+  - A river-bird calls thinly from somewhere out across the water.

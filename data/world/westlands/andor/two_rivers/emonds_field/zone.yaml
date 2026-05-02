@@ -1,2 +1,13 @@
 id: emonds_field
 name: Emond's Field
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - The smell of fresh bread drifts across the green.
+  - Children's laughter echoes from somewhere down by the spring.
+  - A pair of doves break cover from the inn roof in a clatter of wings.
+  - Hammer-blows ring faintly from Master Luhhan's forge.
+  - The mill wheel creaks slowly in the rush of the Winespring Water.

@@ -1,2 +1,4 @@
 id: saldaea
 name: Saldaea (planned)
+reset_mode: never
+climate: borderland

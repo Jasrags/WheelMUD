@@ -1,2 +1,4 @@
 id: altara
 name: Altara (planned)
+reset_mode: never
+climate: coastal
