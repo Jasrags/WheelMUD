@@ -253,11 +253,22 @@ constants and helpers in `telnet/iac.go`.
       deleted room get teleported to the starter room with an
       "the world shifts around you" message. `fsnotify` watcher is
       a follow-up so manual reload is the v1 path.
-- [ ] Periodic + shutdown autosave — dirty-bit tracking on character
-      and mob-instance aggregates; a `save` bucket fires every
-      30 s and walks the dirty set; `srv.shutdown()` performs a
-      final pass under the 10 s drain budget. Saves are idempotent
-      `UPSERT`s so a crash mid-loop doesn't corrupt rows.
+- [~] Periodic + shutdown autosave — `internal/persist.Manager`
+      hosts named `SaverFunc` registrations; the new `tick.Buckets
+      .Save` bucket (default 30s, `DefaultSaveInterval`) calls
+      `FlushAll` on every pulse, and `srv.shutdown()` runs a final
+      `FlushAll` under a 5s context budget after the session drain
+      finishes. One concrete saver landed: `savePlayTimes`
+      iterates `session.Registry.Snapshot()` and stamps
+      `last_played_at` on every authenticated character — so a
+      crash within the 30s window now loses at most 30s of
+      tracked play-time instead of the entire session.
+      Pending: dirty-bit aggregate types for combat HP / mob-
+      instance state / affect tick counters once §11 / §12 land.
+      Most other state (room / item / character core / mob room
+      moves) is already write-through, so the dirty-bit pattern
+      only matters for state that ticks faster than we want to
+      round-trip per mutation.
 - [ ] Backup rotation — nightly `VACUUM INTO` of the SQLite DB into
       `backups/wheelmud-YYYYMMDD.db`; keep 7 daily / 4 weekly /
       12 monthly. Triggered from the scheduler so no external cron

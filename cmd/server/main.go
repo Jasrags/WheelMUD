@@ -17,6 +17,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/mode"
+	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/safego"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -50,6 +51,7 @@ type server struct {
 	scheduler  *tick.Scheduler
 	buckets    *tick.Buckets
 	bus        *eventbus.Bus
+	saves      *persist.Manager
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -97,6 +99,14 @@ func main() {
 	scheduler := tick.New()
 	buckets := tick.NewBuckets(scheduler)
 
+	saves := persist.New()
+	saves.Register("character.lastPlayed", func(ctx context.Context) error {
+		return savePlayTimes(ctx, sessions, characters)
+	})
+	buckets.Save.Subscribe(func(ctx context.Context) {
+		saves.FlushAll(ctx)
+	})
+
 	gameMode := mode.NewGame(registry)
 	srv := &server{
 		accounts:   accounts,
@@ -109,6 +119,7 @@ func main() {
 		scheduler:  scheduler,
 		buckets:    buckets,
 		bus:        bus,
+		saves:      saves,
 		closed:     make(chan struct{}),
 		newInitial: func() telnet.Mode {
 			return mode.NewLogin(accounts, characters, sessions, gameMode)
@@ -183,10 +194,49 @@ func (srv *server) shutdown() {
 	case <-time.After(shutdownDrainTimeout):
 		slog.Warn("Shutdown drain timed out", "timeout", shutdownDrainTimeout)
 	}
+	// Final autosave pass before stopping the scheduler. Sessions
+	// have either drained (so their CurrentRoomID is already on
+	// disk via RecordRoom) or been killed by the timeout — either
+	// way, FlushAll captures any remaining last_played_at /
+	// future-dirty-bit state under a hard 5s budget so a slow
+	// repo can't hang shutdown.
+	if srv.saves != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		srv.saves.FlushAll(ctx)
+		cancel()
+	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()
 	srv.bus.Stop()
 	slog.Info("Scheduler stopped")
+}
+
+// savePlayTimes is the concrete saver registered with the persist
+// manager: it walks every authenticated session and stamps its
+// character's last_played_at to now. Idempotent and bounded.
+//
+// Today this is the only thing the autosave loop does, because
+// rooms / items / mobs / character core all already write through
+// on every mutation. As combat (§11) and weave-resolution (§12)
+// land, they'll register additional savers (dirty mob HP, dirty
+// character HP, dirty affect tick state) on the same Manager.
+func savePlayTimes(ctx context.Context, sessions *session.Registry, characters repo.CharacterRepo) error {
+	now := time.Now().UTC()
+	count := 0
+	for _, s := range sessions.Snapshot() {
+		if s.CharacterID == 0 {
+			continue
+		}
+		if err := characters.RecordPlay(ctx, s.CharacterID, now); err != nil {
+			slog.Warn("autosave: RecordPlay failed", "char", s.CharacterID, "error", err)
+			continue
+		}
+		count++
+	}
+	if count > 0 {
+		slog.Debug("autosave: last_played_at refreshed", "characters", count)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

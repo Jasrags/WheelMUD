@@ -98,6 +98,9 @@ type Buckets struct {
 	Combat    *Bucket
 	Regen     *Bucket
 	AreaReset *Bucket
+	// Save fires the persist.Manager flush — see ROADMAP §7. Held
+	// here so the bucket lifetime tracks the rest of the game loop.
+	Save *Bucket
 }
 
 // Default cadences for the game-loop pulse buckets. These can be
@@ -107,6 +110,7 @@ const (
 	DefaultCombatInterval    = 4 * time.Second
 	DefaultRegenInterval     = 30 * time.Second
 	DefaultAreaResetInterval = 5 * time.Minute
+	DefaultSaveInterval      = 30 * time.Second
 )
 
 // NewBuckets registers the default game-loop buckets on s.
@@ -115,6 +119,7 @@ func NewBuckets(s *Scheduler) *Buckets {
 		Combat:    NewBucket(s, "combat", DefaultCombatInterval),
 		Regen:     NewBucket(s, "regen", DefaultRegenInterval),
 		AreaReset: NewBucket(s, "areaReset", DefaultAreaResetInterval),
+		Save:      NewBucket(s, "save", DefaultSaveInterval),
 	}
 }
 
@@ -131,5 +136,8 @@ func (bs *Buckets) Stop() {
 	}
 	if bs.AreaReset != nil {
 		bs.AreaReset.Stop()
+	}
+	if bs.Save != nil {
+		bs.Save.Stop()
 	}
 }
