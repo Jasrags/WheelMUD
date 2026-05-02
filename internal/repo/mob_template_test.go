@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
@@ -43,6 +44,7 @@ func runMobTemplateRepoTests(t *testing.T, name string, newRepo func(t *testing.
 			RespawnZoneResetID:    7,
 			ShadowLinkMyrddraalID: 99,
 			TaintImmune:           true,
+			FadeOnLinkMasterTimer: 5 * time.Second,
 			ShortDesc:             "a trolloc warrior",
 			LongDesc:              "A bestial Shadowspawn covered in matted fur.",
 
@@ -204,6 +206,9 @@ func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {
 	}
 	if got.ShadowLinkMyrddraalID != want.ShadowLinkMyrddraalID {
 		t.Fatalf("ShadowLinkMyrddraalID = %d, want %d", got.ShadowLinkMyrddraalID, want.ShadowLinkMyrddraalID)
+	}
+	if got.FadeOnLinkMasterTimer != want.FadeOnLinkMasterTimer {
+		t.Fatalf("FadeOnLinkMasterTimer = %v, want %v", got.FadeOnLinkMasterTimer, want.FadeOnLinkMasterTimer)
 	}
 	if !reflect.DeepEqual(got.NaturalAttacks, want.NaturalAttacks) {
 		t.Fatalf("NaturalAttacks mismatch: got %+v, want %+v", got.NaturalAttacks, want.NaturalAttacks)

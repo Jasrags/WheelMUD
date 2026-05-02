@@ -63,6 +63,11 @@ func unmarshalJSONSlice[T any](s string, dst *[]T) error {
 // scanCoreFromTemplate can read SELECT * positionally without a
 // brittle map. Excludes id/external_id/name/name_lower/created_at/
 // short_desc/long_desc which the caller binds itself.
+//
+// IMPORTANT: coreColumns, coreValues, and coreScanDest must stay in
+// lock-step. Reorder one and you must reorder all three, or scans
+// will silently corrupt fields. The round-trip contract test in
+// mob_template_test.go::create_get_roundtrip catches a mismatch.
 const coreColumns = `size, type, gender, alignment,
 		str_cur, str_max, str_inh,
 		dex_cur, dex_max, dex_inh,
@@ -77,6 +82,80 @@ const coreColumns = `size, type, gender, alignment,
 		reach_ft, face_ft, threat_ft,
 		specials,
 		dr_json, resists_json`
+
+// templateJSON bundles every JSON-encoded column on the
+// mob_templates table so SQLiteMobTemplateRepo.Create / queryOne
+// can marshal/unmarshal them with two helper calls instead of
+// nine paired error checks each.
+type templateJSON struct {
+	dr, resists                          string
+	natural, special, traits             string
+	advancement, climate, terrain, scripts string
+}
+
+func marshalTemplateJSON(t creature.MobTemplate) (templateJSON, error) {
+	var j templateJSON
+	var err error
+	if j.dr, err = marshalJSONSlice(t.Core.DR); err != nil {
+		return j, err
+	}
+	if j.resists, err = marshalJSONSlice(t.Core.Resists); err != nil {
+		return j, err
+	}
+	if j.natural, err = marshalJSONSlice(t.NaturalAttacks); err != nil {
+		return j, err
+	}
+	if j.special, err = marshalJSONSlice(t.SpecialAttacks); err != nil {
+		return j, err
+	}
+	if j.traits, err = marshalJSONSlice(t.Traits); err != nil {
+		return j, err
+	}
+	if j.advancement, err = marshalJSONSlice(t.Advancement); err != nil {
+		return j, err
+	}
+	if j.climate, err = marshalJSONSlice(t.Climate); err != nil {
+		return j, err
+	}
+	if j.terrain, err = marshalJSONSlice(t.Terrain); err != nil {
+		return j, err
+	}
+	if j.scripts, err = marshalJSONSlice(t.TriggerScripts); err != nil {
+		return j, err
+	}
+	return j, nil
+}
+
+func (j templateJSON) unmarshalInto(t *creature.MobTemplate) error {
+	if err := unmarshalJSONSlice(j.dr, &t.Core.DR); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.resists, &t.Core.Resists); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.natural, &t.NaturalAttacks); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.special, &t.SpecialAttacks); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.traits, &t.Traits); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.advancement, &t.Advancement); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.climate, &t.Climate); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.terrain, &t.Terrain); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.scripts, &t.TriggerScripts); err != nil {
+		return err
+	}
+	return nil
+}
 
 // coreValues returns the bound-parameter slice in the same order
 // as coreColumns for an INSERT.

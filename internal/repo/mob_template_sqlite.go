@@ -35,39 +35,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		return creature.MobTemplate{}, ErrInvalidExternalID
 	}
 
-	drJSON, err := marshalJSONSlice(t.Core.DR)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	resistsJSON, err := marshalJSONSlice(t.Core.Resists)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	naturalJSON, err := marshalJSONSlice(t.NaturalAttacks)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	specialJSON, err := marshalJSONSlice(t.SpecialAttacks)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	traitsJSON, err := marshalJSONSlice(t.Traits)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	advancementJSON, err := marshalJSONSlice(t.Advancement)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	climateJSON, err := marshalJSONSlice(t.Climate)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	terrainJSON, err := marshalJSONSlice(t.Terrain)
-	if err != nil {
-		return creature.MobTemplate{}, err
-	}
-	scriptsJSON, err := marshalJSONSlice(t.TriggerScripts)
+	j, err := marshalTemplateJSON(t)
 	if err != nil {
 		return creature.MobTemplate{}, err
 	}
@@ -86,16 +54,21 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		challengeCode = "A"
 	}
 
+	// FadeOnLinkMasterTimer is stored as scheduler ticks (1Hz), not
+	// nanoseconds, to match the column name in 0008. Convert via
+	// truncating-divide; sub-second values floor to 0.
+	fadeTicks := int64(t.FadeOnLinkMasterTimer / time.Second)
+
 	args := []any{t.ExternalID, t.Core.Name, strings.ToLower(t.Core.Name)}
-	args = append(args, coreValues(t.Core, drJSON, resistsJSON)...)
+	args = append(args, coreValues(t.Core, j.dr, j.resists)...)
 	args = append(args,
 		challengeCode, t.Organization, t.BehaviorFlags,
 		t.LootTableID, t.GoldDice, t.DialogueTreeID, shopJSON,
 		t.CorpseDecayTicks, t.RespawnZoneResetID,
-		t.ShadowLinkMyrddraalID, boolToInt(t.TaintImmune), int64(t.FadeOnLinkMasterTimer),
+		t.ShadowLinkMyrddraalID, boolToInt(t.TaintImmune), fadeTicks,
 		t.ShortDesc, t.LongDesc,
-		naturalJSON, specialJSON, traitsJSON,
-		advancementJSON, climateJSON, terrainJSON, scriptsJSON,
+		j.natural, j.special, j.traits,
+		j.advancement, j.climate, j.terrain, j.scripts,
 		time.Now().UTC(),
 	)
 
@@ -135,25 +108,23 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		coreColumns, templateExtraColumns, where,
 	)
 	var (
-		t                                                      creature.MobTemplate
-		drJSON, resistsJSON                                    string
-		challengeCode                                          string
-		shopJSON                                               sql.NullString
-		taintImmune                                            int
-		fadeTicks                                              int64
-		naturalJSON, specialJSON, traitsJSON                   string
-		advancementJSON, climateJSON, terrainJSON, scriptsJSON string
+		t             creature.MobTemplate
+		j             templateJSON
+		challengeCode string
+		shopJSON      sql.NullString
+		taintImmune   int
+		fadeTicks     int64
 	)
 	dest := []any{&t.ID, &t.ExternalID, &t.Core.Name}
-	dest = append(dest, coreScanDest(&t.Core, &drJSON, &resistsJSON)...)
+	dest = append(dest, coreScanDest(&t.Core, &j.dr, &j.resists)...)
 	dest = append(dest,
 		&challengeCode, &t.Organization, &t.BehaviorFlags,
 		&t.LootTableID, &t.GoldDice, &t.DialogueTreeID, &shopJSON,
 		&t.CorpseDecayTicks, &t.RespawnZoneResetID,
 		&t.ShadowLinkMyrddraalID, &taintImmune, &fadeTicks,
 		&t.ShortDesc, &t.LongDesc,
-		&naturalJSON, &specialJSON, &traitsJSON,
-		&advancementJSON, &climateJSON, &terrainJSON, &scriptsJSON,
+		&j.natural, &j.special, &j.traits,
+		&j.advancement, &j.climate, &j.terrain, &j.scripts,
 	)
 
 	err := r.db.QueryRowContext(ctx, query, arg).Scan(dest...)
@@ -164,17 +135,14 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		return creature.MobTemplate{}, fmt.Errorf("scan mob_template: %w", err)
 	}
 
-	if challengeCode != "" {
+	if len(challengeCode) > 0 {
 		t.ChallengeCode = creature.ChallengeCode(rune(challengeCode[0]))
 	}
 	t.TaintImmune = taintImmune != 0
-	t.FadeOnLinkMasterTimer = time.Duration(fadeTicks)
+	t.FadeOnLinkMasterTimer = time.Duration(fadeTicks) * time.Second
 	t.Core.ID = t.ID
 
-	if err := unmarshalJSONSlice(drJSON, &t.Core.DR); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(resistsJSON, &t.Core.Resists); err != nil {
+	if err := j.unmarshalInto(&t); err != nil {
 		return creature.MobTemplate{}, err
 	}
 	if shopJSON.Valid {
@@ -183,27 +151,6 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 			return creature.MobTemplate{}, err
 		}
 		t.ShopkeeperConfig = &sc
-	}
-	if err := unmarshalJSONSlice(naturalJSON, &t.NaturalAttacks); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(specialJSON, &t.SpecialAttacks); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(traitsJSON, &t.Traits); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(advancementJSON, &t.Advancement); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(climateJSON, &t.Climate); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(terrainJSON, &t.Terrain); err != nil {
-		return creature.MobTemplate{}, err
-	}
-	if err := unmarshalJSONSlice(scriptsJSON, &t.TriggerScripts); err != nil {
-		return creature.MobTemplate{}, err
 	}
 	return t, nil
 }

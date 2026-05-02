@@ -8,9 +8,11 @@ import (
 )
 
 // MemoryMobTemplateRepo is an in-memory MobTemplateRepo for tests.
-// Concurrent-safe. Stored values are deep-copied through the
-// existing JSON helpers' clone behavior on read so callers can
-// mutate returned slices without corrupting the store.
+// Concurrent-safe. Templates are stored as value types, so callers
+// reading through GetByID / GetByExternalID get a shallow copy of
+// the row — mutating scalar fields on the returned value is safe,
+// but mutating slice/map fields will alias the stored row. Treat
+// returned values as read-only.
 type MemoryMobTemplateRepo struct {
 	mu        sync.Mutex
 	byID      map[int64]creature.MobTemplate
