@@ -64,6 +64,9 @@ func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.E
 		slog.Warn("tp: room lookup failed", "char", c.Session.CharacterID, "arg", roomArg, "error", err)
 		return c.Session.WriteString("{{Could not teleport.}}::red\r\n")
 	}
+	if room.Flags.NoTeleport {
+		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
+	}
 	relocate(c.Ctx, c.Session, room.ID, characters)
 	return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs)
 }
@@ -83,6 +86,9 @@ func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, e
 	if err != nil {
 		slog.Warn("tp: room lookup failed", "caller", c.Session.CharacterID, "target", target.CharacterID, "arg", roomArg, "error", err)
 		return c.Session.WriteString("{{Could not teleport " + sanitizeArg(username) + ".}}::red\r\n")
+	}
+	if room.Flags.NoTeleport {
+		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, target, room.ID, characters)
 	if err := c.Session.WriteString("{{Teleported " + target.CharacterName + " to " + room.Name + ".}}::green\r\n"); err != nil {

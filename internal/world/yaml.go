@@ -37,8 +37,36 @@ type Room struct {
 	Long    string            `yaml:"long"`
 	Exits   map[string]string `yaml:"exits"`
 
+	// Flags / sector / lighting / coords land in migration 0012.
+	// Builders may omit any of these; defaults: outdoors, city
+	// sector, fully lit, origin coords.
+	Flags      RoomFlags `yaml:"flags"`
+	Sector     string    `yaml:"sector"`
+	LightLevel *int      `yaml:"light_level"` // pointer so 0 ≠ "unspecified"
+	Coords     *Coords   `yaml:"coords"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
+}
+
+// RoomFlags is the YAML-side mirror of repo.RoomFlags. Defaults are
+// all false; the loader maps these onto the rooms.* INTEGER columns.
+type RoomFlags struct {
+	Indoors    bool `yaml:"indoors"`
+	NoPVP      bool `yaml:"nopvp"`
+	NoTeleport bool `yaml:"noteleport"`
+	Dark       bool `yaml:"dark"`
+	Silent     bool `yaml:"silent"`
+	Peaceful   bool `yaml:"peaceful"`
+}
+
+// Coords is an optional position used by §10 map/track. Authoring is
+// optional; rooms without coords sort to (0,0,0) which is fine for
+// zones that don't need a grid.
+type Coords struct {
+	X int `yaml:"x"`
+	Y int `yaml:"y"`
+	Z int `yaml:"z"`
 }
 
 // Item is one entry in `items.yaml`.

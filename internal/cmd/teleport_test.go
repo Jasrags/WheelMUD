@@ -50,6 +50,33 @@ func TestTeleport_SelfByExternalID(t *testing.T) {
 	}
 }
 
+func TestTeleport_NoTeleportFlagBlocks(t *testing.T) {
+	sessions := session.NewRegistry()
+	tp, chars, rooms, _, _, _ := newTeleportCmd(t, sessions)
+	rooms.Insert(repo.Room{
+		ID: 9, Name: "Warded Sanctum", LongDesc: "Air bites the skin.",
+		Flags: repo.RoomFlags{NoTeleport: true},
+	})
+	c, _ := chars.Create(context.Background(), repo.Character{AccountID: 1, Name: "Pippin"})
+
+	s, conn := bufSession(t)
+	s.CharacterID = c.ID
+	s.CharacterName = c.Name
+	s.CurrentRoomID = 1
+	s.AuthLevel = telnet.AuthPlayer
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "tp", Args: []string{"9"}}
+	if err := tp.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s.CurrentRoomID != 1 {
+		t.Fatalf("teleport should not have moved caller; CurrentRoomID = %d", s.CurrentRoomID)
+	}
+	if !strings.Contains(conn.String(), "Pattern resists") {
+		t.Fatalf("expected resist message; got %q", conn.String())
+	}
+}
+
 func TestTeleport_SelfByNumericID(t *testing.T) {
 	sessions := session.NewRegistry()
 	tp, chars, _, _, _, _ := newTeleportCmd(t, sessions)

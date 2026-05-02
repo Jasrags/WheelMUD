@@ -70,6 +70,62 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		}
 	})
 
+	t.Run(name+"/flags_sector_light_coords_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		input := Room{
+			ExternalID: "deep.cavern",
+			Name:       "Deep Cavern",
+			LongDesc:   "Damp stone walls.",
+			Flags: RoomFlags{
+				Indoors: true, NoTeleport: true, Dark: true, Silent: true, Peaceful: true,
+			},
+			Sector:     SectorUnderground,
+			LightLevel: 0,
+			CoordX:     -3, CoordY: 7, CoordZ: -1,
+		}
+		created, err := r.Create(ctx, input)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.Sector != SectorUnderground {
+			t.Errorf("Sector = %q, want underground", got.Sector)
+		}
+		if got.LightLevel != 0 {
+			t.Errorf("LightLevel = %d, want 0", got.LightLevel)
+		}
+		if !got.Flags.Dark || !got.Flags.Silent || !got.Flags.Indoors ||
+			!got.Flags.Peaceful || !got.Flags.NoTeleport || got.Flags.NoPVP {
+			t.Errorf("Flags = %+v, want indoors+noteleport+dark+silent+peaceful only", got.Flags)
+		}
+		if got.CoordX != -3 || got.CoordY != 7 || got.CoordZ != -1 {
+			t.Errorf("Coords = (%d,%d,%d), want (-3,7,-1)", got.CoordX, got.CoordY, got.CoordZ)
+		}
+	})
+
+	t.Run(name+"/defaults_when_unspecified", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{ExternalID: "default.room", Name: "Default"})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.Sector != SectorCity {
+			t.Errorf("default Sector = %q, want city", got.Sector)
+		}
+		if got.LightLevel != DefaultLightLevel {
+			t.Errorf("default LightLevel = %d, want %d", got.LightLevel, DefaultLightLevel)
+		}
+	})
+
 	t.Run(name+"/find_missing", func(t *testing.T) {
 		r := newRepo(t)
 		_, err := r.FindByID(context.Background(), 99999)

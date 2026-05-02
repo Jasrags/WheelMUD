@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"errors"
 	"log/slog"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -15,8 +17,9 @@ const commMaxLen = 1024
 
 // NewSay builds the room-scoped chat command. Strips control bytes,
 // caps length, and broadcasts to every other session whose
-// CurrentRoomID matches the speaker's room.
-func NewSay(sessions *session.Registry) *telnet.Command {
+// CurrentRoomID matches the speaker's room. Rooms with the `silent`
+// flag swallow speech with a flavor message.
+func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "say",
 		Aliases: []string{"'"}, // most MUDs alias the apostrophe to say
@@ -30,6 +33,15 @@ func NewSay(sessions *session.Registry) *telnet.Command {
 			}
 			if c.Session.CurrentRoomID == 0 {
 				return c.Session.WriteString("{{You are nowhere — no one will hear you.}}::yellow\r\n")
+			}
+			if rooms != nil {
+				if room, err := rooms.FindByID(c.Ctx, c.Session.CurrentRoomID); err == nil {
+					if room.Flags.Silent {
+						return c.Session.WriteString("{{The air smothers your words; nothing carries.}}::yellow\r\n")
+					}
+				} else if !errors.Is(err, repo.ErrRoomNotFound) {
+					slog.Debug("say: room lookup failed", "room", c.Session.CurrentRoomID, "error", err)
+				}
 			}
 			speaker := c.Session.CharacterName
 			if speaker == "" {

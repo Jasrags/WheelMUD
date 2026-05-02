@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -56,7 +57,7 @@ func runCmd(t *testing.T, c *telnet.Command, s *telnet.Session, raw string) {
 
 func TestSay_BroadcastsToSameRoom(t *testing.T) {
 	sessions, alice, _, aOut, bOut := commPair(t)
-	say := NewSay(sessions)
+	say := NewSay(sessions, nil)
 
 	runCmd(t, say, alice, "hello there")
 
@@ -71,10 +72,26 @@ func TestSay_BroadcastsToSameRoom(t *testing.T) {
 	}
 }
 
+func TestSay_SilentRoomBlocks(t *testing.T) {
+	sessions, alice, _, aOut, bOut := commPair(t)
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Hush Chapel", Flags: repo.RoomFlags{Silent: true}})
+	say := NewSay(sessions, rooms)
+
+	runCmd(t, say, alice, "anyone here?")
+
+	if !strings.Contains(aOut.String(), "smothers your words") {
+		t.Fatalf("alice: missing silent message; got %q", aOut.String())
+	}
+	if strings.Contains(bOut.String(), "anyone here") {
+		t.Fatalf("bob heard speech in silent room: %q", bOut.String())
+	}
+}
+
 func TestSay_DoesNotReachOtherRooms(t *testing.T) {
 	sessions, alice, bob, _, bOut := commPair(t)
 	bob.CurrentRoomID = 99 // different room
-	say := NewSay(sessions)
+	say := NewSay(sessions, nil)
 
 	runCmd(t, say, alice, "anyone there?")
 

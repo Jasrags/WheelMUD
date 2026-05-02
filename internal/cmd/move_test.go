@@ -48,6 +48,31 @@ func TestMove_BlockedDirection(t *testing.T) {
 	}
 }
 
+func TestMove_SectorGatesAirUnderwater(t *testing.T) {
+	rooms, exits, items, mobs := seedWorld(t)
+	chars := repo.NewMemoryCharacterRepo()
+
+	// Add an underwater room east of the plaza.
+	rooms.Insert(repo.Room{ID: 3, Name: "Submerged Reef", Sector: repo.SectorUnderwater})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 3, Direction: repo.DirEast})
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	east := findCmd(t, family, "east")
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "east"}
+	if err := east.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(conn.String(), "cannot swim") {
+		t.Fatalf("expected swim refusal; got %q", conn.String())
+	}
+	if s.CurrentRoomID != 1 {
+		t.Fatalf("CurrentRoomID drifted to %d", s.CurrentRoomID)
+	}
+}
+
 func TestMove_SuccessUpdatesSessionAndPersists(t *testing.T) {
 	rooms, exits, items, mobs := seedWorld(t)
 	chars := repo.NewMemoryCharacterRepo()

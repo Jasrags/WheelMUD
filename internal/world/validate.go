@@ -56,9 +56,25 @@ func validateRoomIDs(rooms []Room) error {
 		if prev, dup := seen[r.ID]; dup {
 			return fmt.Errorf("%s:%d: duplicate room id %q (also at %s:%d)", r.SourceFile, r.Line, r.ID, prev.SourceFile, prev.Line)
 		}
+		if r.Sector != "" && !validSectors[repo.Sector(r.Sector)] {
+			return fmt.Errorf("%s:%d: room %q has invalid sector %q", r.SourceFile, r.Line, r.ID, r.Sector)
+		}
 		seen[r.ID] = r
 	}
 	return nil
+}
+
+var validSectors = map[repo.Sector]bool{
+	repo.SectorCity:        true,
+	repo.SectorForest:      true,
+	repo.SectorField:       true,
+	repo.SectorHills:       true,
+	repo.SectorMountain:    true,
+	repo.SectorDesert:      true,
+	repo.SectorWater:       true,
+	repo.SectorUnderwater:  true,
+	repo.SectorAir:         true,
+	repo.SectorUnderground: true,
 }
 
 func validateStarter(rooms []Room) error {

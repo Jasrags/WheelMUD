@@ -182,9 +182,10 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 	}
 
 	starter := rooms[starterIdx]
+	starterCols, starterVals := roomInsertValues(starter)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO rooms(id, external_id, name, short_desc, long_desc) VALUES (?, ?, ?, ?, ?)`,
-		repo.StarterRoomID, starter.ID, starter.Name, starter.Short, starter.Long,
+		`INSERT INTO rooms(id, `+starterCols+`) VALUES (?, `+placeholders(len(starterVals))+`)`,
+		append([]any{repo.StarterRoomID}, starterVals...)...,
 	); err != nil {
 		return nil, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
 	}
@@ -194,9 +195,10 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 		if i == starterIdx {
 			continue
 		}
+		cols, vals := roomInsertValues(r)
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO rooms(external_id, name, short_desc, long_desc) VALUES (?, ?, ?, ?)`,
-			r.ID, r.Name, r.Short, r.Long,
+			`INSERT INTO rooms(`+cols+`) VALUES (`+placeholders(len(vals))+`)`,
+			vals...,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert room %q: %w", r.ID, err)
@@ -208,6 +210,58 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 		out[r.ID] = id
 	}
 	return out, nil
+}
+
+// roomInsertValues materializes the column list + values for one room
+// row, applying defaults (sector=city, light=DefaultLightLevel for
+// non-dark rooms) when the YAML left them blank.
+func roomInsertValues(r Room) (string, []any) {
+	sector := r.Sector
+	if sector == "" {
+		sector = string(repo.SectorCity)
+	}
+	light := repo.DefaultLightLevel
+	if r.LightLevel != nil {
+		light = *r.LightLevel
+	} else if r.Flags.Dark {
+		light = 0
+	}
+	var x, y, z int
+	if r.Coords != nil {
+		x, y, z = r.Coords.X, r.Coords.Y, r.Coords.Z
+	}
+	cols := `external_id, name, short_desc, long_desc,
+		indoors, nopvp, noteleport, dark, silent, peaceful,
+		sector, light_level, coord_x, coord_y, coord_z`
+	vals := []any{
+		r.ID, r.Name, r.Short, r.Long,
+		boolInt(r.Flags.Indoors), boolInt(r.Flags.NoPVP),
+		boolInt(r.Flags.NoTeleport), boolInt(r.Flags.Dark),
+		boolInt(r.Flags.Silent), boolInt(r.Flags.Peaceful),
+		sector, light, x, y, z,
+	}
+	return cols, vals
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	out := make([]byte, 0, n*2)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, '?')
+	}
+	return string(out)
 }
 
 func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[string]int64) error {

@@ -6,6 +6,37 @@ import (
 	"time"
 )
 
+// Sector classifies a room's terrain/medium for movement gating and
+// rendering. The same enum lives in the rooms.sector CHECK constraint
+// (see migration 0012); changing one without the other breaks inserts.
+type Sector string
+
+const (
+	SectorCity        Sector = "city"
+	SectorForest      Sector = "forest"
+	SectorField       Sector = "field"
+	SectorHills       Sector = "hills"
+	SectorMountain    Sector = "mountain"
+	SectorDesert      Sector = "desert"
+	SectorWater       Sector = "water"      // surface — needs swim or boat
+	SectorUnderwater  Sector = "underwater" // submerged — needs swim
+	SectorAir         Sector = "air"        // needs fly
+	SectorUnderground Sector = "underground"
+)
+
+// RoomFlags groups the boolean tags that gate gameplay behavior in a
+// room. Bool-per-flag instead of a bitmask keeps SQL CHECK constraints
+// trivial and table introspection readable; performance is not a
+// concern at this scale.
+type RoomFlags struct {
+	Indoors    bool
+	NoPVP      bool
+	NoTeleport bool
+	Dark       bool
+	Silent     bool
+	Peaceful   bool
+}
+
 // Room is the canonical "place" in the world. Description text is rendered
 // verbatim by the look command — callers are responsible for any cfmt
 // styling baked into the strings. ExternalID is the stable identifier
@@ -16,6 +47,15 @@ type Room struct {
 	Name       string
 	ShortDesc  string
 	LongDesc   string
+	Flags      RoomFlags
+	Sector     Sector
+	// LightLevel: 0 = pitch black; positive = lit. Combined with
+	// Flags.Dark in look to decide whether descriptions are visible.
+	// Default is 100 ("brightly lit") so existing zones keep rendering.
+	LightLevel int
+	CoordX     int
+	CoordY     int
+	CoordZ     int
 	CreatedAt  time.Time
 }
 
@@ -40,5 +80,9 @@ type RoomRepo interface {
 // room flagged `starter: true` to this id so the constant stays valid
 // across loads.
 const StarterRoomID int64 = 1
+
+// DefaultLightLevel is the value applied to rooms loaded without an
+// explicit value. 100 is "fully lit"; 0 is pitch black.
+const DefaultLightLevel = 100
 
 var ErrRoomNotFound = errors.New("repo: room not found")

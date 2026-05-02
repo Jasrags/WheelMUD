@@ -65,6 +65,21 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		return s.WriteRaw([]byte("Could not move right now.\r\n"))
 	}
 
+	// Sector gating: air requires fly, underwater requires swim. Until
+	// per-character Speed (creature.Core.Speed) is plumbed through the
+	// Session, neither capability is wired up — so air/underwater
+	// rooms are effectively blocked for everyone. The block lives in
+	// the move path so the destination's terrain has the final say.
+	dest, err := rooms.FindByID(c.Ctx, exit.ToRoomID)
+	if err != nil && !errors.Is(err, repo.ErrRoomNotFound) {
+		slog.Warn("move: dest room lookup failed", "char", s.CharacterID, "to", exit.ToRoomID, "error", err)
+	}
+	if err == nil {
+		if msg, blocked := sectorGate(dest.Sector); blocked {
+			return s.WriteRaw([]byte(msg + "\r\n"))
+		}
+	}
+
 	fromRoomID := s.CurrentRoomID
 	if bus != nil && s.CharacterID != 0 {
 		bus.Publish(c.Ctx, world.PlayerLeft{
@@ -93,4 +108,19 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 	}
 
 	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs)
+}
+
+// sectorGate returns a refusal message + true when the destination
+// terrain requires a movement mode the mover doesn't have. Once
+// creature.Speed.Fly/Swim is reachable from the session this becomes
+// a per-character check instead of a blanket refusal.
+func sectorGate(sector repo.Sector) (string, bool) {
+	switch sector {
+	case repo.SectorAir:
+		return "The air offers no purchase — you cannot fly.", true
+	case repo.SectorUnderwater:
+		return "The water closes over your head — you cannot swim that deep.", true
+	default:
+		return "", false
+	}
 }

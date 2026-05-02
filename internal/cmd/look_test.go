@@ -175,6 +175,33 @@ func TestLook_MissingRoomMessage(t *testing.T) {
 	}
 }
 
+func TestLook_DarkRoomHidesContents(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+	rooms.Insert(repo.Room{
+		ID: 5, Name: "Pitch Cellar", LongDesc: "The walls drip.",
+		Flags: repo.RoomFlags{Dark: true}, LightLevel: 0,
+	})
+	items.Insert(repo.Item{Name: "a glittering coin", RoomID: 5})
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 5
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	got := conn.String()
+	if !strings.Contains(got, "pitch black") {
+		t.Fatalf("expected pitch-black message; got %q", got)
+	}
+	for _, leak := range []string{"Pitch Cellar", "drip", "glittering coin"} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("dark room leaked %q in output: %q", leak, got)
+		}
+	}
+}
+
 // TestLook_EmitsANSIEscapes confirms the cfmt path actually produces
 // SGR sequences — guards against a future regression where someone
 // switches WriteString back to WriteRaw and silently strips colour.

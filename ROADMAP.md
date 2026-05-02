@@ -313,13 +313,23 @@ aggregates as flat rows so `look` / movement work end-to-end. This section
 tracks the richer domain model the gameplay layers (combat, quests, economy)
 will need on top of those tables.
 
-- [~] **Room** — `repo.Room` exists with id, zone, name, description,
-      `external_id`. Pending: flags (`indoors`, `nopvp`, `noteleport`,
-      `dark`, `silent`, `peaceful`), sector/terrain enum (city, forest,
-      water, air, underwater) for movement cost + swim/fly gating,
-      ambient/extra descriptions keyed by phrase (`look fountain`),
-      light level (auto-dark at night unless lit), per-room reset hooks,
-      coordinates for `map`/`track` (§10).
+- [~] **Room** — `repo.Room` covers id, zone, name, description,
+      `external_id`, `RoomFlags` (`indoors` / `nopvp` / `noteleport`
+      / `dark` / `silent` / `peaceful`), `Sector` enum (city, forest,
+      field, hills, mountain, desert, water, underwater, air,
+      underground), `LightLevel`, and `coord_x/y/z` (migration 0012).
+      YAML schema accepts `flags:`, `sector:`, `light_level:`, and
+      `coords:` blocks; defaults are outdoors / city / fully lit /
+      origin. Behavior wired: `look` renders "pitch black" when
+      `dark=true && light_level=0` (hides desc/items/mobs); `tp`
+      refuses destinations with `noteleport`; `say` is swallowed in
+      `silent` rooms; `move` blocks `air`/`underwater` sectors
+      pending §11/§12 fly/swim affects (the message says "you cannot
+      fly/swim"). Pending: ambient/extra descriptions keyed by
+      phrase (`look fountain`) — needs §14 keyword resolution; auto
+      day/night light level cycling — needs a clock source; per-room
+      reset hooks — block on §9 zone schema; `coords` consumed by
+      `map`/`track` — block on §10.
 - [~] **Exit** — `repo.Exit` has `from_room_id`, `direction`, `to_room_id`.
       Pending: door flags (`closed`, `locked`, `pickable`, `hidden`,
       `nopass`), key item id, lock difficulty, exit-specific

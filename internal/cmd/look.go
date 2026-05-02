@@ -60,6 +60,14 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 
+	// Dark room with no light: render only the title-as-shadow plus
+	// an exits hint. Items/mobs/desc stay hidden until something lights
+	// the room (torch in inventory, daylight, weave). Builders who
+	// want a "you see nothing" feel set dark=true and light_level=0.
+	if room.Flags.Dark && room.LightLevel <= 0 {
+		return s.WriteString("{{It is pitch black — you can't see a thing.}}::gray\r\n")
+	}
+
 	exitsList, err := exits.ListFrom(ctx, room.ID)
 	if err != nil {
 		return s.WriteString("{{Could not look around right now.}}::red\r\n")
