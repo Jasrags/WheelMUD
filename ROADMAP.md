@@ -806,10 +806,12 @@ will need on top of those tables.
 ## 19. Logging, telemetry, ops
 
 - [x] `slog` structured logging at `LevelDebug`
-- [ ] Log levels controllable via env / config — `LOG_LEVEL` env
-      (`debug|info|warn|error`) feeding `slog.HandlerOptions.Level`,
-      plus a `loglevel <name>` admin command that swaps the level
-      at runtime via an `slog.LevelVar`.
+- [~] Log levels controllable via env / config — `LOG_LEVEL` env
+      (`debug|info|warn|error`) feeding `slog.HandlerOptions.Level`
+      via `cmd/server/main.go::parseLogLevel`; unknown values
+      default to `info` with a warning. Pending: a `loglevel
+      <name>` admin command that swaps the level at runtime via
+      an `slog.LevelVar`.
 - [ ] Request/command audit log per character — append-only
       `command_log` table (`character_id`, `verb`, `args`, `at`,
       `latency_us`, `outcome`) gated by a config flag (off in dev).
@@ -819,12 +821,19 @@ will need on top of those tables.
       total{verb,outcome}, telnet_iac_total{kind}. Histograms:
       dispatch_latency_seconds, tick_lag_seconds. Gauges: sessions,
       bucket_subscribers{bucket}.
-- [ ] Crash recovery — wrap every goroutine spawned by the server
-      (`go` calls in `main`, `tick.Scheduler`, `eventbus`, dispatch)
-      in a `safego(name, fn)` helper that defers a `recover()` +
-      stack-dump log + metric increment. Listener and scheduler
-      restart on panic; per-session goroutine just terminates the
-      session.
+- [~] Crash recovery — `internal/safego.Go(name, fn)` shipped:
+      defers a `recover()` that logs panic + name + stack at
+      `LevelError`. Wraps the shutdown-watcher, accept-loop's
+      per-session goroutine, and the shutdown-drain in
+      `cmd/server/main.go`. The telnet dispatcher
+      (`telnet/server.go::runDispatcher`) inlines the same
+      recover pattern to keep the telnet package boundary free
+      of `internal/*` imports. The tick scheduler and eventbus
+      already recover per-handler (existing inline recovers).
+      Pending: metric counter for panics-by-name (waits on §19
+      Prometheus endpoint) and any restart-on-panic policy
+      (deliberate: a panic that survives recover means a logic
+      bug to fix, not silently restart).
 - [ ] Profiling endpoints (`net/http/pprof`) — same private :9090
       mux, gated behind `PPROF_ENABLED=1`. `/debug/pprof/*` routes
       registered via `import _ "net/http/pprof"`.

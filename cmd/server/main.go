@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/safego"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/tick"
 	"github.com/Jasrags/WheelMUD/internal/world"
@@ -55,8 +57,9 @@ type server struct {
 }
 
 func main() {
+	level := parseLogLevel(envOr("LOG_LEVEL", "debug"))
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: level,
 	}))
 	slog.SetDefault(logger)
 
@@ -125,12 +128,12 @@ func main() {
 
 	slog.Info("Server started", "address", addr, "db", dsn)
 
-	go func() {
+	safego.Go("shutdown-watcher", func() {
 		<-ctx.Done()
 		slog.Info("Shutdown signal received, closing listener")
 		close(srv.closed)
 		_ = ln.Close()
-	}()
+	})
 
 	srv.acceptLoop(ln)
 	srv.shutdown()
@@ -160,20 +163,20 @@ func (srv *server) acceptLoop(ln net.Listener) {
 		}
 
 		srv.wg.Add(1)
-		go func() {
+		safego.Go("session-"+s.RemoteAddress, func() {
 			defer srv.wg.Done()
 			srv.handleConnection(s)
-		}()
+		})
 	}
 }
 
 func (srv *server) shutdown() {
 	slog.Info("Draining active sessions", "timeout", shutdownDrainTimeout)
 	done := make(chan struct{})
-	go func() {
+	safego.Go("shutdown-drain", func() {
 		srv.wg.Wait()
 		close(done)
-	}()
+	})
 	select {
 	case <-done:
 		slog.Info("All sessions drained")
@@ -191,6 +194,25 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseLogLevel maps a LOG_LEVEL env value to slog.Level. Unknown
+// strings fall through to LevelInfo so a typo doesn't silently
+// disable warnings. Case-insensitive; "debug"/"info"/"warn"/"error".
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		slog.Warn("LOG_LEVEL: unknown value, defaulting to info", "value", s)
+		return slog.LevelInfo
+	}
 }
 
 func closeDB(conn *sql.DB) {

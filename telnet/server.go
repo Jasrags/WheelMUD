@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -70,6 +71,20 @@ func readLoop(s *Session) error {
 
 func runDispatcher(ctx context.Context, s *Session, done chan<- struct{}) {
 	defer close(done)
+	// A panic inside Mode.Handle would otherwise tear down the whole
+	// process. Recover, log a stack trace, and let the caller drop
+	// the session. Each dispatch iteration runs inside its own
+	// recover so a single bad command boots only that session
+	// without crashing peers.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("dispatcher panicked",
+				"remote", s.RemoteAddress,
+				"panic", r,
+				"stack", string(debug.Stack()),
+			)
+		}
+	}()
 	for line := range s.inbox {
 		mode := s.CurrentMode()
 		if mode == nil {
