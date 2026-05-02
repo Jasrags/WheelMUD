@@ -34,14 +34,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 ## Architecture
 
 - **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0011), constructs every
-  repo (accounts, characters, rooms, exits, items, mob_instances, channels),
-  runs `world.LoadAndSync` to seed the DB from `WORLD_DIR`, builds the
-  command registry plus a `server` struct holding long-lived deps, starts
-  `tick.Scheduler` + `tick.Buckets` and the `persist.Manager` autosaver,
-  then accepts TCP connections. Each connection gets a `telnet.Session`,
-  the initial login mode is pushed, and `telnet.RunSession` drives it.
-  New long-lived dependencies belong on the `server` struct.
+  `internal/db.Open` (runs embedded migrations 0001–0016), constructs every
+  repo (accounts, characters, rooms, exits, items, mob_instances, zones,
+  channels), runs `world.LoadAndSync` to seed the DB from `WORLD_DIR`,
+  builds the command registry plus a `server` struct holding long-lived
+  deps, starts `tick.Scheduler` + `tick.Buckets` and the `persist.Manager`
+  autosaver, then accepts TCP connections. Each connection gets a
+  `telnet.Session`, the initial login mode is pushed, and
+  `telnet.RunSession` drives it. New long-lived dependencies belong on
+  the `server` struct.
 
 - **`telnet/`** — protocol primitives + per-connection driver.
   - `session.go`: `Session` struct (conn, terminal type, width/height,
@@ -66,9 +67,11 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - **`internal/cmd/`** — concrete commands wired in `main.go::buildRegistry`:
   `quit`, `colors`, `who`, `say`, `tell`, `reply`, `alias`/`unalias`, one
   verb per channel catalog row plus a `channels` overview, `help`, `look`,
-  the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`,
-  `togglepassword`. New commands take their dependencies (repos,
-  registry, sessions, bus) by parameter and return a `*telnet.Command`.
+  `examine`, the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`,
+  the door verbs (`open`/`close`/`lock`/`unlock`/`pick`), and the admin
+  inspectors (`whereami`, `zones`). New commands take their dependencies
+  (repos, registry, sessions, bus) by parameter and return a
+  `*telnet.Command`.
 
 - **`internal/mode/`** — login, character_select, character_create, game,
   postauth promotion. `promoteToGame` stamps `CharacterID`,
@@ -80,14 +83,23 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0011. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0016. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
-  `channels.channel_settings_json`.
+  `channels.channel_settings_json`; 0012 added room flags + sector;
+  0013 added room extra-descs JSON; 0014 added exit door flags + key
+  + lock difficulty + description; 0015 added the item taxonomy
+  columns; 0016 added the `zones` table + `rooms.zone_id` (soft FK,
+  default 0; loader stamps real ids).
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
-  DB on startup (rooms/exits/items/mob_templates/mob_instances).
+  DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
+  The on-disk tree is hierarchical (continent → nation → region →
+  settlement → building); see `data/world/README.md` for the full
+  zone.yaml schema (id, name, builder, level_range, reset_interval_s,
+  reset_mode, climate, ambient) and the room-id / currency-string /
+  typed-item-stats conventions builders need to know.
 
 - **`internal/session/`** — process-level registry that enforces
   single-session-per-account: `Bind` returns the displaced session;
@@ -133,17 +145,25 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
   (`internal/repo/character_sql.go`); ordering is load-bearing.
+- New columns on `rooms` need to land in BOTH `roomSelectCols` AND the
+  `insertCols`/`insertVals` lists in `internal/repo/room_sqlite.go`
+  AND the `cols`/`vals` materialized in `internal/world/loader.go::
+  roomInsertValues`; the loader writes raw SQL inside one transaction
+  rather than going through `RoomRepo.Create`, so the column lists are
+  duplicated and must move in lock-step.
 
 ## Tests
 
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
-alias table, every repo (memory + sqlite), the world loader, the session
-registry, the eventbus, the tick scheduler, the persist manager, and the
-concrete commands (look / move / say / tell / reply / channel /
-teleport / alias). Telnet-package tests reuse `newPipeSession(t)` /
-`bufSession(t)` / `bufConn` from `telnet/command_test.go`. Cmd-package
-tests reuse `commPair` / `runCmd` from `internal/cmd/comm_test.go`.
+alias table, every repo (memory + sqlite, including the new ZoneRepo),
+the world loader (including zone metadata + room.zone_id linkage), the
+session registry, the eventbus, the tick scheduler, the persist
+manager, and the concrete commands (look / move / say / tell / reply /
+channel / teleport / alias / examine / door verbs / whereami / zones).
+Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
+`bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
+`commPair` / `runCmd` from `internal/cmd/comm_test.go`.
 
 ## Module
 

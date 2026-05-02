@@ -1032,3 +1032,7 @@ Items already tracked elsewhere — included here so the roadmap points at them:
   echo, lockout enumeration leak, hash-in-memory hygiene, per-connection
   rate limits, account-create soft DoS, `CharacterSelect.chars` snapshot
   staleness, double Conn.Close) — `login_followups.md`.
+- **§9 Zones slice follow-ups** (silent ambient marshal swallow,
+  `Name`/`Builder` UTF-8 vs ASCII enforcement, `CountByZone` shared-
+  suite gap, loader/schema default duplication) —
+  `zones_followups.md`.
