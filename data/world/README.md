@@ -37,16 +37,41 @@ Each zone directory may contain:
 
 | File         | Required | Purpose                                       |
 |--------------|----------|-----------------------------------------------|
-| `zone.yaml`  | yes      | Metadata: `id` + `name`                       |
+| `zone.yaml`  | yes      | Metadata: id, name, builder, level range, reset, climate, ambient |
 | `rooms.yaml` | yes      | Sequence of rooms (≥1)                        |
 | `items.yaml` | no       | Sequence of items spawned in this zone        |
 | `mobs.yaml`  | no       | Sequence of NPC spawns in this zone           |
 
 ### `zone.yaml`
 
+The persisted zones row drives §9 area resets, §10 ambient/weather,
+§16 builder permission scoping, and the `zones` admin command. Only
+`id` and `name` are required; everything else has a documented default
+applied at insert time.
+
 ```yaml
-id: emonds_field        # globally unique slug, ASCII, no whitespace
-name: Emond's Field     # human-readable display name
+id: emonds_field                   # required — globally unique slug, ASCII, no whitespace
+name: Emond's Field                # required — human-readable display name
+
+builder: jrags                     # default ""    — author tag (§16 permission scoping)
+level_range: { min: 1, max: 5 }    # default 1..60 — advisory content gating
+reset_interval_s: 900              # default 600   — §9 areaReset bucket cadence (seconds)
+reset_mode: empty                  # default empty — always | empty | never
+climate: temperate                 # default ""    — §10 ambient/weather hint
+ambient:                           # default []    — §10 ambient ticker rotates these
+  - The smell of fresh bread drifts across the green.
+  - A pair of doves break cover from the inn roof.
+```
+
+**Reset modes:**
+- `always` — reset every interval regardless of who is in the zone
+- `empty` — reset only when no players are present (default)
+- `never` — disable resets entirely (use for stub zones, player housing)
+
+**Inspect persisted state at runtime:**
+```
+zones                  # list every zone (admin)
+zones show emonds_field
 ```
 
 ### `rooms.yaml`

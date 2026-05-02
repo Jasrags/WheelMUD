@@ -351,13 +351,30 @@ will need on top of those tables.
       method and key/skill resolution against §14 inventory + §12
       skill checks. Diagonal directions (ne/nw/se/sw) shipped via
       migration 0007.
-- [ ] **Area / zone** — currently rooms carry a free-text `zone`
-      string. Promote to a real `zones` table: id, name, builder,
-      level range, reset interval, reset mode (`always` / `empty` /
-      `never`), climate, ambient messages. Reset rules live in a
-      sibling `zone_resets` table (load mob X into room Y up to count
-      Z; load item into room/container; set door state; equip mob).
-      Resets fire from the §8 `areaReset` bucket.
+- [~] **Area / zone** — `zones` table landed (migration 0016): id,
+      external_id, name, builder, min/max_level, reset_interval_s,
+      reset_mode (`always`/`empty`/`never` enforced via CHECK),
+      climate, ambient_json. `rooms.zone_id` joins rooms to their
+      owning zone (soft FK; default 0 keeps test fixtures buildable
+      without a backing zones row). `repo.ZoneRepo` (sqlite + memory
+      + shared test suite) exposes Create / GetByID /
+      GetByExternalID / List; ZoneResetMode is a typed enum mirrored
+      across both impls so the SQLite CHECK is a backstop, not the
+      front line. The YAML loader inserts a zones row per `zone.yaml`
+      and stamps `rooms.zone_id` during insertRooms; `zone.yaml`
+      accepts `builder`, `level_range`, `reset_interval_s`,
+      `reset_mode`, `climate`, `ambient` (all optional, defaults
+      applied at insert). `validateZones` enforces external-id
+      uniqueness, valid reset_mode, level-range bounds, and
+      non-negative reset interval with builder-friendly file:line
+      errors. `zones` admin command (AuthAdmin) lists zones and
+      shows per-zone metadata + room count via
+      `RoomRepo.CountByZone`. Pending: `zone_resets` sibling table
+      (load mob X into room Y up to count Z; load item into
+      room/container; set door state; equip mob) wired into the §8
+      `areaReset` bucket; admin edit (`zedit`) lands with §16;
+      promote `rooms.zone_id` to a hard FK via table rebuild once
+      §16 admin room-create reliably supplies a zone id.
 - [~] **Item / object** — taxonomy schema landed (migration 0015).
       `repo.Item` carries `Type` enum (`weapon` / `armor` / `shield` /
       `container` / `consumable` / `light` / `key` / `tool` /
