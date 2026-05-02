@@ -319,6 +319,15 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus)...); err != nil {
 		return nil, err
 	}
+	if err := r.Register(
+		cmd.NewOpen(exits, sessions),
+		cmd.NewClose(exits, sessions),
+		cmd.NewLock(exits, items, sessions),
+		cmd.NewUnlock(exits, items, sessions),
+		cmd.NewPick(exits, sessions),
+	); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions)); err != nil {
 		return nil, err
 	}

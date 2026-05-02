@@ -65,6 +65,24 @@ func (r *SQLiteExitRepo) Create(ctx context.Context, e Exit) (Exit, error) {
 	return e, nil
 }
 
+func (r *SQLiteExitRepo) UpdateFlags(ctx context.Context, exitID int64, closed, locked bool) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE exits SET closed = ?, locked = ? WHERE id = ?`,
+		boolToInt(closed), boolToInt(locked), exitID,
+	)
+	if err != nil {
+		return fmt.Errorf("update exit flags: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update exit flags rows: %w", err)
+	}
+	if n == 0 {
+		return ErrExitNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteExitRepo) FindByDirection(ctx context.Context, fromRoomID int64, direction string) (Exit, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+exitSelectCols+` FROM exits WHERE from_room_id = ? AND direction = ?`,

@@ -58,6 +58,19 @@ func (r *MemoryExitRepo) ListFrom(_ context.Context, fromRoomID int64) ([]Exit, 
 	return out, nil
 }
 
+func (r *MemoryExitRepo) UpdateFlags(_ context.Context, exitID int64, closed, locked bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.exits {
+		if r.exits[i].ID == exitID {
+			r.exits[i].Flags.Closed = closed
+			r.exits[i].Flags.Locked = locked
+			return nil
+		}
+	}
+	return ErrExitNotFound
+}
+
 func (r *MemoryExitRepo) FindByDirection(_ context.Context, fromRoomID int64, direction string) (Exit, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -532,11 +532,25 @@ will need on top of those tables.
       world loader (`internal/world/validate.go`) and the look
       renderer's `directionLongName` map (`internal/cmd/look.go`)
       both accept the diagonals.
-- [ ] Doors, locks, keys — depends on the §9 Exit door-flag fields.
-      Commands: `open <dir>`, `close <dir>`, `lock <dir>`, `unlock
-      <dir>`, `pick <dir>`. Movement through a closed door auto-fails
-      with "The door is closed."; `nopass` exits never auto-open.
-      Key match by item id; lockpick uses a skill check (§12).
+- [~] Doors, locks, keys — `open` / `close` / `lock` / `unlock` /
+      `pick` shipped (`internal/cmd/door.go`) on top of
+      `ExitRepo.UpdateFlags`. Direction parsing accepts long names
+      (`open north`) and short codes (`open n`); Hidden exits stay
+      invisible to door verbs. `open` refuses Locked, `close` refuses
+      NoPass. Both broadcast to the actor's room and (when a reverse
+      exit exists) the far room with the inverted direction. `lock` /
+      `unlock` enforce a key match against `Exit.KeyExternalID` —
+      until §14 inventory lands, the placeholder accepts the matching
+      item being in the actor's current room; `AuthAdmin` always
+      bypasses the key check. `unlock` leaves the door closed-but-
+      unlocked so the lock state stays observable. `pick` requires
+      `Pickable=true` and is gated to `AuthAdmin` until §12 skill
+      checks land — players see the "you lack the skill" flavor that
+      will become a failed roll. Pending: §14 inventory swap (keyed
+      item lookup against the player's bag instead of the room),
+      §12 lockpicking skill check + difficulty roll against
+      `Exit.LockDifficulty`, and door reset on zone reset (§9 zone
+      schema).
 - [~] `examine` for detailed inspection — `examine <target>` shipped
       (`internal/cmd/examine.go`). Resolves against room mobs first
       (by Core.Name token-prefix / substring), then room items (by

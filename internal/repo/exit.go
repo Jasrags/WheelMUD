@@ -62,6 +62,11 @@ type ExitRepo interface {
 	// Create inserts a new exit. Returns ErrDuplicateExit when
 	// (from_room_id, direction) is already taken.
 	Create(ctx context.Context, e Exit) (Exit, error)
+	// UpdateFlags persists the runtime-mutable subset of an exit's
+	// state (Closed / Locked) keyed by ID. Hidden / NoPass / Pickable
+	// are authoring choices and are not touched here. Returns
+	// ErrExitNotFound when no row matches.
+	UpdateFlags(ctx context.Context, exitID int64, closed, locked bool) error
 }
 
 var (

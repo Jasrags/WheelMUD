@@ -129,6 +129,50 @@ func runExitRepoTests(t *testing.T, name string, newFix func(t *testing.T) exitR
 		}
 	})
 
+	t.Run(name+"/update_flags_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		created, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{Closed: true, Locked: false, Pickable: true, Hidden: true},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.exits.UpdateFlags(ctx, created.ID, false, false); err != nil {
+			t.Fatalf("UpdateFlags: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if got.Flags.Closed || got.Flags.Locked {
+			t.Errorf("flags not cleared: %+v", got.Flags)
+		}
+		if !got.Flags.Pickable || !got.Flags.Hidden {
+			t.Errorf("authoring flags clobbered: %+v", got.Flags)
+		}
+		if err := fix.exits.UpdateFlags(ctx, created.ID, true, true); err != nil {
+			t.Fatalf("UpdateFlags lock: %v", err)
+		}
+		got, err = fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection 2: %v", err)
+		}
+		if !got.Flags.Closed || !got.Flags.Locked {
+			t.Errorf("flags not set: %+v", got.Flags)
+		}
+	})
+
+	t.Run(name+"/update_flags_missing_id", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.exits.UpdateFlags(context.Background(), 99999, true, true)
+		if !errors.Is(err, ErrExitNotFound) {
+			t.Fatalf("err = %v, want ErrExitNotFound", err)
+		}
+	})
+
 	t.Run(name+"/find_by_direction_missing", func(t *testing.T) {
 		fix := newFix(t)
 		_, err := fix.exits.FindByDirection(context.Background(), 99999, DirNorth)
