@@ -98,8 +98,8 @@ func TestTell_DeliversAndSetsLastTellFrom(t *testing.T) {
 	if !strings.Contains(bOut.String(), "this is private") {
 		t.Fatalf("bob: missing payload; got %q", bOut.String())
 	}
-	if bob.LastTellFrom != "Alice" {
-		t.Fatalf("LastTellFrom = %q, want Alice", bob.LastTellFrom)
+	if got := bob.LastTellFrom(); got != "Alice" {
+		t.Fatalf("LastTellFrom = %q, want Alice", got)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestReply_RoutesToLastTellFrom(t *testing.T) {
 	if !strings.Contains(aOut.String(), "right back at you") {
 		t.Fatalf("alice: missing reply payload; got %q", aOut.String())
 	}
-	if alice.LastTellFrom != "Bob" {
-		t.Fatalf("alice.LastTellFrom = %q, want Bob", alice.LastTellFrom)
+	if got := alice.LastTellFrom(); got != "Bob" {
+		t.Fatalf("alice.LastTellFrom = %q, want Bob", got)
 	}
 }
 

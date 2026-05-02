@@ -59,11 +59,17 @@ type server struct {
 }
 
 func main() {
-	level := parseLogLevel(envOr("LOG_LEVEL", "debug"))
+	rawLevel := envOr("LOG_LEVEL", "debug")
+	level, levelOK := parseLogLevel(rawLevel)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: level,
 	}))
 	slog.SetDefault(logger)
+	if !levelOK {
+		// Warn through the now-configured handler so format / level
+		// match the rest of startup logging.
+		slog.Warn("LOG_LEVEL: unknown value, defaulting to info", "value", rawLevel)
+	}
 
 	addr := envOr("LISTEN_ADDR", defaultListenAddr)
 	dsn := envOr("DB_DSN", defaultDBDSN)
@@ -246,22 +252,22 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// parseLogLevel maps a LOG_LEVEL env value to slog.Level. Unknown
-// strings fall through to LevelInfo so a typo doesn't silently
-// disable warnings. Case-insensitive; "debug"/"info"/"warn"/"error".
-func parseLogLevel(s string) slog.Level {
+// parseLogLevel maps a LOG_LEVEL env value to slog.Level. Returns
+// ok=false on unknown values so the caller can warn through the
+// already-configured handler rather than the default one.
+// Case-insensitive; "debug"/"info"/"warn"/"error".
+func parseLogLevel(s string) (slog.Level, bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug":
-		return slog.LevelDebug
+		return slog.LevelDebug, true
 	case "info":
-		return slog.LevelInfo
+		return slog.LevelInfo, true
 	case "warn", "warning":
-		return slog.LevelWarn
+		return slog.LevelWarn, true
 	case "error":
-		return slog.LevelError
+		return slog.LevelError, true
 	default:
-		slog.Warn("LOG_LEVEL: unknown value, defaulting to info", "value", s)
-		return slog.LevelInfo
+		return slog.LevelInfo, false
 	}
 }
 

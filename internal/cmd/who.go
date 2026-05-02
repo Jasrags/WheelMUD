@@ -18,6 +18,7 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name: "who",
 		Help: "List connected players",
+		Auth: telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
 			snap := sessions.Snapshot()
 			rows := make([]string, 0, len(snap))
@@ -31,10 +32,8 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 					name = "(connecting)"
 				}
 				idle := ""
-				if !peer.LastInputAt.IsZero() {
-					if d := now.Sub(peer.LastInputAt); d >= 30*time.Second {
-						idle = " idle " + formatIdle(d)
-					}
+				if d := peer.IdleSince(now); d >= 30*time.Second {
+					idle = " idle " + formatIdle(d)
 				}
 				marker := ""
 				if peer == c.Session {

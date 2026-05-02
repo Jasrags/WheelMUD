@@ -198,7 +198,7 @@ func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error 
 	// Stamp activity at dispatch entry so `who` idle time and any
 	// future AFK timer reflect the moment the player typed, not the
 	// moment the command finished.
-	s.LastInputAt = time.Now().UTC()
+	s.StampInput(time.Now().UTC())
 	// User-level aliases are resolved once before lookup so a chained
 	// alias-of-alias can't recurse. expandAlias is a no-op when no
 	// matching alias exists or when the session has no table.

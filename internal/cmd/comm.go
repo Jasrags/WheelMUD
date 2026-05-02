@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"log/slog"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -43,7 +44,9 @@ func NewSay(sessions *session.Registry) *telnet.Command {
 				if peer.CurrentRoomID != c.Session.CurrentRoomID {
 					continue
 				}
-				_ = peer.WriteString(otherMsg)
+				if err := peer.WriteString(otherMsg); err != nil {
+					slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
+				}
 			}
 			return c.Session.WriteString(selfMsg)
 		},
@@ -78,8 +81,10 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 			if speaker == "" {
 				speaker = "Someone"
 			}
-			peer.LastTellFrom = speaker
-			_ = peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n")
+			peer.SetLastTellFrom(speaker)
+			if err := peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n"); err != nil {
+				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
+			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")
 		},
 	}
@@ -97,7 +102,7 @@ func NewReply(sessions *session.Registry) *telnet.Command {
 			if !ok {
 				return c.Session.WriteString("{{Reply what?}}::yellow\r\n")
 			}
-			to := c.Session.LastTellFrom
+			to := c.Session.LastTellFrom()
 			if to == "" {
 				return c.Session.WriteString("{{You have no one to reply to.}}::yellow\r\n")
 			}
@@ -109,8 +114,10 @@ func NewReply(sessions *session.Registry) *telnet.Command {
 			if speaker == "" {
 				speaker = "Someone"
 			}
-			peer.LastTellFrom = speaker
-			_ = peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n")
+			peer.SetLastTellFrom(speaker)
+			if err := peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n"); err != nil {
+				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
+			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")
 		},
 	}

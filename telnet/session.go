@@ -75,16 +75,17 @@ type Session struct {
 	CharacterName string
 	CurrentRoomID int64
 
-	// LastTellFrom is the character name of the last sender of a
-	// `tell` to this session, so `reply <text>` knows who to write
-	// back to. Cleared when the sender's session ends — readers
-	// must tolerate a stale name (target session gone).
-	LastTellFrom string
-
-	// LastInputAt is updated by Registry.Dispatch on every command
-	// the session runs; `who` reads it to show idle time. Same
-	// dispatcher-owned ownership rules as the fields above.
-	LastInputAt time.Time
+	// crossMu guards the few session fields that are written by one
+	// goroutine and read by another: lastTellFrom (set by senders'
+	// dispatchers, read by this session's reply handler) and
+	// lastInputAt (stamped by this session's dispatcher, read by
+	// the `who` command running in any other dispatcher). Use the
+	// SetLastTellFrom / LastTellFrom / StampInput / IdleSince
+	// helpers; the fields themselves are unexported so callers
+	// can't bypass the lock.
+	crossMu       sync.Mutex
+	lastTellFrom  string
+	lastInputAt   time.Time
 
 	writeMu sync.Mutex
 
@@ -92,6 +93,43 @@ type Session struct {
 	modes  []Mode
 
 	inbox chan string
+}
+
+// SetLastTellFrom records the name of the most recent `tell` sender
+// so a follow-up `reply` can route back. Safe to call from any
+// goroutine (the calling dispatcher writes the recipient's session).
+func (s *Session) SetLastTellFrom(name string) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.lastTellFrom = name
+}
+
+// LastTellFrom returns the name set by the most recent SetLastTellFrom,
+// or the empty string. Safe from any goroutine.
+func (s *Session) LastTellFrom() string {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.lastTellFrom
+}
+
+// StampInput records the wall-clock at which this session's
+// dispatcher received a command. Read by `who` in foreign
+// goroutines via IdleSince.
+func (s *Session) StampInput(t time.Time) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.lastInputAt = t
+}
+
+// IdleSince returns now - LastInputAt, or zero when no command has
+// been processed yet. Safe from any goroutine.
+func (s *Session) IdleSince(now time.Time) time.Duration {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if s.lastInputAt.IsZero() {
+		return 0
+	}
+	return now.Sub(s.lastInputAt)
 }
 
 func NewSession(conn net.Conn) *Session {
