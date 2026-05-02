@@ -65,6 +65,24 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		slog.Warn("move: exit lookup failed", "char", s.CharacterID, "from", s.CurrentRoomID, "dir", dir, "error", err)
 		return s.WriteRaw([]byte("Could not move right now.\r\n"))
 	}
+	// Hidden exits behave identically to a missing exit so the same
+	// flavor message lands; a player who didn't already know about
+	// the passage learns nothing from probing.
+	if exit.Flags.Hidden {
+		return s.WriteRaw([]byte("You can't go that way.\r\n"))
+	}
+	if exit.Flags.NoPass {
+		return s.WriteRaw([]byte("An unseen force bars your way.\r\n"))
+	}
+	// Locked is checked before Closed so a player learns *why* they
+	// can't pass, not just that the way is blocked. By convention a
+	// Locked exit is also Closed, so this catches both.
+	if exit.Flags.Locked {
+		return s.WriteRaw([]byte("The door is locked.\r\n"))
+	}
+	if exit.Flags.Closed {
+		return s.WriteRaw([]byte("The door is closed.\r\n"))
+	}
 
 	// Sector gating: air requires fly, underwater requires swim. Until
 	// per-character Speed (creature.Core.Speed) is plumbed through the

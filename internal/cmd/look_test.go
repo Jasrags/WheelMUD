@@ -202,6 +202,36 @@ func TestLook_DarkRoomHidesContents(t *testing.T) {
 	}
 }
 
+func TestLook_HidesHiddenExitsAndAnnotatesDoors(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Foyer", LongDesc: "A polished foyer."})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 2, Direction: repo.DirNorth,
+		Flags: repo.ExitFlags{Closed: true, Locked: true}})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 3, Direction: repo.DirEast,
+		Flags: repo.ExitFlags{Closed: true}})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 4, Direction: repo.DirSouth,
+		Flags: repo.ExitFlags{Hidden: true}})
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	got := conn.String()
+	if !strings.Contains(got, "north (locked)") {
+		t.Errorf("missing locked annotation; got %q", got)
+	}
+	if !strings.Contains(got, "east (closed)") {
+		t.Errorf("missing closed annotation; got %q", got)
+	}
+	if strings.Contains(got, "south") {
+		t.Errorf("hidden exit leaked: %q", got)
+	}
+}
+
 func TestLook_KeywordHitRendersExtraDesc(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
 	rooms.Insert(repo.Room{

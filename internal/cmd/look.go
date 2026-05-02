@@ -126,9 +126,10 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 		b.WriteString(toCRLF(room.LongDesc))
 		b.WriteString("\r\n")
 	}
-	if len(exitsList) > 0 {
+	visible := visibleExits(exitsList)
+	if len(visible) > 0 {
 		b.WriteString("{{Exits:}}::yellow|bold ")
-		for i, e := range exitsList {
+		for i, e := range visible {
 			if i > 0 {
 				b.WriteString(", ")
 			}
@@ -136,9 +137,23 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 			if !ok {
 				name = e.Direction
 			}
-			b.WriteString("{{")
-			b.WriteString(name)
-			b.WriteString("}}::yellow")
+			// Closed (and especially locked) doors are dimmed and
+			// annotated so a player can tell what blocks them at a
+			// glance instead of bumping into the door on `north`.
+			switch {
+			case e.Flags.Locked:
+				b.WriteString("{{")
+				b.WriteString(name)
+				b.WriteString(" (locked)}}::gray")
+			case e.Flags.Closed:
+				b.WriteString("{{")
+				b.WriteString(name)
+				b.WriteString(" (closed)}}::gray")
+			default:
+				b.WriteString("{{")
+				b.WriteString(name)
+				b.WriteString("}}::yellow")
+			}
 		}
 		b.WriteString("\r\n")
 	} else {
@@ -169,6 +184,19 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 		b.WriteString("\r\n")
 	}
 	return s.WriteString(b.String())
+}
+
+// visibleExits drops Hidden exits from the list so look never reveals
+// secret passages. Move treats Hidden the same as a missing exit.
+func visibleExits(all []repo.Exit) []repo.Exit {
+	out := make([]repo.Exit, 0, len(all))
+	for _, e := range all {
+		if e.Flags.Hidden {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // toCRLF normalizes line breaks for the telnet wire. World data

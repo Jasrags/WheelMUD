@@ -117,7 +117,7 @@ func validateExits(rooms []Room) error {
 	}
 	for _, r := range rooms {
 		seenDir := make(map[string]bool, len(r.Exits))
-		for dir, target := range r.Exits {
+		for dir, exit := range r.Exits {
 			if !validDirections[dir] {
 				return fmt.Errorf("%s:%d: room %q has invalid exit direction %q (want one of n/s/e/w/u/d/ne/nw/se/sw)",
 					r.SourceFile, r.Line, r.ID, dir)
@@ -128,9 +128,17 @@ func validateExits(rooms []Room) error {
 				return fmt.Errorf("%s:%d: room %q has duplicate exit %q", r.SourceFile, r.Line, r.ID, dir)
 			}
 			seenDir[dir] = true
-			if !knownRooms[target] {
+			if exit.To == "" {
+				return fmt.Errorf("%s:%d: room %q exit %q has no `to` target",
+					r.SourceFile, r.Line, r.ID, dir)
+			}
+			if !knownRooms[exit.To] {
 				return fmt.Errorf("%s:%d: room %q exit %q points to unknown room %q",
-					r.SourceFile, r.Line, r.ID, dir, target)
+					r.SourceFile, r.Line, r.ID, dir, exit.To)
+			}
+			if exit.LockDifficulty < 0 {
+				return fmt.Errorf("%s:%d: room %q exit %q has negative lock difficulty %d",
+					r.SourceFile, r.Line, r.ID, dir, exit.LockDifficulty)
 			}
 		}
 	}

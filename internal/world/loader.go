@@ -270,14 +270,26 @@ func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[stri
 		}
 		sort.Strings(dirs)
 		for _, dir := range dirs {
-			to, ok := roomIDs[r.Exits[dir]]
+			ex := r.Exits[dir]
+			to, ok := roomIDs[ex.To]
 			if !ok {
 				// validate() already caught this, but defensively.
-				return fmt.Errorf("exit from %q dir %q targets unknown room %q", r.ID, dir, r.Exits[dir])
+				return fmt.Errorf("exit from %q dir %q targets unknown room %q", r.ID, dir, ex.To)
+			}
+			pickable := true // schema default
+			if ex.Pickable != nil {
+				pickable = *ex.Pickable
 			}
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO exits(from_room_id, to_room_id, direction) VALUES (?, ?, ?)`,
+				`INSERT INTO exits(from_room_id, to_room_id, direction,
+					closed, locked, pickable, hidden, nopass,
+					key_external_id, lock_difficulty, description)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				from, to, dir,
+				repo.BoolToInt(ex.Closed), repo.BoolToInt(ex.Locked),
+				repo.BoolToInt(pickable), repo.BoolToInt(ex.Hidden),
+				repo.BoolToInt(ex.NoPass),
+				ex.Key, ex.LockDifficulty, ex.Description,
 			); err != nil {
 				return fmt.Errorf("insert exit %q->%q: %w", r.ID, dir, err)
 			}

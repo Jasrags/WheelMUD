@@ -15,12 +15,13 @@ func NewSQLiteExitRepo(db *sql.DB) *SQLiteExitRepo {
 	return &SQLiteExitRepo{db: db}
 }
 
+const exitSelectCols = `id, from_room_id, to_room_id, direction, ` +
+	`closed, locked, pickable, hidden, nopass, ` +
+	`key_external_id, lock_difficulty, description`
+
 func (r *SQLiteExitRepo) ListFrom(ctx context.Context, fromRoomID int64) ([]Exit, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, from_room_id, to_room_id, direction
-		 FROM exits
-		 WHERE from_room_id = ?
-		 ORDER BY direction`,
+		`SELECT `+exitSelectCols+` FROM exits WHERE from_room_id = ? ORDER BY direction`,
 		fromRoomID,
 	)
 	if err != nil {
@@ -30,7 +31,7 @@ func (r *SQLiteExitRepo) ListFrom(ctx context.Context, fromRoomID int64) ([]Exit
 	var out []Exit
 	for rows.Next() {
 		var e Exit
-		if err := rows.Scan(&e.ID, &e.FromRoomID, &e.ToRoomID, &e.Direction); err != nil {
+		if err := scanExitInto(rows, &e); err != nil {
 			return nil, fmt.Errorf("scan exit row: %w", err)
 		}
 		out = append(out, e)
@@ -40,9 +41,15 @@ func (r *SQLiteExitRepo) ListFrom(ctx context.Context, fromRoomID int64) ([]Exit
 
 func (r *SQLiteExitRepo) Create(ctx context.Context, e Exit) (Exit, error) {
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO exits(from_room_id, to_room_id, direction)
-		 VALUES (?, ?, ?)`,
+		`INSERT INTO exits(from_room_id, to_room_id, direction,
+			closed, locked, pickable, hidden, nopass,
+			key_external_id, lock_difficulty, description)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.FromRoomID, e.ToRoomID, e.Direction,
+		boolToInt(e.Flags.Closed), boolToInt(e.Flags.Locked),
+		boolToInt(e.Flags.Pickable), boolToInt(e.Flags.Hidden),
+		boolToInt(e.Flags.NoPass),
+		e.KeyExternalID, e.LockDifficulty, e.Description,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -60,18 +67,44 @@ func (r *SQLiteExitRepo) Create(ctx context.Context, e Exit) (Exit, error) {
 
 func (r *SQLiteExitRepo) FindByDirection(ctx context.Context, fromRoomID int64, direction string) (Exit, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, from_room_id, to_room_id, direction
-		 FROM exits
-		 WHERE from_room_id = ? AND direction = ?`,
+		`SELECT `+exitSelectCols+` FROM exits WHERE from_room_id = ? AND direction = ?`,
 		fromRoomID, direction,
 	)
 	var e Exit
-	err := row.Scan(&e.ID, &e.FromRoomID, &e.ToRoomID, &e.Direction)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Exit{}, ErrExitNotFound
-	}
-	if err != nil {
+	if err := scanExitInto(row, &e); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Exit{}, ErrExitNotFound
+		}
 		return Exit{}, fmt.Errorf("scan exit: %w", err)
 	}
 	return e, nil
+}
+
+// rowScanner is the common surface of *sql.Row and *sql.Rows. Used so
+// scanExitInto can serve both single-row and result-set callers from
+// one place; column-list changes only need to land here.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanExitInto populates *e from the next row of s. Returns the raw
+// driver error (including sql.ErrNoRows) so callers can translate to
+// the right domain error themselves.
+func scanExitInto(s rowScanner, e *Exit) error {
+	var closed, locked, pickable, hidden, nopassFlag int
+	if err := s.Scan(
+		&e.ID, &e.FromRoomID, &e.ToRoomID, &e.Direction,
+		&closed, &locked, &pickable, &hidden, &nopassFlag,
+		&e.KeyExternalID, &e.LockDifficulty, &e.Description,
+	); err != nil {
+		return err
+	}
+	e.Flags = ExitFlags{
+		Closed:   closed != 0,
+		Locked:   locked != 0,
+		Pickable: pickable != 0,
+		Hidden:   hidden != 0,
+		NoPass:   nopassFlag != 0,
+	}
+	return nil
 }

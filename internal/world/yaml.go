@@ -30,12 +30,12 @@ type Zone struct {
 // Room is one entry in `rooms.yaml`. The loader walks rooms[].exits
 // after parsing to construct Exit rows; exits don't get their own file.
 type Room struct {
-	ID      string            `yaml:"id"`
-	Starter bool              `yaml:"starter"`
-	Name    string            `yaml:"name"`
-	Short   string            `yaml:"short"`
-	Long    string            `yaml:"long"`
-	Exits   map[string]string `yaml:"exits"`
+	ID      string          `yaml:"id"`
+	Starter bool            `yaml:"starter"`
+	Name    string          `yaml:"name"`
+	Short   string          `yaml:"short"`
+	Long    string          `yaml:"long"`
+	Exits   map[string]Exit `yaml:"exits"`
 
 	// Flags / sector / lighting / coords land in migration 0012.
 	// Builders may omit any of these; defaults: outdoors, city
@@ -52,6 +52,52 @@ type Room struct {
 
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
+}
+
+// Exit is a YAML-side exit entry. Supports two authoring forms:
+//
+//   exits:
+//     north: gate.entry           # shorthand, target room id only
+//     south: { to: gate.bridge, closed: true, locked: true,
+//              key: iron.key, difficulty: 15,
+//              description: "A heavy oak door bound with iron." }
+//
+// The shorthand decodes through UnmarshalYAML and produces an Exit
+// with all flags false. The object form fills any subset of fields.
+// Pickable defaults to true (a locked exit is pickable unless the
+// builder explicitly disables it).
+type Exit struct {
+	To             string `yaml:"to"`
+	Closed         bool   `yaml:"closed"`
+	Locked         bool   `yaml:"locked"`
+	Pickable       *bool  `yaml:"pickable"` // pointer so zero ≠ "unspecified"
+	Hidden         bool   `yaml:"hidden"`
+	NoPass         bool   `yaml:"nopass"`
+	Key            string `yaml:"key"`        // item external_id
+	LockDifficulty int    `yaml:"difficulty"` // 0 means no skill check
+	Description    string `yaml:"description"`
+}
+
+// UnmarshalYAML accepts either a scalar (shorthand: target room id)
+// or a mapping (full object form). Anything else is a parse error.
+func (e *Exit) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		e.To = node.Value
+		return nil
+	case yaml.MappingNode:
+		// Decode into a parallel struct to avoid recursion through
+		// our own UnmarshalYAML.
+		type rawExit Exit
+		var r rawExit
+		if err := node.Decode(&r); err != nil {
+			return err
+		}
+		*e = Exit(r)
+		return nil
+	default:
+		return fmt.Errorf("exit: expected scalar or mapping, got %v", node.Kind)
+	}
 }
 
 // RoomFlags is the YAML-side mirror of repo.RoomFlags. Defaults are

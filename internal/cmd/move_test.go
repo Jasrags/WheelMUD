@@ -74,6 +74,43 @@ func TestMove_SectorGatesAirUnderwater(t *testing.T) {
 	}
 }
 
+func TestMove_DoorFlagsBlock(t *testing.T) {
+	cases := []struct {
+		name      string
+		flags     repo.ExitFlags
+		wantInOut string
+	}{
+		{"closed", repo.ExitFlags{Closed: true}, "door is closed"},
+		{"locked", repo.ExitFlags{Closed: true, Locked: true}, "door is locked"},
+		{"nopass", repo.ExitFlags{NoPass: true}, "unseen force"},
+		{"hidden", repo.ExitFlags{Hidden: true}, "can't go that way"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rooms, exits, items, mobs := seedWorld(t)
+			chars := repo.NewMemoryCharacterRepo()
+			rooms.Insert(repo.Room{ID: 9, Name: "Beyond"})
+			exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 9, Direction: repo.DirEast, Flags: tc.flags})
+
+			s, conn := bufSession(t)
+			s.CurrentRoomID = 1
+			family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+			east := findCmd(t, family, "east")
+
+			ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "east"}
+			if err := east.Run(ctx); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if !strings.Contains(conn.String(), tc.wantInOut) {
+				t.Fatalf("expected %q in output; got %q", tc.wantInOut, conn.String())
+			}
+			if s.CurrentRoomID != 1 {
+				t.Fatalf("CurrentRoomID drifted to %d", s.CurrentRoomID)
+			}
+		})
+	}
+}
+
 func TestMove_FlySpeedAllowsAir(t *testing.T) {
 	rooms, exits, items, mobs := seedWorld(t)
 	chars := repo.NewMemoryCharacterRepo()

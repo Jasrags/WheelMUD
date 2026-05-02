@@ -91,6 +91,44 @@ func runExitRepoTests(t *testing.T, name string, newFix func(t *testing.T) exitR
 		}
 	})
 
+	t.Run(name+"/door_flags_key_lock_desc_roundtrip", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		input := Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true, Pickable: true,
+				Hidden: false, NoPass: false,
+			},
+			KeyExternalID:  "iron.key",
+			LockDifficulty: 15,
+			Description:    "A heavy oak door bound with iron.",
+		}
+		if _, err := fix.exits.Create(ctx, input); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if !got.Flags.Closed || !got.Flags.Locked || !got.Flags.Pickable {
+			t.Errorf("flags lost: %+v", got.Flags)
+		}
+		if got.Flags.Hidden || got.Flags.NoPass {
+			t.Errorf("flags spurious: %+v", got.Flags)
+		}
+		if got.KeyExternalID != "iron.key" {
+			t.Errorf("KeyExternalID = %q, want iron.key", got.KeyExternalID)
+		}
+		if got.LockDifficulty != 15 {
+			t.Errorf("LockDifficulty = %d, want 15", got.LockDifficulty)
+		}
+		if got.Description == "" {
+			t.Errorf("Description dropped on round-trip")
+		}
+	})
+
 	t.Run(name+"/find_by_direction_missing", func(t *testing.T) {
 		fix := newFix(t)
 		_, err := fix.exits.FindByDirection(context.Background(), 99999, DirNorth)

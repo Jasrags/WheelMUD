@@ -105,6 +105,72 @@ func TestLoadAndSync_HappyPath(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"keep/zone.yaml": &fstest.MapFile{Data: []byte("id: keep\nname: Keep\n")},
+		"keep/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: keep.gate
+  starter: true
+  name: Iron Gate
+  long: A gate of bound iron.
+  exits:
+    n:
+      to: keep.bailey
+      closed: true
+      locked: true
+      key: iron.key
+      difficulty: 15
+      description: A heavy oak door bound with iron.
+    s: keep.path
+- id: keep.bailey
+  name: Bailey
+  long: An open courtyard.
+  exits:
+    s: keep.gate
+- id: keep.path
+  name: Path
+  long: A muddy path.
+  exits:
+    n: keep.gate
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+	exits := repo.NewSQLiteExitRepo(conn)
+	gateNorth, err := exits.FindByDirection(ctx, repo.StarterRoomID, repo.DirNorth)
+	if err != nil {
+		t.Fatalf("FindByDirection: %v", err)
+	}
+	if !gateNorth.Flags.Closed || !gateNorth.Flags.Locked || !gateNorth.Flags.Pickable {
+		t.Errorf("flags = %+v, want closed+locked+pickable", gateNorth.Flags)
+	}
+	if gateNorth.KeyExternalID != "iron.key" || gateNorth.LockDifficulty != 15 {
+		t.Errorf("key/difficulty = %q/%d, want iron.key/15", gateNorth.KeyExternalID, gateNorth.LockDifficulty)
+	}
+	if gateNorth.Description == "" {
+		t.Errorf("description dropped")
+	}
+	gateSouth, err := exits.FindByDirection(ctx, repo.StarterRoomID, repo.DirSouth)
+	if err != nil {
+		t.Fatalf("FindByDirection south: %v", err)
+	}
+	if gateSouth.Flags.Closed || gateSouth.Flags.Locked {
+		t.Errorf("shorthand exit got door flags: %+v", gateSouth.Flags)
+	}
+	if !gateSouth.Flags.Pickable {
+		t.Errorf("shorthand exit should default Pickable=true; got %+v", gateSouth.Flags)
+	}
+}
+
 func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

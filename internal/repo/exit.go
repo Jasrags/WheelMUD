@@ -22,6 +22,17 @@ const (
 	DirSouthwest = "sw"
 )
 
+// ExitFlags groups the door-state and gating tags on a single exit.
+// Closed and locked are runtime-mutable (open/close/lock/unlock — §16);
+// hidden / nopass / pickable are immutable authoring choices.
+type ExitFlags struct {
+	Closed   bool
+	Locked   bool
+	Pickable bool // false = lock can never be picked, only unlocked with the key
+	Hidden   bool // never listed in look/exits; move treats as ErrExitNotFound
+	NoPass   bool // even when "open", the way is barred (force field, etc.)
+}
+
 // Exit is a one-way connection between two rooms. Bidirectional travel
 // is modeled as two exits (matching how MUD areas are typically
 // authored), so a one-way drop is just a missing reverse exit.
@@ -29,7 +40,14 @@ type Exit struct {
 	ID         int64
 	FromRoomID int64
 	ToRoomID   int64
-	Direction  string // one of DirNorth..DirDown
+	Direction  string // one of DirNorth..DirSouthwest
+	Flags      ExitFlags
+	// KeyExternalID names an item.external_id that unlocks this exit;
+	// empty means no key — a locked exit must be picked or opened by
+	// admin elevation.
+	KeyExternalID  string
+	LockDifficulty int
+	Description    string
 }
 
 // ExitRepo is the persistence boundary the look / move commands and the
@@ -47,6 +65,6 @@ type ExitRepo interface {
 }
 
 var (
-	ErrExitNotFound = errors.New("repo: exit not found")
+	ErrExitNotFound  = errors.New("repo: exit not found")
 	ErrDuplicateExit = errors.New("repo: exit already exists for that (room, direction)")
 )

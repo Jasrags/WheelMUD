@@ -334,13 +334,23 @@ will need on top of those tables.
       clock source); per-room reset hooks (block on §9 zone
       schema); `coords` consumed by `map`/`track` rendering (block
       on §10).
-- [~] **Exit** — `repo.Exit` has `from_room_id`, `direction`, `to_room_id`.
-      Pending: door flags (`closed`, `locked`, `pickable`, `hidden`,
-      `nopass`), key item id, lock difficulty, exit-specific
-      description ("a heavy oak door"), one-way exit support,
-      diagonal directions (`ne`/`nw`/`se`/`sw`) — the
-      `exits.direction` CHECK constraint must widen first
-      (already noted in `world_aggregates_followups.md`).
+- [~] **Exit** — `repo.Exit` covers `from_room_id`, `direction`,
+      `to_room_id`, `ExitFlags` (`Closed` / `Locked` / `Pickable` /
+      `Hidden` / `NoPass`), `KeyExternalID`, `LockDifficulty`, and
+      `Description` (migration 0014). YAML accepts both shorthand
+      (`north: room.id`) and object form (`north: {to: ..., closed,
+      locked, key, difficulty, description, ...}`); `Pickable`
+      defaults to true. Behavior wired: `look` skips Hidden exits
+      and annotates the rest with `(closed)` / `(locked)` in dim
+      gray; `move` refuses Hidden as "you can't go that way",
+      Closed as "the door is closed", and NoPass with an
+      unseen-force message. One-way exits already supported via
+      single-direction authoring. Pending: `open` / `close` /
+      `lock` / `unlock` / `pick` commands (§16) to mutate Closed
+      and Locked at runtime — needs an `ExitRepo.UpdateFlags`
+      method and key/skill resolution against §14 inventory + §12
+      skill checks. Diagonal directions (ne/nw/se/sw) shipped via
+      migration 0007.
 - [ ] **Area / zone** — currently rooms carry a free-text `zone`
       string. Promote to a real `zones` table: id, name, builder,
       level range, reset interval, reset mode (`always` / `empty` /
