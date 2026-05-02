@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
 
@@ -249,14 +250,49 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[stri
 	return nil
 }
 
+// insertMobs writes each YAML mob entry as a (mob_template,
+// mob_instance) pair: one bespoke template per entry plus a single
+// spawn into the named room. This is the v1 loader contract — every
+// YAML mob is one-of-a-kind. When a template-and-spawn split YAML
+// schema lands, this function fans out to two passes (templates
+// first, then spawn references). Until then, builders just author
+// `mobs.yaml` as before and the loader manufactures defaults for
+// the rest of the Core stat block (Medium humanoid, HP 1, Defense
+// 10, ChallengeCode 'A').
 func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]int64) error {
+	templates := repo.NewSQLiteMobTemplateRepo(tx)
+	instances := repo.NewSQLiteMobInstanceRepo(tx)
+
 	for _, m := range mobs {
 		roomID := roomIDs[m.Room]
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO mobs(external_id, name, name_lower, short_desc, room_id) VALUES (?, ?, ?, ?, ?)`,
-			m.ID, m.Name, strings.ToLower(m.Name), m.Short, roomID,
-		); err != nil {
-			return fmt.Errorf("insert mob %q: %w", m.ID, err)
+		tpl := creature.MobTemplate{
+			ExternalID:    m.ID,
+			ChallengeCode: 'A',
+			Organization:  "solitary",
+			ShortDesc:     m.Short,
+			Core: creature.Core{
+				Name:    m.Name,
+				Size:    creature.SizeMedium,
+				Type:    creature.TypeHumanoid,
+				HPMax:   1,
+				Defense: 10,
+				Speed:   creature.Speed{BaseFt: 30},
+				ReachFt: 5, FaceFt: 5, ThreatFt: 5,
+			},
+		}
+		created, err := templates.Create(ctx, tpl)
+		if err != nil {
+			return fmt.Errorf("insert mob template %q: %w", m.ID, err)
+		}
+		spawn := creature.MobInstance{
+			TemplateID: created.ID,
+			Core: creature.Core{
+				HPCurrent:     created.Core.HPMax,
+				CurrentRoomID: roomID,
+			},
+		}
+		if _, err := instances.Create(ctx, spawn); err != nil {
+			return fmt.Errorf("spawn mob instance %q: %w", m.ID, err)
 		}
 	}
 	return nil

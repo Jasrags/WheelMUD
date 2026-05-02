@@ -11,10 +11,13 @@ import (
 )
 
 type SQLiteMobInstanceRepo struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewSQLiteMobInstanceRepo(db *sql.DB) *SQLiteMobInstanceRepo {
+// NewSQLiteMobInstanceRepo builds a repo bound to the given queryer.
+// Pass a *sql.DB for the runtime path, or a *sql.Tx when batching
+// inserts inside a transaction (the world loader does this).
+func NewSQLiteMobInstanceRepo(db DBTX) *SQLiteMobInstanceRepo {
 	return &SQLiteMobInstanceRepo{db: db}
 }
 
@@ -51,11 +54,23 @@ func (r *SQLiteMobInstanceRepo) Create(ctx context.Context, m creature.MobInstan
 	return m, nil
 }
 
+// instanceSelect joins mob_instances with mob_templates so the
+// returned MobInstance.Core has the template-derived fields callers
+// need to render (Name, ShortDesc, HPMax, Defense). Live mutable
+// fields (HPCurrent, conditions, position) come from the instance
+// row. Bigger Core fields (abilities, saves, full DR/Resists) stay
+// unloaded — callers that need them fetch the template via
+// MobTemplateRepo.GetByID using TemplateID.
+const instanceSelect = `
+	SELECT i.id, i.template_id, i.room_id,
+	       i.hp_current, i.subdual, i.conditions, i.position_flags,
+	       i.spawned_at, i.bound_reset_id,
+	       t.name, t.short_desc, t.hp_max, t.defense
+	FROM mob_instances i
+	JOIN mob_templates t ON t.id = i.template_id`
+
 func (r *SQLiteMobInstanceRepo) GetByID(ctx context.Context, id int64) (creature.MobInstance, error) {
-	row := r.db.QueryRowContext(ctx,
-		`SELECT id, template_id, room_id, hp_current, subdual, conditions, position_flags, spawned_at, bound_reset_id
-		 FROM mob_instances WHERE id = ?`, id,
-	)
+	row := r.db.QueryRowContext(ctx, instanceSelect+` WHERE i.id = ?`, id)
 	m, err := scanInstance(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return creature.MobInstance{}, ErrInstanceNotFound
@@ -64,10 +79,7 @@ func (r *SQLiteMobInstanceRepo) GetByID(ctx context.Context, id int64) (creature
 }
 
 func (r *SQLiteMobInstanceRepo) ListInRoom(ctx context.Context, roomID int64) ([]creature.MobInstance, error) {
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, template_id, room_id, hp_current, subdual, conditions, position_flags, spawned_at, bound_reset_id
-		 FROM mob_instances WHERE room_id = ? ORDER BY id`, roomID,
-	)
+	rows, err := r.db.QueryContext(ctx, instanceSelect+` WHERE i.room_id = ? ORDER BY i.id`, roomID)
 	if err != nil {
 		return nil, fmt.Errorf("list mob_instances: %w", err)
 	}
@@ -125,13 +137,15 @@ type scanner interface {
 
 func scanInstance(s scanner) (creature.MobInstance, error) {
 	var (
-		m   creature.MobInstance
-		rid sql.NullInt64
+		m         creature.MobInstance
+		rid       sql.NullInt64
+		shortDesc string
 	)
 	if err := s.Scan(
 		&m.ID, &m.TemplateID, &rid,
 		&m.Core.HPCurrent, &m.Core.Subdual, &m.Core.Conditions, &m.Core.Position,
 		&m.SpawnedAt, &m.BoundResetID,
+		&m.Core.Name, &shortDesc, &m.Core.HPMax, &m.Core.Defense,
 	); err != nil {
 		return creature.MobInstance{}, err
 	}
@@ -139,6 +153,7 @@ func scanInstance(s scanner) (creature.MobInstance, error) {
 		m.Core.CurrentRoomID = rid.Int64
 	}
 	m.Core.ID = m.ID
+	_ = shortDesc // not stored on Core today; reserved for `examine` (§10)
 	return m, nil
 }
 

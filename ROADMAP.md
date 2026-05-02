@@ -224,10 +224,15 @@ constants and helpers in `telnet/iac.go`.
       populated in `promoteToGame` and persisted across reconnects via
       `CharacterRepo.RecordRoom`. `look`, `n/s/e/w/u/d` commands wired into
       Game mode (`internal/cmd/look.go`, `internal/cmd/move.go`).
-      Follow-up: drop the legacy flat `mobs` table (and its
-      `repo.Mob` SQLite/memory impls) once the world loader is
-      migrated to spawn `mob_instances` from `mob_templates` —
-      see "Player character extending the mob model" in §9.
+      The legacy flat `mobs` table and `repo.Mob` impls were
+      retired in `0010_drop_legacy_mobs.sql`; the world loader
+      now manufactures one `mob_template` per YAML mob entry and
+      spawns a single `mob_instance` from it (`internal/world/
+      loader.go::insertMobs`), and `look`/`move`/`teleport` read
+      from `MobInstanceRepo`. A richer YAML schema for builders
+      (separate `mob_templates.yaml` + spawn references with
+      counts) is still pending; today every YAML mob is its own
+      one-of-a-kind template.
 - [x] World data on disk (YAML/JSON area files) with a loader —
       `internal/world` package: `gopkg.in/yaml.v3` parsing, strict
       cross-reference validation (unique ids, exactly-one starter, valid
@@ -362,11 +367,14 @@ will need on top of those tables.
       `ChannelingRepo` keys off a polymorphic `(OwnerKind, owner_id)`
       so the same row schema serves PCs, mob templates, and mob
       instances.
+      World loader migrated to spawn from templates
+      (`0010_drop_legacy_mobs.sql` removes the legacy flat table);
+      `look`/`move`/`teleport` read from `MobInstanceRepo`.
       Pending: extending `repo.CharacterRepo` to load/persist the
-      new Core + player columns, world loader writing templates instead of
-      the legacy flat `mobs` table, char-create rolling abilities
+      new Core + player columns, char-create rolling abilities
       / picking race / class / background / starting HP & defense,
-      `look`/`examine` rendering mob instances, and seed catalogs
+      richer YAML schema for builders (template/spawn split with
+      counts), `examine` rendering full mob detail, and seed catalogs
       for feats / skills / talents / weaves / classes /
       backgrounds (stubbed as `int32` ids today). Original spec:
       share a `creatures` core: `name`, `size` (Fine→Colossal), `type`

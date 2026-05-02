@@ -28,7 +28,7 @@ import (
 // current single-tier auth model. This is a builder/admin tool and
 // should be promoted to AuthAdmin as soon as an admin role exists on
 // accounts. See world_aggregates_followups.md.
-func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
+func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:    "teleport",
 		Aliases: []string{"tp"},
@@ -55,7 +55,7 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 // tpSelf teleports the calling session to the resolved room and
 // re-renders it. Persistence and session.CurrentRoomID update mirror
 // what the move family does on a successful step.
-func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo) error {
+func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo) error {
 	room, err := resolveRoom(c.Ctx, rooms, roomArg)
 	if errors.Is(err, repo.ErrRoomNotFound) {
 		return c.Session.WriteString("{{No such room: " + sanitizeArg(roomArg) + "}}::red\r\n")
@@ -71,7 +71,7 @@ func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.E
 // tpOther teleports another live session by character name. The caller
 // gets a confirmation; the target gets a "world ripples" notice plus
 // the new room rendered into their own connection.
-func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, sessions *session.Registry) error {
+func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry) error {
 	target := lookupByCharacter(sessions, username)
 	if target == nil {
 		return c.Session.WriteString("{{No such player online: " + sanitizeArg(username) + "}}::red\r\n")

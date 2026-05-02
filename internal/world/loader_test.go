@@ -62,7 +62,7 @@ func TestLoadAndSync_HappyPath(t *testing.T) {
 	rooms := repo.NewSQLiteRoomRepo(conn)
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
-	mobs := repo.NewSQLiteMobRepo(conn)
+	mobs := repo.NewSQLiteMobInstanceRepo(conn)
 
 	// Starter pinned to id=1.
 	starter, err := rooms.FindByID(ctx, repo.StarterRoomID)
@@ -100,7 +100,7 @@ func TestLoadAndSync_HappyPath(t *testing.T) {
 		t.Fatalf("items in starter: %v %+v", err, itemList)
 	}
 	mobList, err := mobs.ListInRoom(ctx, starter.ID)
-	if err != nil || len(mobList) != 1 || mobList[0].Name != "a town crier" {
+	if err != nil || len(mobList) != 1 || mobList[0].Core.Name != "a town crier" {
 		t.Fatalf("mobs in starter: %v %+v", err, mobList)
 	}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 // findTeleport extracts the tp command from a fresh family for tests.
-func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, *repo.MemoryCharacterRepo, *repo.MemoryRoomRepo, *repo.MemoryExitRepo, *repo.MemoryItemRepo, *repo.MemoryMobRepo) {
+func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, *repo.MemoryCharacterRepo, *repo.MemoryRoomRepo, *repo.MemoryExitRepo, *repo.MemoryItemRepo, *repo.MemoryMobInstanceRepo) {
 	t.Helper()
 	rooms, exits, items, mobs := seedWorld(t)
 	chars := repo.NewMemoryCharacterRepo()
@@ -20,7 +20,7 @@ func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, 
 
 // thin wrapper so the test reads naturally even though NewTeleport
 // already takes the same shape.
-func cmdNewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, chars repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
+func cmdNewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, chars repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return NewTeleport(rooms, exits, items, mobs, chars, sessions)
 }
 

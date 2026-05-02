@@ -43,7 +43,7 @@ type server struct {
 	rooms      repo.RoomRepo
 	exits      repo.ExitRepo
 	items      repo.ItemRepo
-	mobs       repo.MobRepo
+	mobs       repo.MobInstanceRepo
 	sessions   *session.Registry
 	scheduler  *tick.Scheduler
 	buckets    *tick.Buckets
@@ -75,7 +75,7 @@ func main() {
 	rooms := repo.NewSQLiteRoomRepo(conn)
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
-	mobs := repo.NewSQLiteMobRepo(conn)
+	mobs := repo.NewSQLiteMobInstanceRepo(conn)
 
 	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
 		slog.Error("World load failed", "error", err)
@@ -199,7 +199,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Who, cmd.Colors); err != nil {
 		return nil, err

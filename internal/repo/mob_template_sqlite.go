@@ -12,10 +12,13 @@ import (
 )
 
 type SQLiteMobTemplateRepo struct {
-	db *sql.DB
+	db DBTX
 }
 
-func NewSQLiteMobTemplateRepo(db *sql.DB) *SQLiteMobTemplateRepo {
+// NewSQLiteMobTemplateRepo builds a repo bound to the given queryer.
+// Pass a *sql.DB for the runtime path, or a *sql.Tx when batching
+// inserts inside a transaction (the world loader does this).
+func NewSQLiteMobTemplateRepo(db DBTX) *SQLiteMobTemplateRepo {
 	return &SQLiteMobTemplateRepo{db: db}
 }
 

@@ -21,7 +21,7 @@ import (
 //
 // bus may be nil during tests that don't care about event emission;
 // moveDir tolerates a nil bus.
-func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, bus *eventbus.Bus) []*telnet.Command {
+func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus) []*telnet.Command {
 	build := func(name, dir string) *telnet.Command {
 		return &telnet.Command{
 			Name:    name,
@@ -50,7 +50,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 // moveDir is the work behind every direction command. Pulled out as a
 // helper so each direction's Run is a one-liner and the move semantics
 // live in one place.
-func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo, characters repo.CharacterRepo, bus *eventbus.Bus) error {
+func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus) error {
 	s := c.Session
 	if s.CurrentRoomID == 0 {
 		return s.WriteRaw([]byte("You are nowhere — cannot move.\r\n"))

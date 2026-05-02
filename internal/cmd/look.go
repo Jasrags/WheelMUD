@@ -27,7 +27,7 @@ var directionLongName = map[string]string{
 // NewLook builds the look command. It reads the room, exits, items, and
 // mobs anchored at Session.CurrentRoomID and renders them. Empty
 // subsections are omitted entirely.
-func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo) *telnet.Command {
+func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "look",
 		Aliases: []string{"l"},
@@ -47,7 +47,7 @@ func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 // Output uses cfmt {{...}}::style tags via Session.WriteString — never
 // pass untrusted input through this path. World text comes from the
 // YAML loader, which is operator-controlled, so it's safe.
-func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobRepo) error {
+func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo) error {
 	if s.CurrentRoomID == 0 {
 		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")
 	}
@@ -121,7 +121,7 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 				b.WriteString(", ")
 			}
 			b.WriteString("{{")
-			b.WriteString(m.Name)
+			b.WriteString(m.Core.Name)
 			b.WriteString("}}::magenta")
 		}
 		b.WriteString("\r\n")

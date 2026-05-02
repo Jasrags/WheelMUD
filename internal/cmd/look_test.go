@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -73,18 +74,23 @@ func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	return s, c
 }
 
-func seedWorld(t *testing.T) (*repo.MemoryRoomRepo, *repo.MemoryExitRepo, *repo.MemoryItemRepo, *repo.MemoryMobRepo) {
+func seedWorld(t *testing.T) (*repo.MemoryRoomRepo, *repo.MemoryExitRepo, *repo.MemoryItemRepo, *repo.MemoryMobInstanceRepo) {
 	t.Helper()
 	rooms := repo.NewMemoryRoomRepo()
 	exits := repo.NewMemoryExitRepo()
 	items := repo.NewMemoryItemRepo()
-	mobs := repo.NewMemoryMobRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
 	rooms.Insert(repo.Room{ID: 1, Name: "Town Plaza", LongDesc: "Cobblestones radiate outward."})
 	rooms.Insert(repo.Room{ID: 2, Name: "North Road", LongDesc: "A quieter road."})
 	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 2, Direction: repo.DirNorth})
 	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 1, Direction: repo.DirSouth})
 	items.Insert(repo.Item{Name: "a small pebble", RoomID: 1})
-	mobs.Insert(repo.Mob{Name: "a town crier", RoomID: 1})
+	if _, err := mobs.Create(context.Background(), creature.MobInstance{
+		TemplateID: 1,
+		Core:       creature.Core{Name: "a town crier", CurrentRoomID: 1},
+	}); err != nil {
+		t.Fatalf("seed mob: %v", err)
+	}
 	return rooms, exits, items, mobs
 }
 
@@ -119,7 +125,7 @@ func TestLook_OmitsEmptySubsections(t *testing.T) {
 	rooms.Insert(repo.Room{ID: 7, Name: "Empty Hall", LongDesc: "A bare stone hall."})
 	exits := repo.NewMemoryExitRepo()
 	items := repo.NewMemoryItemRepo()
-	mobs := repo.NewMemoryMobRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 7
@@ -147,7 +153,7 @@ func TestLook_MissingRoomMessage(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
 	exits := repo.NewMemoryExitRepo()
 	items := repo.NewMemoryItemRepo()
-	mobs := repo.NewMemoryMobRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 999
