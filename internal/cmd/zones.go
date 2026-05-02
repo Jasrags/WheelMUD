@@ -76,7 +76,10 @@ func runZonesShow(c *telnet.Context, zones repo.ZoneRepo, rooms repo.RoomRepo, e
 	z, err := zones.GetByExternalID(c.Ctx, externalID)
 	if err != nil {
 		if errors.Is(err, repo.ErrZoneNotFound) {
-			return c.Session.WriteString(fmt.Sprintf("{{No such zone: %s}}::red\r\n", externalID))
+			// Render the user-supplied id outside the cfmt markup so a
+			// caller-controlled value can't close the {{...}} tag and
+			// inject an arbitrary style sequence.
+			return c.Session.WriteString("{{No such zone:}}::red " + defangCfmt(externalID) + "\r\n")
 		}
 		return c.Session.WriteString("{{Could not look up that zone right now.}}::red\r\n")
 	}
@@ -111,15 +114,26 @@ func runZonesShow(c *telnet.Context, zones repo.ZoneRepo, rooms repo.RoomRepo, e
 	return c.Session.WriteString(b.String())
 }
 
-// truncate trims s to n runes, appending an ellipsis if it had to cut.
-// Operates on bytes — every value passed in is ASCII (zone IDs and
-// authored names) so there's no multibyte hazard.
+// truncate trims s to n runes, appending an ellipsis if it had to
+// cut. Rune-aware so authored zone names containing non-ASCII glyphs
+// (typographic apostrophes, em-dashes) don't truncate mid-codepoint.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
 	if n <= 1 {
-		return s[:n]
+		return string(r[:n])
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
+}
+
+// defangCfmt neutralizes any cfmt control sequences in user-supplied
+// text by breaking the `{{` and `}}::style` tokens. Used when echoing
+// caller-controlled strings (e.g. an admin's `zones show <id>` arg)
+// inside a styled error line so a hostile value can't inject markup.
+func defangCfmt(s string) string {
+	s = strings.ReplaceAll(s, "{{", "{ {")
+	s = strings.ReplaceAll(s, "}}", "} }")
+	return s
 }

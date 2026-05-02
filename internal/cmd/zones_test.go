@@ -120,6 +120,19 @@ func TestZones_ShowMissingReturnsErrorMessage(t *testing.T) {
 	}
 }
 
+func TestZones_ShowDefangsCfmtInjection(t *testing.T) {
+	fix := newZonesFix(t)
+	// A hostile id closes the styled error tag and tries to open a
+	// fresh style. After defanging, neither token survives intact.
+	got := runZonesCmd(t, fix, "show", "}}::white{{evil")
+	if strings.Contains(got, "}}::white{{") {
+		t.Fatalf("cfmt injection survived defang:\n%s", got)
+	}
+	if !strings.Contains(got, "No such zone") {
+		t.Fatalf("expected not-found message; got:\n%s", got)
+	}
+}
+
 func TestZones_ShowMissingExternalIDArg(t *testing.T) {
 	fix := newZonesFix(t)
 	got := runZonesCmd(t, fix, "show")

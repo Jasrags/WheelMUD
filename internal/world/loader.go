@@ -59,11 +59,17 @@ func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) error {
 	return nil
 }
 
-// worldAlreadyLoaded probes whether the rooms table has any rows.
-// Migrations 0006 wipes the tables; the loader runs once on first boot
-// and is a no-op on every subsequent boot.
+// worldAlreadyLoaded probes whether either of the two top-level world
+// tables has rows. Today rooms + zones are inserted in the same
+// transaction so they're always either both empty or both populated;
+// covering both is cheap insurance against a future change that
+// splits the insert path (e.g. zone reset rules loaded after a hot
+// reload). Without this, a half-loaded DB with a populated zones
+// table but no rooms would re-enter the loader and fail with a
+// duplicate-zone error mid-insert.
 func worldAlreadyLoaded(ctx context.Context, db *sql.DB) (bool, error) {
-	row := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rooms)`)
+	row := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM rooms) OR EXISTS(SELECT 1 FROM zones)`)
 	var exists int
 	if err := row.Scan(&exists); err != nil {
 		return false, err

@@ -7,8 +7,13 @@ import (
 )
 
 // MemoryZoneRepo is an in-memory ZoneRepo for tests. Concurrent-safe.
+// RWMutex (rather than Mutex) so the upcoming §9 areaReset bucket —
+// which will read every zone's reset_interval_s + reset_mode on
+// every tick — doesn't contend with concurrent admin `zones list` /
+// `zones show` queries. Reads vastly outnumber writes (one Create
+// per zone per boot vs. continuous List/GetByID).
 type MemoryZoneRepo struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	zones []Zone
 	maxID int64
 }
@@ -52,8 +57,8 @@ func (r *MemoryZoneRepo) insertLocked(z Zone) Zone {
 }
 
 func (r *MemoryZoneRepo) GetByID(_ context.Context, id int64) (Zone, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, z := range r.zones {
 		if z.ID == id {
 			return z, nil
@@ -63,8 +68,8 @@ func (r *MemoryZoneRepo) GetByID(_ context.Context, id int64) (Zone, error) {
 }
 
 func (r *MemoryZoneRepo) GetByExternalID(_ context.Context, externalID string) (Zone, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, z := range r.zones {
 		if z.ExternalID == externalID {
 			return z, nil
@@ -74,8 +79,8 @@ func (r *MemoryZoneRepo) GetByExternalID(_ context.Context, externalID string) (
 }
 
 func (r *MemoryZoneRepo) List(_ context.Context) ([]Zone, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]Zone, len(r.zones))
 	copy(out, r.zones)
 	sort.Slice(out, func(i, j int) bool { return out[i].ExternalID < out[j].ExternalID })
