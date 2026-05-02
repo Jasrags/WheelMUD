@@ -184,7 +184,7 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 	starter := rooms[starterIdx]
 	starterCols, starterVals := roomInsertValues(starter)
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO rooms(id, `+starterCols+`) VALUES (?, `+placeholders(len(starterVals))+`)`,
+		`INSERT INTO rooms(id, `+starterCols+`) VALUES (?, `+repo.Placeholders(len(starterVals))+`)`,
 		append([]any{repo.StarterRoomID}, starterVals...)...,
 	); err != nil {
 		return nil, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
@@ -197,7 +197,7 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room) (map[string]int6
 		}
 		cols, vals := roomInsertValues(r)
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO rooms(`+cols+`) VALUES (`+placeholders(len(vals))+`)`,
+			`INSERT INTO rooms(`+cols+`) VALUES (`+repo.Placeholders(len(vals))+`)`,
 			vals...,
 		)
 		if err != nil {
@@ -235,33 +235,12 @@ func roomInsertValues(r Room) (string, []any) {
 		sector, light_level, coord_x, coord_y, coord_z`
 	vals := []any{
 		r.ID, r.Name, r.Short, r.Long,
-		boolInt(r.Flags.Indoors), boolInt(r.Flags.NoPVP),
-		boolInt(r.Flags.NoTeleport), boolInt(r.Flags.Dark),
-		boolInt(r.Flags.Silent), boolInt(r.Flags.Peaceful),
+		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
+		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
+		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
 		sector, light, x, y, z,
 	}
 	return cols, vals
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	out := make([]byte, 0, n*2)
-	for i := 0; i < n; i++ {
-		if i > 0 {
-			out = append(out, ',')
-		}
-		out = append(out, '?')
-	}
-	return string(out)
 }
 
 func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[string]int64) error {

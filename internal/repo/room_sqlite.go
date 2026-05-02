@@ -42,9 +42,10 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 	if room.Sector == "" {
 		room.Sector = SectorCity
 	}
-	if room.LightLevel == 0 && !room.Flags.Dark {
-		room.LightLevel = DefaultLightLevel
-	}
+	// LightLevel is taken at face value: 0 is pitch black and is a
+	// legitimate authoring choice for caves and night-only rooms.
+	// Callers (YAML loader, seed code) own defaulting to
+	// DefaultLightLevel when the source omitted the field.
 
 	insertCols := `external_id, name, short_desc, long_desc,
 		indoors, nopvp, noteleport, dark, silent, peaceful,

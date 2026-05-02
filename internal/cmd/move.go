@@ -70,14 +70,23 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 	// Session, neither capability is wired up — so air/underwater
 	// rooms are effectively blocked for everyone. The block lives in
 	// the move path so the destination's terrain has the final say.
+	// On a transient lookup failure we refuse the move outright rather
+	// than fall through and let a player slip into a sector they
+	// shouldn't reach; ErrRoomNotFound is treated as "no sector data,
+	// allow" because the exit FK already proved the room exists in the
+	// happy path.
 	dest, err := rooms.FindByID(c.Ctx, exit.ToRoomID)
-	if err != nil && !errors.Is(err, repo.ErrRoomNotFound) {
-		slog.Warn("move: dest room lookup failed", "char", s.CharacterID, "to", exit.ToRoomID, "error", err)
-	}
-	if err == nil {
+	switch {
+	case err == nil:
 		if msg, blocked := sectorGate(dest.Sector); blocked {
 			return s.WriteRaw([]byte(msg + "\r\n"))
 		}
+	case errors.Is(err, repo.ErrRoomNotFound):
+		// Stale exit pointing at a deleted room; fall through so the
+		// player still gets a coherent error from the existing path.
+	default:
+		slog.Warn("move: dest room lookup failed", "char", s.CharacterID, "to", exit.ToRoomID, "error", err)
+		return s.WriteRaw([]byte("Could not move right now.\r\n"))
 	}
 
 	fromRoomID := s.CurrentRoomID

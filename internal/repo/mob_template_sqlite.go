@@ -158,20 +158,3 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 	return t, nil
 }
 
-func placeholders(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	parts := make([]string, n)
-	for i := range parts {
-		parts[i] = "?"
-	}
-	return strings.Join(parts, ", ")
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}

@@ -37,9 +37,6 @@ func (r *MemoryRoomRepo) Create(_ context.Context, room Room) (Room, error) {
 	if room.Sector == "" {
 		room.Sector = SectorCity
 	}
-	if room.LightLevel == 0 && !room.Flags.Dark {
-		room.LightLevel = DefaultLightLevel
-	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.byExt[room.ExternalID]; exists {

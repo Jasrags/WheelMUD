@@ -107,10 +107,10 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		}
 	})
 
-	t.Run(name+"/defaults_when_unspecified", func(t *testing.T) {
+	t.Run(name+"/sector_default_when_unspecified", func(t *testing.T) {
 		ctx := context.Background()
 		r := newRepo(t)
-		created, err := r.Create(ctx, Room{ExternalID: "default.room", Name: "Default"})
+		created, err := r.Create(ctx, Room{ExternalID: "default.room", Name: "Default", LightLevel: DefaultLightLevel})
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
@@ -121,8 +121,28 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		if got.Sector != SectorCity {
 			t.Errorf("default Sector = %q, want city", got.Sector)
 		}
-		if got.LightLevel != DefaultLightLevel {
-			t.Errorf("default LightLevel = %d, want %d", got.LightLevel, DefaultLightLevel)
+	})
+
+	t.Run(name+"/light_zero_preserved_without_dark", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		// A "dim" room: light_level=0 but Dark=false. Caller's choice;
+		// the repo must not silently promote 0 to DefaultLightLevel.
+		created, err := r.Create(ctx, Room{
+			ExternalID: "dim.room", Name: "Dim", LightLevel: 0,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.LightLevel != 0 {
+			t.Errorf("LightLevel = %d, want 0 (no auto-promote)", got.LightLevel)
+		}
+		if got.Flags.Dark {
+			t.Errorf("Flags.Dark = true, want false")
 		}
 	})
 
