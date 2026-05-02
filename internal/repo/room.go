@@ -44,6 +44,11 @@ type RoomFlags struct {
 type Room struct {
 	ID         int64
 	ExternalID string
+	// ZoneID points at the owning zones row. Zero means "unscoped" —
+	// used by test fixtures that bypass the world loader. The loader
+	// stamps a real value on every room it inserts; §16 admin
+	// room-create will require it once that command lands.
+	ZoneID     int64
 	Name       string
 	ShortDesc  string
 	LongDesc   string
@@ -79,6 +84,11 @@ type RoomRepo interface {
 	// with that exact id (the loader uses this to pin the starter room
 	// to id=1); otherwise SQLite assigns one.
 	Create(ctx context.Context, r Room) (Room, error)
+	// CountByZone returns the number of rooms whose rooms.zone_id
+	// matches. Used by `zones show <id>` and the §10 ambient ticker.
+	// Rooms inserted via in-memory test fixtures default to zone_id=0
+	// and are counted under that bucket like any other.
+	CountByZone(ctx context.Context, zoneID int64) (int, error)
 }
 
 // StarterRoomID is where new characters spawn. The YAML loader pins the

@@ -87,6 +87,7 @@ func main() {
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
 	mobs := repo.NewSQLiteMobInstanceRepo(conn)
+	zones := repo.NewSQLiteZoneRepo(conn)
 	channelRepo := repo.NewSQLiteChannelRepo(conn)
 	channels, err := channelRepo.List(context.Background())
 	if err != nil {
@@ -102,7 +103,7 @@ func main() {
 	sessions := session.NewRegistry()
 	bus := eventbus.New()
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, characters, sessions, bus, channels)
+	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -283,7 +284,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -332,6 +333,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewWhereAmI(rooms)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewZones(zones, rooms)); err != nil {
 		return nil, err
 	}
 	return r, nil

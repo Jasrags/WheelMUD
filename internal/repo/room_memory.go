@@ -90,3 +90,15 @@ func (r *MemoryRoomRepo) FindByExternalID(_ context.Context, externalID string) 
 	}
 	return *room, nil
 }
+
+func (r *MemoryRoomRepo) CountByZone(_ context.Context, zoneID int64) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var n int
+	for _, room := range r.byID {
+		if room.ZoneID == zoneID {
+			n++
+		}
+	}
+	return n, nil
+}

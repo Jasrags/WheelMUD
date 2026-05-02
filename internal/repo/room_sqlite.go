@@ -18,7 +18,7 @@ func NewSQLiteRoomRepo(db *sql.DB) *SQLiteRoomRepo {
 	return &SQLiteRoomRepo{db: db}
 }
 
-const roomSelectCols = `id, external_id, name, short_desc, long_desc, ` +
+const roomSelectCols = `id, external_id, zone_id, name, short_desc, long_desc, ` +
 	`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
 	`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 
@@ -26,6 +26,16 @@ func (r *SQLiteRoomRepo) FindByID(ctx context.Context, id int64) (Room, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+roomSelectCols+` FROM rooms WHERE id = ?`, id)
 	return scanRoom(row)
+}
+
+func (r *SQLiteRoomRepo) CountByZone(ctx context.Context, zoneID int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rooms WHERE zone_id = ?`, zoneID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count rooms by zone: %w", err)
+	}
+	return n, nil
 }
 
 func (r *SQLiteRoomRepo) FindByExternalID(ctx context.Context, externalID string) (Room, error) {
@@ -50,11 +60,11 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 		return Room{}, fmt.Errorf("marshal extra_descs: %w", err)
 	}
 
-	insertCols := `external_id, name, short_desc, long_desc, ` +
+	insertCols := `external_id, zone_id, name, short_desc, long_desc, ` +
 		`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
 		`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 	insertVals := []any{
-		room.ExternalID, room.Name, room.ShortDesc, room.LongDesc,
+		room.ExternalID, room.ZoneID, room.Name, room.ShortDesc, room.LongDesc,
 		boolToInt(room.Flags.Indoors), boolToInt(room.Flags.NoPVP),
 		boolToInt(room.Flags.NoTeleport), boolToInt(room.Flags.Dark),
 		boolToInt(room.Flags.Silent), boolToInt(room.Flags.Peaceful),
@@ -97,7 +107,7 @@ func scanRoom(row *sql.Row) (Room, error) {
 		extraJSON                                          string
 	)
 	err := row.Scan(
-		&room.ID, &room.ExternalID, &room.Name, &room.ShortDesc, &room.LongDesc,
+		&room.ID, &room.ExternalID, &room.ZoneID, &room.Name, &room.ShortDesc, &room.LongDesc,
 		&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful,
 		&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ,
 		&extraJSON, &room.CreatedAt,
