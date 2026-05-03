@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
@@ -135,6 +136,232 @@ func runMobInstanceRepoTests(t *testing.T, name string, newFix func(t *testing.T
 		err := fix.instances.UpdateLive(context.Background(), 999, 0, 0, 0, 0)
 		if !errors.Is(err, ErrInstanceNotFound) {
 			t.Fatalf("err = %v, want ErrInstanceNotFound", err)
+		}
+	})
+
+	t.Run(name+"/update_room_records_trail", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		room2, err := fix.rooms.Create(ctx, Room{ExternalID: "alley", Name: "Alley"})
+		if err != nil {
+			t.Fatalf("second room: %v", err)
+		}
+		room3, err := fix.rooms.Create(ctx, Room{ExternalID: "square", Name: "Square"})
+		if err != nil {
+			t.Fatalf("third room: %v", err)
+		}
+		spawn, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID,
+			Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, spawn.ID, room2.ID); err != nil {
+			t.Fatalf("UpdateRoom 2: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, spawn.ID, room3.ID); err != nil {
+			t.Fatalf("UpdateRoom 3: %v", err)
+		}
+		got, err := fix.instances.RecentTrails(ctx, spawn.ID, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len(trails) = %d, want 2: %+v", len(got), got)
+		}
+		// Newest first.
+		if got[0].RoomID != room3.ID || got[1].RoomID != room2.ID {
+			t.Fatalf("trail order = [%d, %d], want [%d, %d]",
+				got[0].RoomID, got[1].RoomID, room3.ID, room2.ID)
+		}
+		if got[0].MobID != spawn.ID {
+			t.Fatalf("MobID = %d, want %d", got[0].MobID, spawn.ID)
+		}
+		if got[0].At.IsZero() {
+			t.Fatal("At not populated")
+		}
+	})
+
+	t.Run(name+"/update_room_zero_skips_trail", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		spawn, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID,
+			Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, spawn.ID, 0); err != nil {
+			t.Fatalf("UpdateRoom(0): %v", err)
+		}
+		got, err := fix.instances.RecentTrails(ctx, spawn.ID, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("trail recorded for roomID=0: %+v", got)
+		}
+		live, err := fix.instances.GetByID(ctx, spawn.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if live.Core.CurrentRoomID != 0 {
+			t.Fatalf("CurrentRoomID = %d, want 0", live.Core.CurrentRoomID)
+		}
+	})
+
+	t.Run(name+"/update_room_unknown_id_no_trail", func(t *testing.T) {
+		fix, roomID, _ := makeFixtures(t)
+		ctx := context.Background()
+		err := fix.instances.UpdateRoom(ctx, 9999, roomID)
+		if !errors.Is(err, ErrInstanceNotFound) {
+			t.Fatalf("err = %v, want ErrInstanceNotFound", err)
+		}
+		got, err := fix.instances.RecentTrails(ctx, 9999, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("trail recorded for unknown mob: %+v", got)
+		}
+	})
+
+	t.Run(name+"/recent_trails_caps_at_16", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		// Build 20 distinct rooms so the trail rows reference real ids.
+		rooms := make([]int64, 20)
+		for i := range rooms {
+			rm, err := fix.rooms.Create(ctx, Room{
+				ExternalID: "trail." + strconv.Itoa(i),
+				Name:       "Trail Room",
+			})
+			if err != nil {
+				t.Fatalf("room %d: %v", i, err)
+			}
+			rooms[i] = rm.ID
+		}
+		spawn, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID,
+			Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		for _, rid := range rooms {
+			if err := fix.instances.UpdateRoom(ctx, spawn.ID, rid); err != nil {
+				t.Fatalf("UpdateRoom %d: %v", rid, err)
+			}
+		}
+		got, err := fix.instances.RecentTrails(ctx, spawn.ID, 100)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != MobTrailCap {
+			t.Fatalf("len(trails) = %d, want %d", len(got), MobTrailCap)
+		}
+		// Newest first; the last room visited should be first.
+		if got[0].RoomID != rooms[len(rooms)-1] {
+			t.Fatalf("newest = %d, want %d", got[0].RoomID, rooms[len(rooms)-1])
+		}
+		// Oldest retained should be the (20-16)=4th room (index 4).
+		oldestKept := rooms[len(rooms)-MobTrailCap]
+		if got[len(got)-1].RoomID != oldestKept {
+			t.Fatalf("oldest kept = %d, want %d", got[len(got)-1].RoomID, oldestKept)
+		}
+	})
+
+	t.Run(name+"/recent_trails_isolates_per_mob", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		room2, err := fix.rooms.Create(ctx, Room{ExternalID: "alley", Name: "Alley"})
+		if err != nil {
+			t.Fatalf("second room: %v", err)
+		}
+		mobA, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		mobB, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, mobA.ID, room2.ID); err != nil {
+			t.Fatalf("UpdateRoom A: %v", err)
+		}
+		gotB, err := fix.instances.RecentTrails(ctx, mobB.ID, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails B: %v", err)
+		}
+		if len(gotB) != 0 {
+			t.Fatalf("mob B trails leaked from mob A: %+v", gotB)
+		}
+		gotA, err := fix.instances.RecentTrails(ctx, mobA.ID, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails A: %v", err)
+		}
+		if len(gotA) != 1 || gotA[0].MobID != mobA.ID {
+			t.Fatalf("mob A trails = %+v", gotA)
+		}
+	})
+
+	t.Run(name+"/delete_clears_trails", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		room2, err := fix.rooms.Create(ctx, Room{ExternalID: "alley", Name: "Alley"})
+		if err != nil {
+			t.Fatalf("second room: %v", err)
+		}
+		spawn, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID,
+			Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, spawn.ID, room2.ID); err != nil {
+			t.Fatalf("UpdateRoom: %v", err)
+		}
+		if err := fix.instances.Delete(ctx, spawn.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		got, err := fix.instances.RecentTrails(ctx, spawn.ID, 8)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("trails survived Delete: %+v", got)
+		}
+	})
+
+	t.Run(name+"/recent_trails_limit_zero", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		room2, err := fix.rooms.Create(ctx, Room{ExternalID: "alley", Name: "Alley"})
+		if err != nil {
+			t.Fatalf("second room: %v", err)
+		}
+		spawn, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.instances.UpdateRoom(ctx, spawn.ID, room2.ID); err != nil {
+			t.Fatalf("UpdateRoom: %v", err)
+		}
+		got, err := fix.instances.RecentTrails(ctx, spawn.ID, 0)
+		if err != nil {
+			t.Fatalf("RecentTrails: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("limit=0 returned %d rows", len(got))
 		}
 	})
 }

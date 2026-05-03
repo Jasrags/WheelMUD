@@ -12,13 +12,17 @@ import (
 
 // MemoryMobInstanceRepo is an in-memory MobInstanceRepo for tests.
 type MemoryMobInstanceRepo struct {
-	mu    sync.Mutex
-	byID  map[int64]creature.MobInstance
-	maxID int64
+	mu     sync.Mutex
+	byID   map[int64]creature.MobInstance
+	trails map[int64][]MobTrail
+	maxID  int64
 }
 
 func NewMemoryMobInstanceRepo() *MemoryMobInstanceRepo {
-	return &MemoryMobInstanceRepo{byID: make(map[int64]creature.MobInstance)}
+	return &MemoryMobInstanceRepo{
+		byID:   make(map[int64]creature.MobInstance),
+		trails: make(map[int64][]MobTrail),
+	}
 }
 
 func (r *MemoryMobInstanceRepo) Create(_ context.Context, m creature.MobInstance) (creature.MobInstance, error) {
@@ -84,7 +88,50 @@ func (r *MemoryMobInstanceRepo) UpdateRoom(_ context.Context, id, roomID int64) 
 	}
 	m.Core.CurrentRoomID = roomID
 	r.byID[id] = m
+	if roomID == 0 {
+		// Removed from world but not despawned — mirror the sqlite
+		// branch and skip the trail entry.
+		return nil
+	}
+	// Always rebuild into a fresh backing array; any slice handed out
+	// by RecentTrails must remain stable even if the caller holds it
+	// across a subsequent UpdateRoom on the same mob.
+	old := r.trails[id]
+	keep := len(old) + 1
+	if keep > MobTrailCap {
+		keep = MobTrailCap
+	}
+	tail := make([]MobTrail, keep)
+	if len(old) >= keep-1 {
+		copy(tail, old[len(old)-(keep-1):])
+	} else {
+		copy(tail, old)
+	}
+	tail[keep-1] = MobTrail{MobID: id, RoomID: roomID, At: time.Now().UTC()}
+	r.trails[id] = tail
 	return nil
+}
+
+func (r *MemoryMobInstanceRepo) RecentTrails(_ context.Context, mobID int64, limit int) ([]MobTrail, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	src := r.trails[mobID]
+	if len(src) == 0 {
+		return nil, nil
+	}
+	// Newest first — append in reverse, capped at limit.
+	n := len(src)
+	if n > limit {
+		n = limit
+	}
+	out := make([]MobTrail, 0, n)
+	for i := len(src) - 1; i >= 0 && len(out) < n; i-- {
+		out = append(out, src[i])
+	}
+	return out, nil
 }
 
 func (r *MemoryMobInstanceRepo) Delete(_ context.Context, id int64) error {
@@ -94,5 +141,6 @@ func (r *MemoryMobInstanceRepo) Delete(_ context.Context, id int64) error {
 		return ErrInstanceNotFound
 	}
 	delete(r.byID, id)
+	delete(r.trails, id)
 	return nil
 }

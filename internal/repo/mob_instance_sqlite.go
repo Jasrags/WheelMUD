@@ -107,6 +107,13 @@ func (r *SQLiteMobInstanceRepo) UpdateLive(ctx context.Context, id int64, hp, su
 	return checkRowsAffected(res, ErrInstanceNotFound)
 }
 
+// UpdateRoom executes UPDATE + INSERT trail + cap-prune as three
+// statements over DBTX. DBTX has no BeginTx, so callers that need
+// strict atomicity (e.g. zone-reset relocations) must construct the
+// repo with a *sql.Tx. Outside a tx, a partial failure between the
+// INSERT and the cap-prune leaves the table at most one row over
+// MobTrailCap until the next successful UpdateRoom on that mob —
+// observable drift, not corruption.
 func (r *SQLiteMobInstanceRepo) UpdateRoom(ctx context.Context, id, roomID int64) error {
 	var arg any
 	if roomID != 0 {
@@ -118,7 +125,65 @@ func (r *SQLiteMobInstanceRepo) UpdateRoom(ctx context.Context, id, roomID int64
 	if err != nil {
 		return fmt.Errorf("update mob_instance room: %w", err)
 	}
-	return checkRowsAffected(res, ErrInstanceNotFound)
+	if err := checkRowsAffected(res, ErrInstanceNotFound); err != nil {
+		return err
+	}
+	if roomID == 0 {
+		// Removed from world but not despawned. No trail entry; the
+		// mob is no longer in any room to leave a footprint in.
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO mob_trails(mob_id, room_id) VALUES (?, ?)`, id, roomID,
+	); err != nil {
+		return fmt.Errorf("insert mob_trail: %w", err)
+	}
+	// Cap the ring buffer at MobTrailCap. The ORDER BY + LIMIT must
+	// stay inside the subquery — SQLite's outer DELETE does not
+	// accept ORDER BY/LIMIT directly, and lifting them would change
+	// semantics. id DESC tie-breaks same-second inserts, since
+	// CURRENT_TIMESTAMP only resolves to the second.
+	if _, err := r.db.ExecContext(ctx,
+		`DELETE FROM mob_trails
+		 WHERE mob_id = ?
+		   AND id NOT IN (
+		       SELECT id FROM mob_trails
+		       WHERE mob_id = ?
+		       ORDER BY ts DESC, id DESC
+		       LIMIT ?
+		   )`,
+		id, id, MobTrailCap,
+	); err != nil {
+		return fmt.Errorf("prune mob_trails: %w", err)
+	}
+	return nil
+}
+
+func (r *SQLiteMobInstanceRepo) RecentTrails(ctx context.Context, mobID int64, limit int) ([]MobTrail, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT mob_id, room_id, ts
+		 FROM mob_trails
+		 WHERE mob_id = ?
+		 ORDER BY ts DESC, id DESC
+		 LIMIT ?`,
+		mobID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query mob_trails: %w", err)
+	}
+	defer rows.Close()
+	var out []MobTrail
+	for rows.Next() {
+		var t MobTrail
+		if err := rows.Scan(&t.MobID, &t.RoomID, &t.At); err != nil {
+			return nil, fmt.Errorf("scan mob_trail: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 func (r *SQLiteMobInstanceRepo) Delete(ctx context.Context, id int64) error {
