@@ -81,15 +81,17 @@ const (
 // covers `look` rendering; the type/quality/flags/stats fields layer
 // on the gameplay-relevant fact pattern from the WoT equipment ref.
 //
-// RoomID == 0 means "not currently in a room" — a future inventory or
-// respawn-pool slice will populate that state without a schema change.
+// Location invariant: exactly one of RoomID / OwnerCharacterID is
+// non-zero for a reachable item. Both zero is the transient state used
+// during a transfer (briefly between SetOwner / SetRoom calls).
 type Item struct {
-	ID         int64
-	ExternalID string
-	Name       string
-	NameLower  string
-	ShortDesc  string
-	RoomID     int64
+	ID               int64
+	ExternalID       string
+	Name             string
+	NameLower        string
+	ShortDesc        string
+	RoomID           int64
+	OwnerCharacterID int64
 
 	Type    ItemType
 	Weight  float64         // in pounds (matches the WoT tables)
@@ -215,9 +217,44 @@ type ItemRepo interface {
 	// ListInRoom returns every item whose room_id equals the given id,
 	// sorted by name. An empty result is not an error.
 	ListInRoom(ctx context.Context, roomID int64) ([]Item, error)
+	// ListInInventory returns every item whose owner_character_id
+	// equals the given id, sorted by name. Empty is not an error.
+	ListInInventory(ctx context.Context, ownerCharID int64) ([]Item, error)
+	// GetByID returns the item with the given id, or ErrItemNotFound.
+	GetByID(ctx context.Context, id int64) (Item, error)
+	// SetOwner unconditionally moves an item into a character's
+	// inventory by setting owner_character_id and clearing room_id
+	// atomically. Use the Transfer* variants from the command layer —
+	// SetOwner/SetRoom skip the prior-location check and exist for
+	// admin tools and seed paths only.
+	SetOwner(ctx context.Context, itemID, ownerCharID int64) error
+	// SetRoom unconditionally places an item on a room's floor.
+	SetRoom(ctx context.Context, itemID, roomID int64) error
+	// TransferRoomToOwner picks an item up from a room into a
+	// character's inventory. The update only commits if the item is
+	// currently in fromRoomID with no owner — concurrent grabs by
+	// another player or a `give` race surface as ErrItemMoved instead
+	// of a silent overwrite.
+	TransferRoomToOwner(ctx context.Context, itemID, fromRoomID, toOwnerID int64) error
+	// TransferOwnerToRoom drops an item from a character to a room
+	// floor. Guards on the item still being owned by fromOwnerID.
+	TransferOwnerToRoom(ctx context.Context, itemID, fromOwnerID, toRoomID int64) error
+	// TransferOwnerToOwner hands an item directly between two
+	// characters' inventories. Guards on the item still being owned
+	// by fromOwnerID.
+	TransferOwnerToOwner(ctx context.Context, itemID, fromOwnerID, toOwnerID int64) error
 	// Create inserts a new item. ExternalID must be non-empty.
 	Create(ctx context.Context, i Item) (Item, error)
 }
+
+// ErrItemNotFound is returned by GetByID when no row matches the id.
+var ErrItemNotFound = errors.New("repo: item not found")
+
+// ErrItemMoved is returned by the Transfer* methods when the item is
+// no longer at its expected prior location (someone else picked it up,
+// dropped it, or transferred it). Callers translate this into a
+// player-facing "you don't see that here" / "they took it first" line.
+var ErrItemMoved = errors.New("repo: item is no longer at its expected location")
 
 // ErrItemStatsTypeMismatch is returned when an Item's Stats concrete
 // type doesn't match its declared Type (e.g. Type=weapon with

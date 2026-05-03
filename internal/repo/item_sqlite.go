@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ func NewSQLiteItemRepo(db *sql.DB) *SQLiteItemRepo {
 	return &SQLiteItemRepo{db: db}
 }
 
-const itemSelectCols = `id, external_id, name, name_lower, short_desc, room_id, ` +
+const itemSelectCols = `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, ` +
 	`type, weight_lbs, value_cp, quality, flags, stats_json, created_at`
 
 func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
@@ -54,11 +55,15 @@ func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
 	if i.RoomID != 0 {
 		roomID = i.RoomID
 	}
+	var ownerID any
+	if i.OwnerCharacterID != 0 {
+		ownerID = i.OwnerCharacterID
+	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id,
+		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id,
 			type, weight_lbs, value_cp, quality, flags, stats_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ExternalID, i.Name, i.NameLower, i.ShortDesc, roomID,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ExternalID, i.Name, i.NameLower, i.ShortDesc, roomID, ownerID,
 		string(i.Type), i.Weight, int64(i.Value), string(i.Quality),
 		int64(i.Flags), statsJSON, i.CreatedAt,
 	)
@@ -77,8 +82,12 @@ func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
 }
 
 func (r *SQLiteItemRepo) ListInRoom(ctx context.Context, roomID int64) ([]Item, error) {
+	// `AND owner_character_id IS NULL` keeps the listing honest even
+	// if the location invariant is ever violated by a buggy code path
+	// (an item with both columns set should never appear in the room
+	// view alongside its inventory view). Mirrors the memory repo.
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+itemSelectCols+` FROM items WHERE room_id = ? ORDER BY name_lower`,
+		`SELECT `+itemSelectCols+` FROM items WHERE room_id = ? AND owner_character_id IS NULL ORDER BY name_lower`,
 		roomID,
 	)
 	if err != nil {
@@ -96,6 +105,166 @@ func (r *SQLiteItemRepo) ListInRoom(ctx context.Context, roomID int64) ([]Item, 
 	return out, rows.Err()
 }
 
+func (r *SQLiteItemRepo) ListInInventory(ctx context.Context, ownerCharID int64) ([]Item, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+itemSelectCols+` FROM items WHERE owner_character_id = ? ORDER BY name_lower`,
+		ownerCharID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list inventory: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		i, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteItemRepo) GetByID(ctx context.Context, id int64) (Item, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+itemSelectCols+` FROM items WHERE id = ?`, id,
+	)
+	i, err := scanItemRow(row)
+	if err != nil {
+		// scanItemRow wraps Scan errors with %w, so unwrap.
+		if errors.Is(err, sql.ErrNoRows) {
+			return Item{}, ErrItemNotFound
+		}
+		return Item{}, err
+	}
+	return i, nil
+}
+
+// SetOwner moves an item into a character's inventory. Both location
+// columns are updated in one statement so the location invariant
+// (exactly one non-NULL) holds across the change.
+func (r *SQLiteItemRepo) SetOwner(ctx context.Context, itemID, ownerCharID int64) error {
+	if ownerCharID == 0 {
+		return fmt.Errorf("set owner: ownerCharID must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET owner_character_id = ?, room_id = NULL WHERE id = ?`,
+		ownerCharID, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("set owner: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set owner rows: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
+// SetRoom places an item on a room's floor and clears any owner.
+func (r *SQLiteItemRepo) SetRoom(ctx context.Context, itemID, roomID int64) error {
+	if roomID == 0 {
+		return fmt.Errorf("set room: roomID must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET room_id = ?, owner_character_id = NULL WHERE id = ?`,
+		roomID, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("set room: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set room rows: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
+// transferRowsResult inspects an UPDATE's rows-affected count and a
+// follow-up existence probe to disambiguate ErrItemMoved (item exists
+// but at a different location) from ErrItemNotFound (no such item).
+func (r *SQLiteItemRepo) transferRowsResult(ctx context.Context, res sqlResult, itemID int64, op string) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s rows: %w", op, err)
+	}
+	if n != 0 {
+		return nil
+	}
+	// Probe existence to distinguish "moved" from "missing".
+	var probe int64
+	row := r.db.QueryRowContext(ctx, `SELECT id FROM items WHERE id = ?`, itemID)
+	if err := row.Scan(&probe); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrItemNotFound
+		}
+		return fmt.Errorf("%s probe: %w", op, err)
+	}
+	return ErrItemMoved
+}
+
+// sqlResult is the subset of sql.Result we use; named so transferRowsResult
+// is testable without leaking the database/sql concrete type into helpers.
+type sqlResult interface {
+	RowsAffected() (int64, error)
+}
+
+// TransferRoomToOwner is the conditional pickup path. The WHERE guard
+// prevents two players from racing to grab the same floor item: only
+// one UPDATE will affect a row.
+func (r *SQLiteItemRepo) TransferRoomToOwner(ctx context.Context, itemID, fromRoomID, toOwnerID int64) error {
+	if fromRoomID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer room->owner: ids must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET owner_character_id = ?, room_id = NULL
+		 WHERE id = ? AND room_id = ? AND owner_character_id IS NULL`,
+		toOwnerID, itemID, fromRoomID,
+	)
+	if err != nil {
+		return fmt.Errorf("transfer room->owner: %w", err)
+	}
+	return r.transferRowsResult(ctx, res, itemID, "transfer room->owner")
+}
+
+// TransferOwnerToRoom is the conditional drop path.
+func (r *SQLiteItemRepo) TransferOwnerToRoom(ctx context.Context, itemID, fromOwnerID, toRoomID int64) error {
+	if fromOwnerID == 0 || toRoomID == 0 {
+		return fmt.Errorf("transfer owner->room: ids must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET room_id = ?, owner_character_id = NULL
+		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL`,
+		toRoomID, itemID, fromOwnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("transfer owner->room: %w", err)
+	}
+	return r.transferRowsResult(ctx, res, itemID, "transfer owner->room")
+}
+
+// TransferOwnerToOwner is the conditional give path.
+func (r *SQLiteItemRepo) TransferOwnerToOwner(ctx context.Context, itemID, fromOwnerID, toOwnerID int64) error {
+	if fromOwnerID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer owner->owner: ids must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET owner_character_id = ?
+		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL`,
+		toOwnerID, itemID, fromOwnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("transfer owner->owner: %w", err)
+	}
+	return r.transferRowsResult(ctx, res, itemID, "transfer owner->owner")
+}
+
 // scanItemRow reads one row from a SELECT itemSelectCols result and
 // builds a fully decoded Item, including the polymorphic stats blob.
 // Centralized so the column list and decode contract live in one
@@ -104,6 +273,7 @@ func scanItemRow(s rowScanner) (Item, error) {
 	var (
 		i         Item
 		rid       sql.NullInt64
+		oid       sql.NullInt64
 		typeStr   string
 		quality   string
 		valueCP   int64
@@ -111,13 +281,16 @@ func scanItemRow(s rowScanner) (Item, error) {
 		statsJSON string
 	)
 	if err := s.Scan(
-		&i.ID, &i.ExternalID, &i.Name, &i.NameLower, &i.ShortDesc, &rid,
+		&i.ID, &i.ExternalID, &i.Name, &i.NameLower, &i.ShortDesc, &rid, &oid,
 		&typeStr, &i.Weight, &valueCP, &quality, &flags, &statsJSON, &i.CreatedAt,
 	); err != nil {
 		return Item{}, fmt.Errorf("scan item row: %w", err)
 	}
 	if rid.Valid {
 		i.RoomID = rid.Int64
+	}
+	if oid.Valid {
+		i.OwnerCharacterID = oid.Int64
 	}
 	i.Type = ItemType(typeStr)
 	i.Quality = ItemQuality(quality)

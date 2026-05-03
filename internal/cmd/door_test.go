@@ -163,7 +163,7 @@ func TestLock_RequiresKeyInRoom(t *testing.T) {
 	}
 }
 
-func TestLock_KeyInRoomSucceeds(t *testing.T) {
+func TestLock_KeyInInventorySucceeds(t *testing.T) {
 	f := newDoorFixture(t)
 	exits := repo.NewMemoryExitRepo()
 	exits.Insert(repo.Exit{
@@ -173,7 +173,12 @@ func TestLock_KeyInRoomSucceeds(t *testing.T) {
 	})
 	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 1, Direction: repo.DirSouth, Flags: repo.ExitFlags{Closed: true}})
 	f.exits = exits
-	f.items.Insert(repo.Item{ExternalID: "iron.key", Name: "an iron key", RoomID: 1})
+	// Key in Alice's inventory — §14 retired the room-floor placeholder.
+	f.items.Insert(repo.Item{
+		ExternalID: "iron.key", Name: "an iron key",
+		OwnerCharacterID: f.alice.CharacterID,
+		Type:             repo.ItemTypeKey, Stats: &repo.KeyStats{KeyID: "iron.key"},
+	})
 
 	lock := NewLock(f.exits, f.items, f.sessions)
 
@@ -188,6 +193,32 @@ func TestLock_KeyInRoomSucceeds(t *testing.T) {
 	}
 	if !got.Flags.Locked || !got.Flags.Closed {
 		t.Fatalf("door not locked: %+v", got.Flags)
+	}
+}
+
+// TestLock_KeyOnRoomFloorRefuses confirms the §14 swap actually
+// retired the room-floor placeholder — a key sitting on the floor
+// is no longer enough.
+func TestLock_KeyOnRoomFloorRefuses(t *testing.T) {
+	f := newDoorFixture(t)
+	exits := repo.NewMemoryExitRepo()
+	exits.Insert(repo.Exit{
+		FromRoomID: 1, ToRoomID: 2, Direction: repo.DirNorth,
+		Flags:         repo.ExitFlags{Closed: true, Pickable: true},
+		KeyExternalID: "iron.key",
+	})
+	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 1, Direction: repo.DirSouth, Flags: repo.ExitFlags{Closed: true}})
+	f.exits = exits
+	f.items.Insert(repo.Item{
+		ExternalID: "iron.key", Name: "an iron key", RoomID: 1,
+		Type: repo.ItemTypeKey, Stats: &repo.KeyStats{KeyID: "iron.key"},
+	})
+
+	lock := NewLock(f.exits, f.items, f.sessions)
+	runCmd(t, lock, f.alice, "north")
+
+	if !strings.Contains(f.aOut.String(), "don't have the key") {
+		t.Fatalf("expected key refusal; got %q", f.aOut.String())
 	}
 }
 

@@ -138,6 +138,38 @@ func (r *SQLiteCharacterRepo) RecordCore(ctx context.Context, id int64, hp, subd
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordInventory(ctx context.Context, id int64, ids []int64) error {
+	js, err := marshalJSONSlice(ids)
+	if err != nil {
+		return fmt.Errorf("marshal inventory: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET inventory_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record inventory: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET coin_cp = ?, bank_cp = ? WHERE id = ?`,
+		int64(coin), int64(bank), id,
+	)
+	if err != nil {
+		return fmt.Errorf("record coin: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordChannelSettings(ctx context.Context, id int64, settings map[string]bool) error {
 	js, err := jsonMarshalString(settings)
 	if err != nil {

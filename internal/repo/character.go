@@ -112,6 +112,13 @@ type CharacterRepo interface {
 	// a toggle. The channel command writes through immediately so
 	// the setting survives logout even if autosave hasn't fired.
 	RecordChannelSettings(ctx context.Context, id int64, settings map[string]bool) error
+	// RecordInventory persists the ordered item-id list after a
+	// pickup / drop / give. The inventory_json column is the display
+	// ordering; ownership truth lives on items.owner_character_id.
+	RecordInventory(ctx context.Context, id int64, ids []int64) error
+	// RecordCoin persists carried + bank wealth after a transfer or
+	// shop transaction.
+	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error
 }
 
 var (

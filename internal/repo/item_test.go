@@ -175,6 +175,176 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 		}
 	})
 
+	t.Run(name+"/set_owner_clears_room", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "rock", Name: "a rock", RoomID: roomID})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.items.SetOwner(ctx, it.ID, 42); err != nil {
+			t.Fatalf("SetOwner: %v", err)
+		}
+		floor, _ := fix.items.ListInRoom(ctx, roomID)
+		if len(floor) != 0 {
+			t.Errorf("room still lists item after SetOwner: %+v", floor)
+		}
+		held, err := fix.items.ListInInventory(ctx, 42)
+		if err != nil || len(held) != 1 || held[0].ID != it.ID {
+			t.Fatalf("ListInInventory: err=%v got=%+v", err, held)
+		}
+		if held[0].RoomID != 0 || held[0].OwnerCharacterID != 42 {
+			t.Errorf("location not flipped: %+v", held[0])
+		}
+	})
+
+	t.Run(name+"/set_room_clears_owner", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "ring", Name: "a ring", OwnerCharacterID: 7})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.items.SetRoom(ctx, it.ID, roomID); err != nil {
+			t.Fatalf("SetRoom: %v", err)
+		}
+		held, _ := fix.items.ListInInventory(ctx, 7)
+		if len(held) != 0 {
+			t.Errorf("inventory still lists item after SetRoom: %+v", held)
+		}
+		floor, _ := fix.items.ListInRoom(ctx, roomID)
+		if len(floor) != 1 {
+			t.Fatalf("ListInRoom: got %+v", floor)
+		}
+	})
+
+	t.Run(name+"/get_by_id_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		in, err := fix.items.Create(ctx, Item{ExternalID: "torch", Name: "a torch", RoomID: roomID})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.items.GetByID(ctx, in.ID)
+		if err != nil || got.ExternalID != "torch" {
+			t.Fatalf("GetByID: err=%v got=%+v", err, got)
+		}
+		_, err = fix.items.GetByID(ctx, 999999)
+		if !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("GetByID(missing) = %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/set_owner_missing_item", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.items.SetOwner(context.Background(), 999999, 1)
+		if !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("SetOwner(missing) = %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/list_in_inventory_zero_owner_is_empty", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		if _, err := fix.items.Create(ctx, Item{ExternalID: "leaf", Name: "a leaf", RoomID: roomID}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.items.ListInInventory(ctx, 0)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("ListInInventory(0) should be empty: err=%v got=%+v", err, got)
+		}
+	})
+
+	t.Run(name+"/transfer_room_to_owner_first_writer_wins", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "rock", Name: "a rock", RoomID: roomID})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Alice (id 11) wins.
+		if err := fix.items.TransferRoomToOwner(ctx, it.ID, roomID, 11); err != nil {
+			t.Fatalf("first transfer: %v", err)
+		}
+		// Bob (id 22) racing for the same item — item is no longer on
+		// the floor, so the second UPDATE must be a no-op surfacing
+		// ErrItemMoved rather than silently overwriting.
+		if err := fix.items.TransferRoomToOwner(ctx, it.ID, roomID, 22); !errors.Is(err, ErrItemMoved) {
+			t.Fatalf("racing transfer: got %v, want ErrItemMoved", err)
+		}
+		got, _ := fix.items.GetByID(ctx, it.ID)
+		if got.OwnerCharacterID != 11 {
+			t.Fatalf("alice should own; got %+v", got)
+		}
+	})
+
+	t.Run(name+"/transfer_owner_to_room_guards_owner", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "ring", Name: "a ring", OwnerCharacterID: 7})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Wrong owner → ErrItemMoved.
+		if err := fix.items.TransferOwnerToRoom(ctx, it.ID, 99, roomID); !errors.Is(err, ErrItemMoved) {
+			t.Fatalf("wrong owner: got %v, want ErrItemMoved", err)
+		}
+		// Correct owner → success.
+		if err := fix.items.TransferOwnerToRoom(ctx, it.ID, 7, roomID); err != nil {
+			t.Fatalf("correct owner: %v", err)
+		}
+	})
+
+	t.Run(name+"/transfer_owner_to_owner_guards_source", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "letter", Name: "a letter", OwnerCharacterID: 7})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.items.TransferOwnerToOwner(ctx, it.ID, 99, 8); !errors.Is(err, ErrItemMoved) {
+			t.Fatalf("wrong source: got %v, want ErrItemMoved", err)
+		}
+		if err := fix.items.TransferOwnerToOwner(ctx, it.ID, 7, 8); err != nil {
+			t.Fatalf("correct source: %v", err)
+		}
+		got, _ := fix.items.GetByID(ctx, it.ID)
+		if got.OwnerCharacterID != 8 || got.RoomID != 0 {
+			t.Fatalf("transfer left bad state: %+v", got)
+		}
+	})
+
+	t.Run(name+"/transfer_missing_item_returns_not_found", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.items.TransferRoomToOwner(context.Background(), 999999, 1, 2)
+		if !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("got %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/list_in_room_excludes_owned", func(t *testing.T) {
+		// Defends against the location-invariant violation case: even
+		// if a row ends up with both columns set (only achievable via
+		// raw SQL today), ListInRoom must not surface it on the floor.
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		// Owned-only item — must not appear in room view.
+		if _, err := fix.items.Create(ctx, Item{ExternalID: "owned", Name: "an owned cup", OwnerCharacterID: 5}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, _ := fix.items.ListInRoom(ctx, roomID)
+		if len(got) != 0 {
+			t.Fatalf("owned item leaked into ListInRoom: %+v", got)
+		}
+	})
+
 	t.Run(name+"/empty_room", func(t *testing.T) {
 		fix := newFix(t)
 		got, err := fix.items.ListInRoom(context.Background(), 99999)
@@ -228,9 +398,9 @@ func TestSQLiteItemRepo_CorruptStatsJSON(t *testing.T) {
 	// garbage stats_json directly. Mirrors what an external tool
 	// could leave behind.
 	if _, err := conn.ExecContext(ctx,
-		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id,
+		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id,
 			type, weight_lbs, value_cp, quality, flags, stats_json)
-		 VALUES (?, ?, ?, '', ?, 'weapon', 0, 0, 'normal', 0, ?)`,
+		 VALUES (?, ?, ?, '', ?, NULL, 'weapon', 0, 0, 'normal', 0, ?)`,
 		"corrupt", "broken", "broken", r.ID, "not-json",
 	); err != nil {
 		t.Fatalf("seed corrupt row: %v", err)

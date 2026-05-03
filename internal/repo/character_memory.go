@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 )
 
 // MemoryCharacterRepo is an in-memory CharacterRepo for tests.
@@ -134,6 +135,37 @@ func (r *MemoryCharacterRepo) RecordCore(_ context.Context, id int64, hp, subdua
 			c.Core.Subdual = subdual
 			c.Core.Conditions = cond
 			c.Core.Position = pos
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordInventory(_ context.Context, id int64, ids []int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if len(ids) == 0 {
+				c.Inventory = nil
+				return nil
+			}
+			cp := make([]int64, len(ids))
+			copy(cp, ids)
+			c.Inventory = cp
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordCoin(_ context.Context, id int64, coin, bank currency.Amount) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.Coin = coin
+			c.BankBalance = bank
 			return nil
 		}
 	}

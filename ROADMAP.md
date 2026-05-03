@@ -577,10 +577,10 @@ will need on top of those tables.
       NoPass. Both broadcast to the actor's room and (when a reverse
       exit exists) the far room with the inverted direction. `lock` /
       `unlock` enforce a key match against `Exit.KeyExternalID` —
-      until §14 inventory lands, the placeholder accepts the matching
-      item being in the actor's current room; `AuthAdmin` always
-      bypasses the key check. `unlock` leaves the door closed-but-
-      unlocked so the lock state stays observable. `pick` requires
+      keys must be in the actor's inventory (§14 retired the
+      room-floor placeholder); `AuthAdmin` always bypasses the key
+      check. `unlock` leaves the door closed-but-unlocked so the lock
+      state stays observable. `pick` requires
       `Pickable=true` and is gated to `AuthAdmin` until §12 skill
       checks land — players see the "you lack the skill" flavor that
       will become a failed roll. Pending: §14 inventory swap (keyed
@@ -783,11 +783,34 @@ will need on top of those tables.
 
 ## 14. Inventory & economy
 
-- [ ] `inventory`, `get`, `drop`, `give`, `put`, `take` — operate on
-      `character_inventory` (item instance ids) + room-floor item
-      table. Keyword resolution `<n>.<keyword>` (e.g. `2.sword`)
-      to disambiguate. Weight cap from str-based formula; over-
-      encumbered blocks pickup with "It's too heavy."
+- [~] `inventory`, `get`, `drop`, `give`, `put`, `take` — `inventory`
+      / `get` / `drop` / `give` shipped (`internal/cmd/inventory.go`)
+      on top of migration `0017_item_owner.sql` (adds nullable
+      `items.owner_character_id`, soft FK matching the `rooms.zone_id`
+      pattern from §16). Items now carry an `OwnerCharacterID` field
+      alongside `RoomID`; `ItemRepo.SetOwner` / `SetRoom` flip both
+      atomically so the location invariant (exactly one non-null) holds.
+      `inventory` lists held items in `Character.Inventory` JSON order
+      (display ordering; SQL `owner_character_id` is the truth),
+      renders carry weight + load band (Str-based d20 carrying-capacity
+      table in `internal/cmd/encumbrance.go`), and the coin purse via
+      `currency.Format`. `get` blocks `FlagNoTake`, blocks at the
+      heavy-cap (Overloaded) load band, and broadcasts to room peers.
+      `drop` blocks `FlagNoDrop`. `give <item> <name>` requires the
+      target online + same room and gates on the recipient's encumbrance.
+      `give <amount> <name>` parses via `currency.Parse` and transfers
+      between purses with `ErrInsufficientFunds` surfaced cleanly.
+      Keyword resolution accepts the ordinal `<n>.<keyword>` form
+      (`get 2.sword`) via `internal/cmd/keyword.go::MatchItem` /
+      `MatchMob`, used by both `examine` and the inventory verbs.
+      `examine` now walks room mobs → room items → inventory items.
+      `door` `lock` / `unlock` (§10) read keys from inventory rather
+      than the room-floor placeholder. New CharacterRepo write-throughs
+      `RecordInventory` / `RecordCoin` mirror the `RecordCore` pattern
+      (single targeted UPDATE per call). Pending: `put` / `take from`
+      container verbs (block on §9 container nesting), keyword
+      disambiguation in non-inventory commands (move/teleport),
+      coin weight in the carry calculation.
 - [ ] `wear`, `wield`, `remove`, slot validation — `equipment`
       table keyed by `(character_id, slot)`. `wear <item>` picks
       first slot the item permits; `wear <item> <slot>` forces.

@@ -88,10 +88,125 @@ func (r *MemoryItemRepo) ListInRoom(_ context.Context, roomID int64) ([]Item, er
 	defer r.mu.Unlock()
 	var out []Item
 	for _, i := range r.items {
-		if i.RoomID == roomID {
+		if i.RoomID == roomID && i.OwnerCharacterID == 0 {
 			out = append(out, i)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].NameLower < out[j].NameLower })
 	return out, nil
+}
+
+func (r *MemoryItemRepo) ListInInventory(_ context.Context, ownerCharID int64) ([]Item, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Item
+	for _, i := range r.items {
+		if i.OwnerCharacterID == ownerCharID && ownerCharID != 0 {
+			out = append(out, i)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].NameLower < out[j].NameLower })
+	return out, nil
+}
+
+func (r *MemoryItemRepo) GetByID(_ context.Context, id int64) (Item, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, i := range r.items {
+		if i.ID == id {
+			return i, nil
+		}
+	}
+	return Item{}, ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) SetOwner(_ context.Context, itemID, ownerCharID int64) error {
+	if ownerCharID == 0 {
+		return fmt.Errorf("set owner: ownerCharID must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID == itemID {
+			r.items[idx].OwnerCharacterID = ownerCharID
+			r.items[idx].RoomID = 0
+			return nil
+		}
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) SetRoom(_ context.Context, itemID, roomID int64) error {
+	if roomID == 0 {
+		return fmt.Errorf("set room: roomID must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID == itemID {
+			r.items[idx].RoomID = roomID
+			r.items[idx].OwnerCharacterID = 0
+			return nil
+		}
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) TransferRoomToOwner(_ context.Context, itemID, fromRoomID, toOwnerID int64) error {
+	if fromRoomID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer room->owner: ids must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID != itemID {
+			continue
+		}
+		if r.items[idx].RoomID != fromRoomID || r.items[idx].OwnerCharacterID != 0 {
+			return ErrItemMoved
+		}
+		r.items[idx].OwnerCharacterID = toOwnerID
+		r.items[idx].RoomID = 0
+		return nil
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) TransferOwnerToRoom(_ context.Context, itemID, fromOwnerID, toRoomID int64) error {
+	if fromOwnerID == 0 || toRoomID == 0 {
+		return fmt.Errorf("transfer owner->room: ids must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID != itemID {
+			continue
+		}
+		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 {
+			return ErrItemMoved
+		}
+		r.items[idx].RoomID = toRoomID
+		r.items[idx].OwnerCharacterID = 0
+		return nil
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) TransferOwnerToOwner(_ context.Context, itemID, fromOwnerID, toOwnerID int64) error {
+	if fromOwnerID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer owner->owner: ids must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID != itemID {
+			continue
+		}
+		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 {
+			return ErrItemMoved
+		}
+		r.items[idx].OwnerCharacterID = toOwnerID
+		return nil
+	}
+	return ErrItemNotFound
 }

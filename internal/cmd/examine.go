@@ -10,10 +10,14 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// NewExamine builds the `examine <target>` command. It resolves the
-// target against the room's mobs first, then the room's items, and
-// renders a detail block for the match. Inventory and equipment
-// resolution lands once §14 introduces those repos.
+// NewExamine builds the `examine <target>` command. Lookup order:
+//  1. mobs in the current room
+//  2. items on the floor of the current room
+//  3. items in the player's inventory (§14)
+//
+// Equipment-slot resolution will land alongside the §9 equipment-slots
+// bullet. Targets accept the ordinal `<n>.<keyword>` syntax via
+// MatchItem / MatchMob.
 func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "examine",
@@ -25,9 +29,6 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 			if c.Session.CurrentRoomID == 0 {
 				return c.Session.WriteString("{{There is nothing here to examine.}}::yellow\r\n")
 			}
-			// Join all args so multi-word targets like
-			// `examine town crier` work. Whitespace inside the
-			// target collapses to single spaces.
 			target := strings.ToLower(strings.TrimSpace(strings.Join(c.Args, " ")))
 			if target == "" {
 				return c.Session.WriteString("{{Examine what?}}::yellow\r\n")
@@ -38,7 +39,7 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 				slog.Error("examine: list mobs", "room", c.Session.CurrentRoomID, "error", err)
 				return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
 			}
-			if m, ok := matchMob(mobsList, target); ok {
+			if m, ok := MatchMob(target, mobsList); ok {
 				return c.Session.WriteString(renderMob(m))
 			}
 
@@ -47,34 +48,24 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 				slog.Error("examine: list items", "room", c.Session.CurrentRoomID, "error", err)
 				return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
 			}
-			if it, ok := matchItem(itemsList, target); ok {
+			if it, ok := MatchItem(target, itemsList); ok {
 				return c.Session.WriteString(renderItem(it))
+			}
+
+			if c.Session.CharacterID != 0 {
+				inv, err := items.ListInInventory(c.Ctx, c.Session.CharacterID)
+				if err != nil {
+					slog.Error("examine: list inventory", "char", c.Session.CharacterID, "error", err)
+					return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
+				}
+				if it, ok := MatchItem(target, inv); ok {
+					return c.Session.WriteString(renderItem(it))
+				}
 			}
 
 			return c.Session.WriteString("{{You don't see anything like that here.}}::yellow\r\n")
 		},
 	}
-}
-
-// matchMob returns the first mob whose lowercased name contains the
-// target as a whitespace-separated word prefix. Falls back to a plain
-// substring match so `examine crier` finds "a town crier".
-func matchMob(list []creature.MobInstance, target string) (creature.MobInstance, bool) {
-	for _, m := range list {
-		if nameMatches(m.Core.Name, target) {
-			return m, true
-		}
-	}
-	return creature.MobInstance{}, false
-}
-
-func matchItem(list []repo.Item, target string) (repo.Item, bool) {
-	for _, it := range list {
-		if nameMatches(it.Name, target) {
-			return it, true
-		}
-	}
-	return repo.Item{}, false
 }
 
 // nameMatches checks whether target matches name on a token-prefix

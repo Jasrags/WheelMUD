@@ -45,9 +45,8 @@ func dirLong(code string) string {
 }
 
 // playerHasKey reports whether the player can satisfy a key requirement
-// for an exit. Until §14 inventory lands, the placeholder accepts a
-// matching item present in the player's current room. AuthAdmin is
-// allowed to bypass entirely. exit.KeyExternalID == "" means no key is
+// for an exit. The key must be in the player's inventory (§14). AuthAdmin
+// bypasses the check entirely. exit.KeyExternalID == "" means no key is
 // configured: only Admin can lock/unlock such an exit at runtime.
 func playerHasKey(ctx context.Context, s *telnet.Session, exit repo.Exit, items repo.ItemRepo) bool {
 	if s.AuthLevel >= telnet.AuthAdmin {
@@ -56,15 +55,15 @@ func playerHasKey(ctx context.Context, s *telnet.Session, exit repo.Exit, items 
 	if exit.KeyExternalID == "" {
 		return false
 	}
-	if items == nil {
+	if items == nil || s.CharacterID == 0 {
 		return false
 	}
-	roomItems, err := items.ListInRoom(ctx, s.CurrentRoomID)
+	held, err := items.ListInInventory(ctx, s.CharacterID)
 	if err != nil {
-		slog.Debug("door: key lookup failed", "room", s.CurrentRoomID, "error", err)
+		slog.Debug("door: key lookup failed", "char", s.CharacterID, "error", err)
 		return false
 	}
-	for _, it := range roomItems {
+	for _, it := range held {
 		// Prefer the typed KeyStats.KeyID — that's the contract once
 		// item taxonomy (§9) lands. Fall through to ExternalID match
 		// so legacy items authored before migration 0015 still work.

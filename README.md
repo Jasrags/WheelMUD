@@ -9,10 +9,12 @@ width-aware reflow.
 > settlement/building) and persisted zones table, room/exit/item/mob
 > persistence with door verbs (open/close/lock/unlock/pick) and item
 > taxonomy (weapons/armor/containers/keys/etc.), movement + look +
-> examine + teleport, communication (say / tell / reply / channels),
-> session registry, persist manager, tick scheduler, and admin
-> inspectors (whereami, zones) are in. Combat, skills, inventory,
-> quests, OLC, area resets, and broader admin tooling are pending.
+> examine + teleport, inventory verbs (inventory/get/drop/give) with
+> Str-based encumbrance and currency-aware `give 5sp <name>`,
+> communication (say / tell / reply / channels), session registry,
+> persist manager, tick scheduler, and admin inspectors (whereami,
+> zones) are in. Combat, skills, quests, OLC, area resets, banks/
+> shops, and broader admin tooling are pending.
 > See [`ROADMAP.md`](ROADMAP.md) for the full punch list.
 
 ## Quick start
@@ -49,7 +51,7 @@ Environment variables, all optional:
 ```
 cmd/server/         entrypoint
 telnet/             protocol, session, registry, mode stack, color, wrap
-internal/cmd/       concrete commands (look, move, say, channel, who, examine, door verbs, zones, ...)
+internal/cmd/       concrete commands (look, move, say, channel, who, examine, door verbs, inventory verbs, zones, ...)
 internal/mode/      login, character_select, character_create, game, postauth
 internal/repo/      account, character, room, exit, item, mob_*, channeling, channel, zone
 internal/db/        sql.DB open + embedded migrations

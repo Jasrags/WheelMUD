@@ -68,10 +68,13 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `quit`, `colors`, `who`, `say`, `tell`, `reply`, `alias`/`unalias`, one
   verb per channel catalog row plus a `channels` overview, `help`, `look`,
   `examine`, the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`,
-  the door verbs (`open`/`close`/`lock`/`unlock`/`pick`), and the admin
-  inspectors (`whereami`, `zones`). New commands take their dependencies
-  (repos, registry, sessions, bus) by parameter and return a
-  `*telnet.Command`.
+  the door verbs (`open`/`close`/`lock`/`unlock`/`pick`), the inventory
+  verbs (`inventory`/`get`/`drop`/`give`), and the admin inspectors
+  (`whereami`, `zones`). New commands take their dependencies (repos,
+  registry, sessions, bus) by parameter and return a `*telnet.Command`.
+  Item/mob keyword resolution (including ordinal `2.sword`) goes through
+  `keyword.go::MatchItem` / `MatchMob`; encumbrance bands come from
+  `encumbrance.go::LoadFor` (Str-keyed d20 carrying-capacity table).
 
 - **`internal/mode/`** — login, character_select, character_create, game,
   postauth promotion. `promoteToGame` stamps `CharacterID`,
@@ -83,7 +86,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0016. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0017. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -91,7 +94,9 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   0013 added room extra-descs JSON; 0014 added exit door flags + key
   + lock difficulty + description; 0015 added the item taxonomy
   columns; 0016 added the `zones` table + `rooms.zone_id` (soft FK,
-  default 0; loader stamps real ids).
+  default 0; loader stamps real ids); 0017 added
+  `items.owner_character_id` (nullable, soft FK) so items can sit on
+  a room floor or in a character's inventory but never both.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
@@ -151,6 +156,17 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   roomInsertValues`; the loader writes raw SQL inside one transaction
   rather than going through `RoomRepo.Create`, so the column lists are
   duplicated and must move in lock-step.
+- New columns on `items` need to land in `itemSelectCols`,
+  `scanItemRow`, the `Create` INSERT, AND the loader-side INSERT in
+  `internal/world/loader.go::insertItems` (raw SQL, single transaction).
+  Same lock-step rule as rooms.
+- Items live in exactly one location: either `room_id` is set (on the
+  floor) or `owner_character_id` is set (in someone's inventory), never
+  both. `ItemRepo.SetOwner` / `SetRoom` flip both columns atomically;
+  do not write the columns directly. `Character.Inventory` (JSON id
+  list on `inventory_json`) is just the display ordering — SQL
+  `owner_character_id` is the source of truth, and `inventory.go::
+  orderInventory` self-heals stale or missing JSON entries.
 
 ## Tests
 
@@ -160,7 +176,8 @@ alias table, every repo (memory + sqlite, including the new ZoneRepo),
 the world loader (including zone metadata + room.zone_id linkage), the
 session registry, the eventbus, the tick scheduler, the persist
 manager, and the concrete commands (look / move / say / tell / reply /
-channel / teleport / alias / examine / door verbs / whereami / zones).
+channel / teleport / alias / examine / door verbs / inventory verbs /
+whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.
