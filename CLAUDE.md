@@ -34,7 +34,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 ## Architecture
 
 - **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0016), constructs every
+  `internal/db.Open` (runs embedded migrations 0001–0019), constructs every
   repo (accounts, characters, rooms, exits, items, mob_instances, zones,
   channels), runs `world.LoadAndSync` to seed the DB from `WORLD_DIR`,
   builds the command registry plus a `server` struct holding long-lived
@@ -86,7 +86,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0017. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0019. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -96,7 +96,11 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   columns; 0016 added the `zones` table + `rooms.zone_id` (soft FK,
   default 0; loader stamps real ids); 0017 added
   `items.owner_character_id` (nullable, soft FK) so items can sit on
-  a room floor or in a character's inventory but never both.
+  a room floor or in a character's inventory but never both; 0018
+  briefly placed `auth_level` on accounts; 0019 moved it to
+  characters (so one account can own admin and player characters
+  side-by-side) and dropped `accounts.auth_level`. Existing rows
+  inherited their account's level via the 0019 backfill.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
@@ -149,7 +153,14 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   surface as warnings instead of taking down the process.
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
-  (`internal/repo/character_sql.go`); ordering is load-bearing.
+  (`internal/repo/character_sql.go`); ordering is load-bearing. The
+  `auth_level` column is the most recent example — see 0019.
+- AuthLevel lives on the character row, not the account. The session
+  stays at AuthGuest through login + account-create; it's stamped by
+  `mode/postauth.promoteToGame` from `Character.AuthLevel` once a
+  character is selected. `CharacterRepo.Create` atomically promotes
+  the very first character on the server to AuthAdmin so a fresh
+  deploy has a working operator without manual SQL.
 - New columns on `rooms` need to land in BOTH `roomSelectCols` AND the
   `insertCols`/`insertVals` lists in `internal/repo/room_sqlite.go`
   AND the `cols`/`vals` materialized in `internal/world/loader.go::

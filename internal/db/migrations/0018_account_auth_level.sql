@@ -1,0 +1,16 @@
+-- 0018_account_auth_level.sql
+--
+-- Adds auth_level to accounts so the privilege a session has earned is
+-- persisted instead of being hardcoded to AuthPlayer at login time.
+-- Values mirror telnet.AuthLevel: 0 = AuthGuest, 1 = AuthPlayer, 2 =
+-- AuthAdmin. Default 1 (AuthPlayer) — the create-account flow promotes
+-- the very first account on the server to AuthAdmin so a fresh deploy
+-- has a working admin without a manual SQL bootstrap.
+--
+-- Pre-existing rows (created before this migration ran) inherit the
+-- column DEFAULT — i.e. AuthPlayer. We deliberately do not promote any
+-- legacy row to admin: operators on a server that predates this
+-- migration must hand-stamp the intended admin row via SQL. Guessing
+-- the admin from row id or creation order would silently grant
+-- privilege based on history rather than intent.
+ALTER TABLE accounts ADD COLUMN auth_level INTEGER NOT NULL DEFAULT 1;

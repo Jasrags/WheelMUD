@@ -44,6 +44,27 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	s.CurrentRoomID = c.CurrentRoomID
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
+	// AuthLevel lives on the character. CharacterRepo.Create promotes
+	// the very first character on a fresh deploy to admin atomically,
+	// so this restore picks up that promotion as well as any later
+	// admin-grant tooling.
+	//
+	// Floor policy (deliberate): if a character somehow ends up
+	// stored at AuthGuest (0), we log it as an error and clamp the
+	// session to AuthPlayer rather than refusing to promote. The
+	// alternative — fail-closed and lock the player out — was
+	// considered and rejected because the only way a row can land
+	// at guest is a backfill miss in migration 0019 or a buggy
+	// future code path; in both cases the operator-visible
+	// slog.Error gives us a paper trail without taking the player
+	// offline. If this tradeoff ever changes, return an error from
+	// promoteToGame instead of clamping.
+	s.AuthLevel = telnet.AuthLevel(c.AuthLevel)
+	if s.AuthLevel < telnet.AuthPlayer {
+		slog.Error("postauth: character stored at sub-player auth level",
+			"character", c.ID, "level", c.AuthLevel)
+		s.AuthLevel = telnet.AuthPlayer
+	}
 	if s.CurrentRoomID == 0 {
 		// Defensive: a character row missing a room id (e.g. created
 		// before the column existed) gets dropped at the starter so

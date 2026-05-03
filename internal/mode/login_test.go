@@ -56,8 +56,20 @@ func newLoginFixtureChars(t *testing.T, charNames []string) *loginFixture {
 	if err != nil {
 		t.Fatalf("seed account: %v", err)
 	}
+	// Burn the first-character-on-this-server admin bootstrap on a
+	// throwaway so Alice's named characters land at the player tier
+	// the happy-path tests assert on. CharacterRepo.Create promotes
+	// the very first character atomically; any character after that
+	// honors the caller's AuthLevel.
+	bootstrapAcc, err := ar.Create(context.Background(), repo.Account{Username: "BootstrapAcct", PasswordHash: hash})
+	if err != nil {
+		t.Fatalf("seed bootstrap account: %v", err)
+	}
+	if _, err := cr.Create(context.Background(), repo.Character{AccountID: bootstrapAcc.ID, Name: "BootstrapChar"}); err != nil {
+		t.Fatalf("seed bootstrap character: %v", err)
+	}
 	for _, name := range charNames {
-		if _, err := cr.Create(context.Background(), repo.Character{AccountID: acc.ID, Name: name}); err != nil {
+		if _, err := cr.Create(context.Background(), repo.Character{AccountID: acc.ID, Name: name, AuthLevel: repo.AuthLevelPlayer}); err != nil {
 			t.Fatalf("seed character %q: %v", name, err)
 		}
 	}
@@ -115,6 +127,46 @@ func TestLogin_HappyPath(t *testing.T) {
 	}
 	if got.FailedLoginCount != 0 {
 		t.Fatalf("failed count = %d, want 0", got.FailedLoginCount)
+	}
+}
+
+func TestPostAuth_AdminFromCharacter(t *testing.T) {
+	t.Helper()
+	server, client := net.Pipe()
+	t.Cleanup(func() { server.Close(); client.Close() })
+
+	ar := repo.NewMemoryAccountRepo()
+	cr := repo.NewMemoryCharacterRepo()
+	hash, _ := auth.Hash("correct-horse")
+	acc, _ := ar.Create(context.Background(), repo.Account{Username: "Admin", PasswordHash: hash})
+	// Burn the first-character bootstrap on a throwaway so the Hero
+	// character below is admin only because we explicitly set its
+	// AuthLevel — proving the level travels with the character row.
+	burnAcc, _ := ar.Create(context.Background(), repo.Account{Username: "Burn", PasswordHash: hash})
+	if _, err := cr.Create(context.Background(), repo.Character{AccountID: burnAcc.ID, Name: "BurnChar"}); err != nil {
+		t.Fatalf("seed bootstrap character: %v", err)
+	}
+	if _, err := cr.Create(context.Background(), repo.Character{AccountID: acc.ID, Name: "Hero", AuthLevel: repo.AuthLevelAdmin}); err != nil {
+		t.Fatalf("seed character: %v", err)
+	}
+	game := &stubMode{name: "game"}
+	login := NewLogin(ar, cr, session.NewRegistry(), game)
+	s := telnet.NewSession(server)
+	if err := s.PushMode(login); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	captured := &safeBuf{}
+	drainPeer(t, client, captured)
+
+	if err := login.Handle(context.Background(), s, "admin"); err != nil {
+		t.Fatalf("username step: %v", err)
+	}
+	if err := login.Handle(context.Background(), s, "correct-horse"); err != nil {
+		t.Fatalf("password step: %v", err)
+	}
+
+	if s.AuthLevel != telnet.AuthAdmin {
+		t.Fatalf("AuthLevel = %d, want AuthAdmin (character-level admin should restore via postauth)", s.AuthLevel)
 	}
 }
 

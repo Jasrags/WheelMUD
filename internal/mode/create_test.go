@@ -74,8 +74,11 @@ func TestCreate_HappyPath(t *testing.T) {
 	}
 	f.feed("hunter2-password")
 
-	if f.session.AuthLevel != telnet.AuthPlayer {
-		t.Fatalf("AuthLevel = %d, want AuthPlayer", f.session.AuthLevel)
+	// Account create no longer earns a privilege — session is still
+	// AuthGuest until CharacterCreate inserts a character and
+	// postauth.promoteToGame stamps the level from there.
+	if f.session.AuthLevel != telnet.AuthGuest {
+		t.Fatalf("AuthLevel = %d, want AuthGuest pre-character", f.session.AuthLevel)
 	}
 	if f.session.AccountID == 0 {
 		t.Fatal("AccountID not stamped after create")
@@ -107,6 +110,18 @@ func TestCreate_HappyPath(t *testing.T) {
 	}
 	if f.session.CharacterName != "Hero" {
 		t.Fatalf("CharacterName = %q, want Hero", f.session.CharacterName)
+	}
+	// First character on this in-memory repo → bootstrap promotes Hero
+	// to AuthAdmin, which postauth stamps onto the session.
+	if f.session.AuthLevel != telnet.AuthAdmin {
+		t.Fatalf("AuthLevel after first character = %d, want AuthAdmin", f.session.AuthLevel)
+	}
+	hero, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find Hero: %v", err)
+	}
+	if hero.AuthLevel != repo.AuthLevelAdmin {
+		t.Fatalf("Hero persisted AuthLevel = %d, want AuthLevelAdmin", hero.AuthLevel)
 	}
 }
 

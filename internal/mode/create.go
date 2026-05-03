@@ -138,7 +138,9 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	}
 
 	s.AccountID = a.ID
-	s.AuthLevel = telnet.AuthPlayer
+	// Account create no longer earns a privilege; postauth.promoteToGame
+	// stamps the session AuthLevel from the chosen character once
+	// CharacterCreate runs. Session stays at AuthGuest until then.
 	// Single-session-per-account: bind and disconnect any prior
 	// occupant. New accounts shouldn't have prior sessions, but this
 	// keeps the bind/unbind path uniform.

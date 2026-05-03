@@ -46,26 +46,44 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 		jsons.questLog, jsons.dialogueState, jsons.equipment, jsons.inventory,
 		jsons.channelSettings)...)
 
+	// Atomic first-character bootstrap: replace the trailing
+	// auth_level placeholder with a CASE expression that consults
+	// COUNT(*) at INSERT time. SQLite holds its writer mutex for the
+	// entirety of an INSERT statement, so two parallel inserts can't
+	// both observe COUNT=0. RETURNING auth_level reads back whichever
+	// branch fired so the returned Character reflects the actual
+	// stored value.
+	//
+	// args is laid out [non-auth-cols ..., c.AuthLevel]; the CASE
+	// consumes the trailing ? as the ELSE branch. Total placeholder
+	// count remains len(args).
+	authPlaceholder := fmt.Sprintf(
+		`CASE WHEN (SELECT COUNT(*) FROM characters)=0 THEN %d ELSE ? END`,
+		AuthLevelAdmin,
+	)
+	bodyPh := placeholders(len(args) - 1) // all simple ?'s except auth_level
 	query := fmt.Sprintf(
 		`INSERT INTO characters(
 			account_id, name, name_lower, created_at, current_room_id,
 			%s,
 			%s
-		) VALUES (%s)`,
-		charCoreColumns, charPlayerColumns, placeholders(len(args)),
+		) VALUES (%s, %s)
+		 RETURNING id, auth_level`,
+		charCoreColumns, charPlayerColumns, bodyPh, authPlaceholder,
 	)
-	res, err := r.db.ExecContext(ctx, query, args...)
-	if err != nil {
+
+	var (
+		id        int64
+		authLevel uint8
+	)
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&id, &authLevel); err != nil {
 		if isUniqueViolation(err) {
 			return Character{}, ErrDuplicateCharacterName
 		}
 		return Character{}, fmt.Errorf("insert character: %w", err)
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Character{}, fmt.Errorf("last insert id: %w", err)
-	}
 	c.ID = id
+	c.AuthLevel = authLevel
 	return c, nil
 }
 
@@ -218,6 +236,12 @@ func scanCharacter(s scanner) (Character, error) {
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
+	}
+	// Defense-in-depth: a corrupt row with auth_level outside the
+	// known enum range would silently amplify privilege when stamped
+	// onto the session in postauth. Reject explicitly.
+	if c.AuthLevel > AuthLevelMax {
+		return Character{}, fmt.Errorf("scan character: invalid auth_level %d", c.AuthLevel)
 	}
 	if lastPlayed.Valid {
 		t := lastPlayed.Time

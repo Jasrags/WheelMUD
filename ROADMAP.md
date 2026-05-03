@@ -129,6 +129,12 @@ constants and helpers in `telnet/iac.go`.
 - [x] Sample commands: `quit`, `who`, `help`, `colors`
 - [x] `AuthLevel` enforcement in `Registry.Dispatch` — denials render as
       `"Unknown command"` so privileged verbs can't be enumerated
+- [x] Persisted AuthLevel on the **character** row (migrations 0018/0019;
+      0018 introduced it on accounts, 0019 moved it to characters so a
+      single account can own admin and player characters side-by-side).
+      `CharacterRepo.Create` atomically promotes the very first
+      character on the server to AuthAdmin; `mode/postauth.promoteToGame`
+      stamps `s.AuthLevel` from the chosen character.
 - [x] Per-command argument completer — `Command.Completer` field;
       `help` ships a real one (sample: tab on `help <prefix>`)
 - [ ] Command cooldowns / lag system (combat balance lever) — add

@@ -30,6 +30,11 @@ func (r *MemoryCharacterRepo) Create(_ context.Context, c Character) (Character,
 	if _, exists := r.byLower[c.NameLower]; exists {
 		return Character{}, ErrDuplicateCharacterName
 	}
+	// First-character bootstrap mirrors sqlite Create. Holding mu
+	// makes the count + insert atomic for free.
+	if len(r.byLower) == 0 {
+		c.AuthLevel = AuthLevelAdmin
+	}
 	r.nextID++
 	c.ID = r.nextID
 	if c.CreatedAt.IsZero() {

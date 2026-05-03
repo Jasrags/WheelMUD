@@ -60,6 +60,7 @@ func (m *CharacterCreate) Handle(ctx context.Context, s *telnet.Session, line st
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID: s.AccountID,
 		Name:      name,
+		AuthLevel: repo.AuthLevelPlayer,
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):

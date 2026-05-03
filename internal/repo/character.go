@@ -83,13 +83,37 @@ type Character struct {
 	// means they're listening on the default. Kept sparse so the
 	// JSON column stays small for the common (all-defaults) case.
 	ChannelSettings map[string]bool
+
+	// AuthLevel mirrors telnet.AuthLevel as a plain uint8 to avoid
+	// coupling the repo package to telnet. Use the AuthLevel*
+	// constants below. postauth.promoteToGame copies this onto
+	// session.AuthLevel when the character is selected, so a single
+	// account can own admin and player characters side-by-side.
+	AuthLevel uint8
 }
+
+// AuthLevel constants mirror telnet.AuthLevel. Defined on the repo
+// package so SQL plumbing and bootstrap logic can reference the enum
+// without importing telnet (which would invite a cycle once telnet
+// grows repo-aware helpers).
+const (
+	AuthLevelGuest  uint8 = 0
+	AuthLevelPlayer uint8 = 1
+	AuthLevelAdmin  uint8 = 2
+	AuthLevelMax          = AuthLevelAdmin
+)
 
 // CharacterRepo is the persistence boundary character-select / character-
 // create modes talk to.
 type CharacterRepo interface {
 	// Create inserts a new character. Returns ErrDuplicateCharacterName
 	// when NameLower already exists.
+	//
+	// Bootstrap: if the characters table is empty when Create runs,
+	// the new row is forced to AuthLevelAdmin atomically (the count
+	// and insert run in a single transaction) so a fresh deploy has
+	// a working operator without manual SQL. The caller's AuthLevel
+	// is overridden in that single case; subsequent calls honor it.
 	Create(ctx context.Context, c Character) (Character, error)
 	// FindByName resolves a character by case-insensitive name.
 	// Returns ErrCharacterNotFound when missing.

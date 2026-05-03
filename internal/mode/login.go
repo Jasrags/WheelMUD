@@ -186,7 +186,10 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
 	}
 	s.AccountID = l.account.ID
-	s.AuthLevel = telnet.AuthPlayer
+	// Login no longer earns a privilege — the session stays at
+	// AuthGuest until postauth.promoteToGame stamps the chosen
+	// character's auth_level. This lets one account own admin and
+	// player characters side-by-side.
 	// Single-session-per-account: bind this session in the registry
 	// and disconnect any prior occupant. The previous session's read
 	// loop will EOF on Conn.Close and tear down via the existing path.

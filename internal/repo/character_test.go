@@ -247,6 +247,35 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/first_character_promoted_to_admin", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		// Caller asks for player; repo overrides to admin because the
+		// characters table is empty.
+		first, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Lan", AuthLevel: AuthLevelPlayer})
+		if err != nil {
+			t.Fatalf("first create: %v", err)
+		}
+		if first.AuthLevel != AuthLevelAdmin {
+			t.Fatalf("first character AuthLevel = %d, want AuthLevelAdmin", first.AuthLevel)
+		}
+		got, _ := cr.FindByName(ctx, "Lan")
+		if got.AuthLevel != AuthLevelAdmin {
+			t.Fatalf("first character AuthLevel persisted = %d, want AuthLevelAdmin", got.AuthLevel)
+		}
+
+		// Second character on the same account honors the requested
+		// level — admin is per-character, not per-account.
+		second, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Nynaeve", AuthLevel: AuthLevelPlayer})
+		if err != nil {
+			t.Fatalf("second create: %v", err)
+		}
+		if second.AuthLevel != AuthLevelPlayer {
+			t.Fatalf("second character AuthLevel = %d, want AuthLevelPlayer", second.AuthLevel)
+		}
+	})
+
 	t.Run(name+"/list_by_account_isolates", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

@@ -179,6 +179,40 @@ func TestCharacterCreate_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCharacterCreate_FirstCharacterIsAdmin(t *testing.T) {
+	f := pushCharacterCreate(t)
+	f.feed("Hero")
+	got, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got.AuthLevel != repo.AuthLevelAdmin {
+		t.Fatalf("first character AuthLevel = %d, want AuthLevelAdmin", got.AuthLevel)
+	}
+	if f.session.AuthLevel != telnet.AuthAdmin {
+		t.Fatalf("session AuthLevel = %d, want AuthAdmin", f.session.AuthLevel)
+	}
+}
+
+func TestCharacterCreate_SecondCharacterIsPlayer(t *testing.T) {
+	f := pushCharacterCreate(t)
+	// Burn the bootstrap admin slot on a throwaway character.
+	if _, err := f.chars.Create(context.Background(), repo.Character{AccountID: 999, Name: "Burn"}); err != nil {
+		t.Fatalf("seed bootstrap: %v", err)
+	}
+	f.feed("Hero")
+	got, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got.AuthLevel != repo.AuthLevelPlayer {
+		t.Fatalf("second character AuthLevel = %d, want AuthLevelPlayer", got.AuthLevel)
+	}
+	if f.session.AuthLevel != telnet.AuthPlayer {
+		t.Fatalf("session AuthLevel = %d, want AuthPlayer", f.session.AuthLevel)
+	}
+}
+
 func TestCharacterCreate_RejectsReservedNames(t *testing.T) {
 	for _, name := range []string{"create", "quit", "QUIT"} {
 		t.Run(name, func(t *testing.T) {
