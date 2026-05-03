@@ -78,7 +78,7 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 			Name:       "Deep Cavern",
 			LongDesc:   "Damp stone walls.",
 			Flags: RoomFlags{
-				Indoors: true, NoTeleport: true, Dark: true, Silent: true, Peaceful: true,
+				Indoors: true, NoTeleport: true, Dark: true, Silent: true, Peaceful: true, NoMap: true,
 			},
 			Sector:     SectorUnderground,
 			LightLevel: 0,
@@ -99,8 +99,8 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 			t.Errorf("LightLevel = %d, want 0", got.LightLevel)
 		}
 		if !got.Flags.Dark || !got.Flags.Silent || !got.Flags.Indoors ||
-			!got.Flags.Peaceful || !got.Flags.NoTeleport || got.Flags.NoPVP {
-			t.Errorf("Flags = %+v, want indoors+noteleport+dark+silent+peaceful only", got.Flags)
+			!got.Flags.Peaceful || !got.Flags.NoTeleport || !got.Flags.NoMap || got.Flags.NoPVP {
+			t.Errorf("Flags = %+v, want indoors+noteleport+dark+silent+peaceful+nomap only", got.Flags)
 		}
 		if got.CoordX != -3 || got.CoordY != 7 || got.CoordZ != -1 {
 			t.Errorf("Coords = (%d,%d,%d), want (-3,7,-1)", got.CoordX, got.CoordY, got.CoordZ)

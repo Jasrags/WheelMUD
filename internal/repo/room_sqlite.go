@@ -19,7 +19,7 @@ func NewSQLiteRoomRepo(db *sql.DB) *SQLiteRoomRepo {
 }
 
 const roomSelectCols = `id, external_id, zone_id, name, short_desc, long_desc, ` +
-	`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
+	`indoors, nopvp, noteleport, dark, silent, peaceful, nomap, ` +
 	`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 
 func (r *SQLiteRoomRepo) FindByID(ctx context.Context, id int64) (Room, error) {
@@ -61,13 +61,14 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 	}
 
 	insertCols := `external_id, zone_id, name, short_desc, long_desc, ` +
-		`indoors, nopvp, noteleport, dark, silent, peaceful, ` +
+		`indoors, nopvp, noteleport, dark, silent, peaceful, nomap, ` +
 		`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
 	insertVals := []any{
 		room.ExternalID, room.ZoneID, room.Name, room.ShortDesc, room.LongDesc,
 		boolToInt(room.Flags.Indoors), boolToInt(room.Flags.NoPVP),
 		boolToInt(room.Flags.NoTeleport), boolToInt(room.Flags.Dark),
 		boolToInt(room.Flags.Silent), boolToInt(room.Flags.Peaceful),
+		boolToInt(room.Flags.NoMap),
 		string(room.Sector), room.LightLevel, room.CoordX, room.CoordY, room.CoordZ,
 		extraJSON, room.CreatedAt,
 	}
@@ -101,14 +102,14 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 
 func scanRoom(row *sql.Row) (Room, error) {
 	var (
-		room                                               Room
-		indoors, nopvp, noteleport, dark, silent, peaceful int
-		sector                                             string
-		extraJSON                                          string
+		room                                                      Room
+		indoors, nopvp, noteleport, dark, silent, peaceful, nomap int
+		sector                                                    string
+		extraJSON                                                 string
 	)
 	err := row.Scan(
 		&room.ID, &room.ExternalID, &room.ZoneID, &room.Name, &room.ShortDesc, &room.LongDesc,
-		&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful,
+		&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful, &nomap,
 		&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ,
 		&extraJSON, &room.CreatedAt,
 	)
@@ -125,6 +126,7 @@ func scanRoom(row *sql.Row) (Room, error) {
 		Dark:       dark != 0,
 		Silent:     silent != 0,
 		Peaceful:   peaceful != 0,
+		NoMap:      nomap != 0,
 	}
 	room.Sector = Sector(sector)
 	descs, err := unmarshalExtraDescs(extraJSON)

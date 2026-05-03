@@ -151,6 +151,8 @@ type RoomFlags struct {
 	Dark       bool `yaml:"dark"`
 	Silent     bool `yaml:"silent"`
 	Peaceful   bool `yaml:"peaceful"`
+	// NoMap hides the room from the §10 BFS minimap. See repo.RoomFlags.NoMap.
+	NoMap bool `yaml:"nomap"`
 }
 
 // Coords is an optional position used by §10 map/track. Authoring is

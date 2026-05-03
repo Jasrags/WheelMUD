@@ -336,7 +336,7 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 		}
 	}
 	cols := `external_id, name, short_desc, long_desc,
-		indoors, nopvp, noteleport, dark, silent, peaceful,
+		indoors, nopvp, noteleport, dark, silent, peaceful, nomap,
 		sector, light_level, coord_x, coord_y, coord_z, extra_descs_json,
 		zone_id`
 	vals := []any{
@@ -344,6 +344,7 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
 		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
 		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
+		repo.BoolToInt(r.Flags.NoMap),
 		sector, light, x, y, z, extraJSON,
 		zoneID,
 	}

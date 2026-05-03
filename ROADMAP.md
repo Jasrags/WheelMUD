@@ -605,12 +605,23 @@ will need on top of those tables.
       (waits on §9 container semantics), keyword-disambiguation
       (`2.guard` syntax — also a §14 follow-up), and richer item
       condition/durability once items grow a stat block.
-- [ ] `map` / mini-map ASCII rendering — BFS from the current room
-      out to a configurable depth (default 3), lay out by exit
-      direction onto a grid (north decreases y, east increases x),
-      render with `[*]` for current, `[ ]` for visited, `:` for
-      unknown. Up/down indicated with `^v` glyphs in the cell.
-      Skips rooms with the `nomap` flag.
+- [x] `map` / mini-map ASCII rendering — `internal/cmd/map.go`. BFS
+      from the current room (default depth 3, `map <n>` clamped to
+      1..5). Lays cells onto a 2D grid via per-direction unit vectors
+      in `dirVec` (north decreases y, east increases x; diagonals are
+      integer ±1 steps; vertical exits decorate the source cell).
+      Renders `[*]` current, `[ ]` visited, `[?]` for `nomap`
+      destinations + depth boundary, `[^]`/`[v]`/`[%]` for cells with
+      up/down/both. Connectors (`-`, `|`, `\`, `/`) are drawn from
+      actual exits, never grid adjacency, so two visited rooms that
+      lack an exit between them stay disconnected. Hidden exits are
+      skipped (mirrors look). NoMap rooms render `[?]` and the BFS
+      does not recurse through them. First-visit-wins for cycles and
+      grid conflicts. Migration `0020_room_nomap.sql` adds the flag
+      column; `repo.RoomFlags.NoMap` and `world.RoomFlags.NoMap` mirror
+      it. Not yet shipped: dynamic depth from `Session.Width`, door
+      state in connectors, depth-boundary `[?]` hint when a visited
+      cell has unrecursed exits.
 - [ ] Trails / `track` command — `mob_trails` ring buffer keyed by
       `(mob_id, room_id, ts)` updated on every move; `track <name>`
       finds the freshest trail entry within the last N minutes and

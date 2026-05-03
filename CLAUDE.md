@@ -34,7 +34,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 ## Architecture
 
 - **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0019), constructs every
+  `internal/db.Open` (runs embedded migrations 0001–0020), constructs every
   repo (accounts, characters, rooms, exits, items, mob_instances, zones,
   channels), runs `world.LoadAndSync` to seed the DB from `WORLD_DIR`,
   builds the command registry plus a `server` struct holding long-lived
@@ -69,8 +69,9 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   verb per channel catalog row plus a `channels` overview, `help`, `look`,
   `examine`, the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`,
   the door verbs (`open`/`close`/`lock`/`unlock`/`pick`), the inventory
-  verbs (`inventory`/`get`/`drop`/`give`), and the admin inspectors
-  (`whereami`, `zones`). New commands take their dependencies (repos,
+  verbs (`inventory`/`get`/`drop`/`give`), the BFS minimap (`map`,
+  default depth 3, max 5), and the admin inspectors (`whereami`,
+  `zones`). New commands take their dependencies (repos,
   registry, sessions, bus) by parameter and return a `*telnet.Command`.
   Item/mob keyword resolution (including ordinal `2.sword`) goes through
   `keyword.go::MatchItem` / `MatchMob`; encumbrance bands come from
@@ -86,7 +87,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0019. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0020. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -100,7 +101,9 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   briefly placed `auth_level` on accounts; 0019 moved it to
   characters (so one account can own admin and player characters
   side-by-side) and dropped `accounts.auth_level`. Existing rows
-  inherited their account's level via the 0019 backfill.
+  inherited their account's level via the 0019 backfill. 0020 added
+  `rooms.nomap` so the §10 minimap can hide secret hideouts and admin
+  zones from the player-facing BFS.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).

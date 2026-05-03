@@ -340,6 +340,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewMap(rooms, exits)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewWhereAmI(rooms)); err != nil {
 		return nil, err
 	}

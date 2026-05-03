@@ -35,6 +35,10 @@ type RoomFlags struct {
 	Dark       bool
 	Silent     bool
 	Peaceful   bool
+	// NoMap hides the room from the §10 BFS minimap. Neighbors render
+	// it as `[?]` and the BFS does not recurse through it, so secret
+	// hideouts and admin zones stay topologically opaque.
+	NoMap bool
 }
 
 // Room is the canonical "place" in the world. Description text is rendered
