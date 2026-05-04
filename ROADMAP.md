@@ -818,9 +818,14 @@ will need on top of those tables.
       writes back to LastTellFrom (`NewReply`). Pending: `whisper`
       (room-local with bystanders), ignore-list filtering, and the
       `nochannels` flag — all blocked on §6 / §13 ignore plumbing.
-- [ ] `shout` / `yell` (zone-wide) — broadcast to every session whose
-      character is in the same `zone_id`. Higher cost (small move
-      drain) to discourage spam. Suppressed in `silent` rooms.
+- [~] `shout` / `yell` (zone-wide) — `internal/cmd/shout.go` ships
+      both verbs sharing a `zoneBroadcast` helper that loads the
+      speaker's room, walks `sessions.Snapshot`, and `WriteAsync`s
+      to every peer whose room resolves to the same `zones.id`.
+      `shout` colors yellow, `yell` colors red. Self echoes
+      synchronously. Pre-login peers, unscoped rooms (zone 0),
+      and `silent`-flagged rooms are filtered. Deferred: small
+      move-drain to discourage spam.
 - [~] Channels (`ooc`, `gossip`, `newbie`) with on/off toggles —
       catalog table + repo
       (`internal/repo/channel{,_sqlite,_memory,_test}.go`,

@@ -329,6 +329,8 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(
 		cmd.NewWho(sessions),
 		cmd.NewSay(sessions, rooms),
+		cmd.NewShout(sessions, rooms),
+		cmd.NewYell(sessions, rooms),
 		cmd.NewTell(sessions),
 		cmd.NewReply(sessions),
 	); err != nil {
