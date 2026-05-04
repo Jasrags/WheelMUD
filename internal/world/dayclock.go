@@ -107,6 +107,15 @@ func (c *Clock) ticksPerDay() int64 {
 	return int64(c.dayDuration / c.tickInterval)
 }
 
+// TicksPerDay exposes the cycle length for callers (e.g. the `time`
+// admin command) that need to compute phase progress without
+// duplicating the dayDuration/tickInterval policy.
+func (c *Clock) TicksPerDay() int64 { return c.ticksPerDay() }
+
+// TickInterval is the wall-clock duration of one tick. Used to render
+// "ticks until dusk" as a human-readable real-time delta.
+func (c *Clock) TickInterval() time.Duration { return c.tickInterval }
+
 // Phase returns the current day-phase bucket.
 func (c *Clock) Phase() Phase {
 	tpd := c.ticksPerDay()

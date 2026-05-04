@@ -137,6 +137,9 @@ func main() {
 	wanderer := mob.NewWanderHandler(mobs, rooms, exits, mobTemplates, sessions)
 	buckets.Wander.Subscribe(wanderer.Tick)
 
+	phaseAmbients := world.NewPhaseAmbientWatcher(clock, rooms, sessions)
+	buckets.Phase.Subscribe(phaseAmbients.Tick)
+
 	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
 	srv := &server{
 		accounts:   accounts,
@@ -364,6 +367,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewWhereAmI(rooms, clock)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewTime(clock)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewTrack(mobs, rooms, exits)); err != nil {

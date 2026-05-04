@@ -106,6 +106,10 @@ type Buckets struct {
 	// Save fires the persist.Manager flush — see ROADMAP §7. Held
 	// here so the bucket lifetime tracks the rest of the game loop.
 	Save *Bucket
+	// Phase polls the day/night clock for boundary crossings and lets
+	// world.PhaseAmbientWatcher emit one ambient line per transition.
+	// Subscribers must be cheap; this fires once per second.
+	Phase *Bucket
 }
 
 // Default cadences for the game-loop pulse buckets. These can be
@@ -117,6 +121,7 @@ const (
 	DefaultAreaResetInterval = 5 * time.Minute
 	DefaultWanderInterval    = 20 * time.Second
 	DefaultSaveInterval      = 30 * time.Second
+	DefaultPhaseInterval     = 1 * time.Second
 )
 
 // NewBuckets registers the default game-loop buckets on s.
@@ -127,6 +132,7 @@ func NewBuckets(s *Scheduler) *Buckets {
 		AreaReset: NewBucket(s, "areaReset", DefaultAreaResetInterval),
 		Wander:    NewBucket(s, "wander", DefaultWanderInterval),
 		Save:      NewBucket(s, "save", DefaultSaveInterval),
+		Phase:     NewBucket(s, "phase", DefaultPhaseInterval),
 	}
 }
 
@@ -149,5 +155,8 @@ func (bs *Buckets) Stop() {
 	}
 	if bs.Save != nil {
 		bs.Save.Stop()
+	}
+	if bs.Phase != nil {
+		bs.Phase.Stop()
 	}
 }
