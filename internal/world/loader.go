@@ -437,13 +437,15 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[stri
 			return fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
 		flags := decodeItemFlags(it.Flags)
-		// Loader-spawned items always start on a room floor — no owner.
-		// owner_character_id stays NULL; the inventory verbs (§14)
-		// flip it on `get`.
+		// Loader-spawned items always start on a room floor — no owner,
+		// no parent container. owner_character_id and parent_item_id
+		// stay NULL; the inventory verbs flip them on `get` / `put`.
+		// YAML support for nested contents is a future slice; see the
+		// container-semantics plan.
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id,
+			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id,
 				type, weight_lbs, value_cp, quality, flags, stats_json)
-			 VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
 			it.ID, it.Name, strings.ToLower(it.Name), it.Short, roomID,
 			string(t), it.Weight, int64(value), string(q),
 			int64(flags), statsJSON,

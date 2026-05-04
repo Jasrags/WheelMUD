@@ -279,3 +279,139 @@ func TestKeyword_OrdinalMatch(t *testing.T) {
 		t.Errorf("MatchItem(empty) should miss")
 	}
 }
+
+func TestPut_HappyPath(t *testing.T) {
+	f := newInvFixture(t)
+	bag := f.items.Insert(repo.Item{
+		ExternalID: "bag", Name: "a leather pack", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 30},
+	})
+	torch := f.items.Insert(repo.Item{
+		ExternalID: "torch", Name: "a torch", OwnerCharacterID: f.alice.CharacterID, Weight: 1,
+	})
+
+	runCmd(t, NewPut(f.items, f.characters, f.sessions), f.alice, "torch in pack")
+	if !strings.Contains(f.aOut.String(), "You put a torch in a leather pack") {
+		t.Fatalf("self echo missing; got %q", f.aOut.String())
+	}
+	if !strings.Contains(f.bOut.String(), "Alice puts a torch in a leather pack") {
+		t.Fatalf("room broadcast missing; got %q", f.bOut.String())
+	}
+	got, _ := f.items.GetByID(context.Background(), torch.ID)
+	if got.ParentItemID != bag.ID || got.OwnerCharacterID != 0 {
+		t.Fatalf("torch not nested: %+v", got)
+	}
+}
+
+func TestPut_TooHeavyRefuses(t *testing.T) {
+	f := newInvFixture(t)
+	f.items.Insert(repo.Item{
+		ExternalID: "tinybag", Name: "a tiny bag", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 1},
+	})
+	f.items.Insert(repo.Item{
+		ExternalID: "boulder", Name: "a boulder", OwnerCharacterID: f.alice.CharacterID, Weight: 50,
+	})
+	runCmd(t, NewPut(f.items, f.characters, f.sessions), f.alice, "boulder in bag")
+	if !strings.Contains(f.aOut.String(), "can't hold any more") {
+		t.Fatalf("expected capacity refusal; got %q", f.aOut.String())
+	}
+}
+
+func TestPut_SelfLoopRefuses(t *testing.T) {
+	f := newInvFixture(t)
+	f.items.Insert(repo.Item{
+		ExternalID: "sack", Name: "a sack", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 10},
+	})
+	runCmd(t, NewPut(f.items, f.characters, f.sessions), f.alice, "sack in sack")
+	if !strings.Contains(f.aOut.String(), "in itself") {
+		t.Fatalf("expected self refusal; got %q", f.aOut.String())
+	}
+}
+
+func TestPut_NoDropToFloorContainerRefuses(t *testing.T) {
+	f := newInvFixture(t)
+	// chest sits on the floor; cursed ring is in alice's inventory.
+	f.items.Insert(repo.Item{
+		ExternalID: "chest", Name: "a wooden chest", RoomID: 1,
+		Type: repo.ItemTypeContainer, Weight: 5,
+		Stats: &repo.ContainerStats{CapacityLbs: 50},
+	})
+	f.items.Insert(repo.Item{
+		ExternalID: "ring", Name: "a cursed ring",
+		OwnerCharacterID: f.alice.CharacterID, Weight: 0.1,
+		Flags:            repo.FlagNoDrop,
+	})
+	runCmd(t, NewPut(f.items, f.characters, f.sessions), f.alice, "ring in chest")
+	if !strings.Contains(f.aOut.String(), "won't budge") {
+		t.Fatalf("expected NoDrop refusal; got %q", f.aOut.String())
+	}
+}
+
+func TestGetFrom_HappyPath(t *testing.T) {
+	f := newInvFixture(t)
+	bag := f.items.Insert(repo.Item{
+		ExternalID: "bag", Name: "a pack", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 10},
+	})
+	gem := f.items.Insert(repo.Item{
+		ExternalID: "gem", Name: "a ruby gem", ParentItemID: bag.ID, Weight: 0.1,
+	})
+	runCmd(t, NewGet(f.items, f.characters, f.sessions), f.alice, "gem from pack")
+	if !strings.Contains(f.aOut.String(), "You take a ruby gem from a pack") {
+		t.Fatalf("self echo missing; got %q", f.aOut.String())
+	}
+	got, _ := f.items.GetByID(context.Background(), gem.ID)
+	if got.OwnerCharacterID != f.alice.CharacterID || got.ParentItemID != 0 {
+		t.Fatalf("gem not transferred: %+v", got)
+	}
+}
+
+func TestInventory_RendersContainerContents(t *testing.T) {
+	f := newInvFixture(t)
+	bag := f.items.Insert(repo.Item{
+		ExternalID: "bag", Name: "a pack", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 10},
+	})
+	f.items.Insert(repo.Item{
+		ExternalID: "gem", Name: "a tiny gem", ParentItemID: bag.ID, Weight: 0.1,
+	})
+	runCmd(t, NewInventory(f.items, f.characters), f.alice, "")
+	out := f.aOut.String()
+	if !strings.Contains(out, "a pack") {
+		t.Fatalf("expected pack in output; got %q", out)
+	}
+	if !strings.Contains(out, "a tiny gem") {
+		t.Fatalf("expected nested gem in output; got %q", out)
+	}
+}
+
+func TestCarriedWeight_RecursesAndAppliesMult(t *testing.T) {
+	f := newInvFixture(t)
+	// bag-of-holding (mult 0.1) + 100 lb of stuff inside; reads as 10 lb.
+	bag := f.items.Insert(repo.Item{
+		ExternalID: "boh", Name: "a bag of holding", OwnerCharacterID: f.alice.CharacterID,
+		Type: repo.ItemTypeContainer, Weight: 1,
+		Stats: &repo.ContainerStats{CapacityLbs: 1000, WeightMult: 0.1},
+	})
+	f.items.Insert(repo.Item{
+		ExternalID: "anvil", Name: "an anvil", ParentItemID: bag.ID, Weight: 100,
+	})
+	w, err := carriedWeight(context.Background(), f.items, f.alice.CharacterID)
+	if err != nil {
+		t.Fatalf("carriedWeight: %v", err)
+	}
+	// bag (1) + 100 * 0.1 = 11.
+	if w != 11 {
+		t.Fatalf("carriedWeight = %v, want 11", w)
+	}
+	// Sanity: a non-mult container would read 101.
+	bag.Stats = &repo.ContainerStats{CapacityLbs: 1000, WeightMult: 1.0}
+	_ = bag
+}

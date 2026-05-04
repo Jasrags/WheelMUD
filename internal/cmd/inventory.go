@@ -31,16 +31,21 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 				slog.Error("inventory: character lookup failed", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You feel disoriented and cannot focus on yourself.}}::red\r\n")
 			}
-			held, err := items.ListInInventory(c.Ctx, s.CharacterID)
+			all, err := items.ListAllOwnedTransitive(c.Ctx, s.CharacterID)
 			if err != nil {
 				slog.Error("inventory: list failed", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You feel disoriented and cannot focus on yourself.}}::red\r\n")
 			}
-			byID := make(map[int64]repo.Item, len(held))
-			for _, it := range held {
+			byID := make(map[int64]repo.Item, len(all))
+			topLevel := make([]repo.Item, 0, len(all))
+			for _, it := range all {
 				byID[it.ID] = it
+				if it.ParentItemID == 0 {
+					topLevel = append(topLevel, it)
+				}
 			}
-			ordered := orderInventory(char.Inventory, held, byID)
+			ordered := orderInventory(char.Inventory, topLevel, byID)
+			idx := childrenOf(all)
 
 			var b strings.Builder
 			b.WriteString("{{You are carrying:}}::green|bold\r\n")
@@ -48,13 +53,11 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 				b.WriteString("  {{(nothing)}}::gray\r\n")
 			} else {
 				for _, it := range ordered {
-					b.WriteString("  {{")
-					b.WriteString(it.Name)
-					b.WriteString("}}::green\r\n")
+					renderInventoryNode(&b, it, idx, 1)
 				}
 			}
 
-			carried := totalWeight(ordered)
+			carried := totalCarriedWeight(ordered, idx)
 			str := int(char.Core.Abilities.Str.Current)
 			if str <= 0 {
 				str = 10 // safe default until char-create stamps abilities
@@ -92,7 +95,11 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 			if s.CurrentRoomID == 0 {
 				return s.WriteString("{{There is nothing here to take.}}::yellow\r\n")
 			}
-			target := strings.ToLower(strings.TrimSpace(strings.Join(c.Args, " ")))
+			itemArg, containerArg, fromForm := splitFromArgs(c.Args)
+			if fromForm {
+				return getFromContainer(c, items, characters, sessions, itemArg, containerArg)
+			}
+			target := strings.ToLower(strings.TrimSpace(itemArg))
 			floor, err := items.ListInRoom(c.Ctx, s.CurrentRoomID)
 			if err != nil {
 				slog.Error("get: list room failed", "room", s.CurrentRoomID, "error", err)
@@ -111,7 +118,7 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 				slog.Error("get: char lookup failed", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You feel disoriented.}}::red\r\n")
 			}
-			held, err := items.ListInInventory(c.Ctx, s.CharacterID)
+			carried, err := carriedWeight(c.Ctx, items, s.CharacterID)
 			if err != nil {
 				slog.Error("get: list inv failed", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
@@ -120,7 +127,6 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 			if str <= 0 {
 				str = 10
 			}
-			carried := totalWeight(held)
 			if load, _ := LoadFor(str, carried+it.Weight); load == creature.LoadOverloaded {
 				return s.WriteString("{{It's too heavy — you can't carry that much.}}::yellow\r\n")
 			}
@@ -398,12 +404,343 @@ func removeID(ids []int64, id int64) []int64 {
 	return out
 }
 
+// totalWeight sums the bare Weight field of a flat slice. Used by
+// callers (currently only the give-recipient gate) that haven't
+// fetched a transitive view of the carrier's inventory. Containers
+// they're holding aren't recursed here — that's a separate slice of
+// work for the give path; for now we err on the side of "let them
+// receive it" because a give already passed the giver's checks.
 func totalWeight(items []repo.Item) float64 {
 	var w float64
 	for _, it := range items {
 		w += it.Weight
 	}
 	return w
+}
+
+// totalCarriedWeight sums the effective burden on a carrier given
+// their top-level items and a nested-children index. Each top-level
+// item contributes its recursiveWeight (which folds in container
+// WeightMult). Use this anywhere encumbrance matters and a
+// transitive item slice is in hand.
+func totalCarriedWeight(topLevel []repo.Item, idx map[int64][]repo.Item) float64 {
+	var w float64
+	for _, it := range topLevel {
+		w += recursiveWeight(it, idx)
+	}
+	return w
+}
+
+// renderInventoryNode writes one item plus its container contents
+// (recursively) into b. depth is the indent level (1 == "  ", 2 ==
+// "    ") so the inventory listing reads as a small tree.
+func renderInventoryNode(b *strings.Builder, it repo.Item, idx map[int64][]repo.Item, depth int) {
+	for i := 0; i < depth; i++ {
+		b.WriteString("  ")
+	}
+	b.WriteString("{{")
+	b.WriteString(it.Name)
+	b.WriteString("}}::green\r\n")
+	if it.Type != repo.ItemTypeContainer {
+		return
+	}
+	children := idx[it.ID]
+	if len(children) == 0 {
+		for i := 0; i < depth+1; i++ {
+			b.WriteString("  ")
+		}
+		b.WriteString("{{(empty)}}::gray\r\n")
+		return
+	}
+	for _, child := range children {
+		renderInventoryNode(b, child, idx, depth+1)
+	}
+}
+
+// NewPut builds the `put <item> in|into <container>` command. The
+// container can be in the actor's inventory or on the room floor;
+// the item must be in the actor's top-level inventory (move it out
+// of one container before moving into another). Capacity, depth,
+// liquid-only, and self/cycle checks live in canPut.
+func NewPut(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
+	return &telnet.Command{
+		Name:      "put",
+		Help:      "Put <item> in <container> — stash it inside",
+		MinArgs:   3,
+		Auth:      telnet.AuthPlayer,
+		Completer: completePut(items),
+		Run: func(c *telnet.Context) error {
+			s := c.Session
+			itemArg, containerArg, ok := splitInArgs(c.Args)
+			if !ok {
+				return s.WriteString("{{Usage: put <item> in <container>}}::yellow\r\n")
+			}
+			itemTarget := strings.ToLower(strings.TrimSpace(itemArg))
+			containerTarget := strings.ToLower(strings.TrimSpace(containerArg))
+
+			held, err := items.ListInInventory(c.Ctx, s.CharacterID)
+			if err != nil {
+				slog.Error("put: list inv failed", "char", s.CharacterID, "error", err)
+				return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+			}
+			it, ok := MatchItem(itemTarget, held)
+			if !ok {
+				return s.WriteString("{{You aren't carrying that.}}::yellow\r\n")
+			}
+
+			// Container scope: top-level inventory first, then room
+			// floor. Only top-level — putting into a nested-deeper
+			// container would already need the player to fetch it
+			// out by hand for the next put, so allowing it here
+			// muddies the depth check semantics.
+			container, found := MatchItem(containerTarget, held)
+			containerOnFloor := false
+			if !found {
+				if s.CurrentRoomID != 0 {
+					floor, err := items.ListInRoom(c.Ctx, s.CurrentRoomID)
+					if err != nil {
+						slog.Error("put: list room failed", "room", s.CurrentRoomID, "error", err)
+						return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+					}
+					container, found = MatchItem(containerTarget, floor)
+					containerOnFloor = found
+				}
+			}
+			if !found {
+				return s.WriteString("{{You don't see that container here.}}::yellow\r\n")
+			}
+			if it.ID == container.ID {
+				return s.WriteString("{{You can't put it in itself.}}::yellow\r\n")
+			}
+			// NoDrop: if the destination container is on the floor,
+			// putting the item in is effectively dropping it. Refuse.
+			if containerOnFloor && it.HasFlag(repo.FlagNoDrop) {
+				return s.WriteString("{{It is stuck to your hand and won't budge.}}::yellow\r\n")
+			}
+
+			// Build a transitive view so canPut sees the whole tree
+			// the carrier is responsible for. If the container is on
+			// the floor, also fetch its contents so depth + capacity
+			// reflect real state.
+			allKnown, err := items.ListAllOwnedTransitive(c.Ctx, s.CharacterID)
+			if err != nil {
+				slog.Error("put: list owned failed", "char", s.CharacterID, "error", err)
+				return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+			}
+			if containerOnFloor {
+				floorContainerView, err := transitiveContainerView(c.Ctx, items, container.ID)
+				if err != nil {
+					slog.Error("put: list container failed", "container", container.ID, "error", err)
+					return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+				}
+				allKnown = append(allKnown, floorContainerView...)
+				// container itself isn't in either slice yet — need it
+				// in byID for depthOf.
+				allKnown = append(allKnown, container)
+			}
+			byID := make(map[int64]repo.Item, len(allKnown))
+			for _, x := range allKnown {
+				byID[x.ID] = x
+			}
+			switch canPut(container, it, allKnown, byID) {
+			case putOK:
+				// fall through
+			case putNotAContainer:
+				return s.WriteString("{{You can't put things in that.}}::yellow\r\n")
+			case putNoStats:
+				return s.WriteString("{{It isn't shaped to hold anything.}}::yellow\r\n")
+			case putLiquidContainer:
+				return s.WriteString("{{It's not the right shape for that.}}::yellow\r\n")
+			case putSelf:
+				return s.WriteString("{{You can't put it in itself.}}::yellow\r\n")
+			case putCycle:
+				return s.WriteString("{{That would loop back on itself.}}::yellow\r\n")
+			case putTooDeep:
+				return s.WriteString("{{It's already nested too deeply.}}::yellow\r\n")
+			case putTooHeavy:
+				return s.WriteString("{{It can't hold any more.}}::yellow\r\n")
+			}
+
+			if err := items.TransferOwnerToContainer(c.Ctx, it.ID, s.CharacterID, container.ID); err != nil {
+				if errors.Is(err, repo.ErrItemMoved) || errors.Is(err, repo.ErrItemNotFound) {
+					return s.WriteString("{{It's not where you thought it was.}}::yellow\r\n")
+				}
+				slog.Warn("put: transfer failed", "item", it.ID, "container", container.ID, "error", err)
+				return s.WriteString("{{It slips from your grasp.}}::red\r\n")
+			}
+
+			// Maintain inventory_json ordering — the item is no longer
+			// at top level. Best-effort.
+			if char, err := characters.FindByName(c.Ctx, s.CharacterName); err == nil {
+				_ = characters.RecordInventory(c.Ctx, s.CharacterID, removeID(char.Inventory, it.ID))
+			}
+
+			actor := safeActor(s)
+			if s.CurrentRoomID != 0 {
+				broadcastRoom(sessions, s.CurrentRoomID, s,
+					"{{"+actor+" puts "+it.Name+" in "+container.Name+".}}::cyan\r\n")
+			}
+			return s.WriteString("{{You put " + it.Name + " in " + container.Name + ".}}::cyan\r\n")
+		},
+	}
+}
+
+// getFromContainer is the `get <item> from <container>` branch,
+// reachable from NewGet when the args contain a "from" token.
+func getFromContainer(c *telnet.Context, items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry, itemArg, containerArg string) error {
+	s := c.Session
+	itemTarget := strings.ToLower(strings.TrimSpace(itemArg))
+	containerTarget := strings.ToLower(strings.TrimSpace(containerArg))
+
+	held, err := items.ListInInventory(c.Ctx, s.CharacterID)
+	if err != nil {
+		slog.Error("get-from: list inv failed", "char", s.CharacterID, "error", err)
+		return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+	}
+	container, found := MatchItem(containerTarget, held)
+	if !found && s.CurrentRoomID != 0 {
+		floor, err := items.ListInRoom(c.Ctx, s.CurrentRoomID)
+		if err != nil {
+			slog.Error("get-from: list room failed", "room", s.CurrentRoomID, "error", err)
+			return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+		}
+		container, found = MatchItem(containerTarget, floor)
+	}
+	if !found {
+		return s.WriteString("{{You don't see that container here.}}::yellow\r\n")
+	}
+	if container.Type != repo.ItemTypeContainer {
+		return s.WriteString("{{That isn't a container.}}::yellow\r\n")
+	}
+
+	contents, err := items.ListInContainer(c.Ctx, container.ID)
+	if err != nil {
+		slog.Error("get-from: list container failed", "container", container.ID, "error", err)
+		return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+	}
+	it, ok := MatchItem(itemTarget, contents)
+	if !ok {
+		return s.WriteString("{{There is nothing like that inside.}}::yellow\r\n")
+	}
+	if it.HasFlag(repo.FlagNoTake) {
+		return s.WriteString("{{You can't take that.}}::yellow\r\n")
+	}
+
+	char, err := characters.FindByName(c.Ctx, s.CharacterName)
+	if err != nil {
+		slog.Error("get-from: char lookup failed", "char", s.CharacterID, "error", err)
+		return s.WriteString("{{You feel disoriented.}}::red\r\n")
+	}
+	carried, err := carriedWeight(c.Ctx, items, s.CharacterID)
+	if err != nil {
+		slog.Error("get-from: weight failed", "char", s.CharacterID, "error", err)
+		return s.WriteString("{{You can't seem to focus on anything.}}::red\r\n")
+	}
+	str := int(char.Core.Abilities.Str.Current)
+	if str <= 0 {
+		str = 10
+	}
+	if load, _ := LoadFor(str, carried+it.Weight); load == creature.LoadOverloaded {
+		return s.WriteString("{{It's too heavy — you can't carry that much.}}::yellow\r\n")
+	}
+
+	if err := items.TransferContainerToOwner(c.Ctx, it.ID, container.ID, s.CharacterID); err != nil {
+		if errors.Is(err, repo.ErrItemMoved) || errors.Is(err, repo.ErrItemNotFound) {
+			return s.WriteString("{{It isn't there anymore.}}::yellow\r\n")
+		}
+		slog.Warn("get-from: transfer failed", "item", it.ID, "char", s.CharacterID, "error", err)
+		return s.WriteString("{{It slips from your grasp.}}::red\r\n")
+	}
+	newInv := appendOnce(char.Inventory, it.ID)
+	if err := characters.RecordInventory(c.Ctx, s.CharacterID, newInv); err != nil {
+		slog.Warn("get-from: record inventory failed", "char", s.CharacterID, "error", err)
+	}
+
+	actor := safeActor(s)
+	if s.CurrentRoomID != 0 {
+		broadcastRoom(sessions, s.CurrentRoomID, s,
+			"{{"+actor+" takes "+it.Name+" from "+container.Name+".}}::cyan\r\n")
+	}
+	return s.WriteString("{{You take " + it.Name + " from " + container.Name + ".}}::cyan\r\n")
+}
+
+// splitFromArgs walks args looking for a literal "from" token. If
+// found, returns (itemPart, containerPart, true). The item part is
+// every token before "from" joined by spaces; the container part is
+// every token after.
+func splitFromArgs(args []string) (item, container string, ok bool) {
+	for i, tok := range args {
+		if strings.EqualFold(tok, "from") && i > 0 && i < len(args)-1 {
+			return strings.Join(args[:i], " "), strings.Join(args[i+1:], " "), true
+		}
+	}
+	return strings.Join(args, " "), "", false
+}
+
+// splitInArgs is the put-side equivalent: looks for "in" or "into".
+func splitInArgs(args []string) (item, container string, ok bool) {
+	for i, tok := range args {
+		if (strings.EqualFold(tok, "in") || strings.EqualFold(tok, "into")) && i > 0 && i < len(args)-1 {
+			return strings.Join(args[:i], " "), strings.Join(args[i+1:], " "), true
+		}
+	}
+	return "", "", false
+}
+
+// carriedWeight returns the carrier's total effective burden via the
+// transitive owned slice + recursiveWeight. Container WeightMult is
+// honored. Used by every encumbrance gate so a bag-of-holding eases
+// the carrier's load consistently.
+func carriedWeight(ctx context.Context, items repo.ItemRepo, ownerID int64) (float64, error) {
+	all, err := items.ListAllOwnedTransitive(ctx, ownerID)
+	if err != nil {
+		return 0, err
+	}
+	idx := childrenOf(all)
+	var w float64
+	for _, it := range all {
+		if it.ParentItemID == 0 {
+			w += recursiveWeight(it, idx)
+		}
+	}
+	return w, nil
+}
+
+// transitiveContainerView returns the container's contents plus
+// every nested descendant. Used by `put` when the destination is a
+// floor container so depth/capacity see the full subtree without
+// needing carrier ownership. We don't have a single repo method
+// that walks an arbitrary item subtree, so do it iteratively here:
+// fetch direct children, then their children, until the frontier is
+// empty.
+func transitiveContainerView(ctx context.Context, items repo.ItemRepo, parentID int64) ([]repo.Item, error) {
+	// canPut + isAncestor block cycles at write time, but the DB has
+	// no CHECK constraint enforcing acyclicity, so a stray admin
+	// SQL or a future bypass could leave a loop in the data. Guard
+	// the BFS with a visited set so a corrupt row can't stall the
+	// dispatcher goroutine on an unbounded frontier expansion.
+	var all []repo.Item
+	seen := map[int64]bool{parentID: true}
+	frontier := []int64{parentID}
+	for len(frontier) > 0 {
+		var next []int64
+		for _, id := range frontier {
+			kids, err := items.ListInContainer(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			for _, k := range kids {
+				if seen[k.ID] {
+					continue
+				}
+				seen[k.ID] = true
+				all = append(all, k)
+				next = append(next, k.ID)
+			}
+		}
+		frontier = next
+	}
+	return all, nil
 }
 
 // completeRoomItems suggests item keywords from the floor of the
@@ -442,6 +779,68 @@ func completeInventoryItems(items repo.ItemRepo) func(s *telnet.Session, args st
 		}
 		return itemKeywordCandidates(held, partial)
 	}
+}
+
+// completePut offers inventory item keywords on slot 0; on slot 1
+// suggests "in"; on slot 2 suggests inventory + room containers.
+func completePut(items repo.ItemRepo) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if s.CharacterID == 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		switch slot {
+		case 0:
+			held, err := items.ListInInventory(ctx, s.CharacterID)
+			if err != nil {
+				return nil
+			}
+			return itemKeywordCandidates(held, partial)
+		case 1:
+			out := []telnet.Candidate{{Text: "in"}, {Text: "into"}}
+			return filterCandidates(out, partial)
+		case 2:
+			held, err := items.ListInInventory(ctx, s.CharacterID)
+			if err != nil {
+				return nil
+			}
+			held = onlyContainers(held)
+			if s.CurrentRoomID != 0 {
+				if floor, err := items.ListInRoom(ctx, s.CurrentRoomID); err == nil {
+					held = append(held, onlyContainers(floor)...)
+				}
+			}
+			return itemKeywordCandidates(held, partial)
+		default:
+			return nil
+		}
+	}
+}
+
+func onlyContainers(list []repo.Item) []repo.Item {
+	out := list[:0:0]
+	for _, it := range list {
+		if it.Type == repo.ItemTypeContainer {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+func filterCandidates(in []telnet.Candidate, partial string) []telnet.Candidate {
+	if partial == "" {
+		return in
+	}
+	p := strings.ToLower(partial)
+	out := in[:0:0]
+	for _, c := range in {
+		if strings.HasPrefix(strings.ToLower(c.Text), p) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // completeGive offers inventory item keywords on slot 0 and online

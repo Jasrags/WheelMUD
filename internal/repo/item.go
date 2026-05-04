@@ -81,9 +81,11 @@ const (
 // covers `look` rendering; the type/quality/flags/stats fields layer
 // on the gameplay-relevant fact pattern from the WoT equipment ref.
 //
-// Location invariant: exactly one of RoomID / OwnerCharacterID is
-// non-zero for a reachable item. Both zero is the transient state used
-// during a transfer (briefly between SetOwner / SetRoom calls).
+// Location invariant: exactly one of RoomID / OwnerCharacterID /
+// ParentItemID is non-zero for a reachable item. All three zero is
+// the transient state used during a transfer (briefly between Set/
+// Transfer calls). ParentItemID points at a containing item (a
+// container) and was added in migration 0028.
 type Item struct {
 	ID               int64
 	ExternalID       string
@@ -92,6 +94,7 @@ type Item struct {
 	ShortDesc        string
 	RoomID           int64
 	OwnerCharacterID int64
+	ParentItemID     int64
 
 	Type    ItemType
 	Weight  float64         // in pounds (matches the WoT tables)
@@ -245,6 +248,21 @@ type ItemRepo interface {
 	TransferOwnerToOwner(ctx context.Context, itemID, fromOwnerID, toOwnerID int64) error
 	// Create inserts a new item. ExternalID must be non-empty.
 	Create(ctx context.Context, i Item) (Item, error)
+	// ListInContainer returns every item whose parent_item_id equals
+	// the given item id, sorted by name. Empty is not an error.
+	ListInContainer(ctx context.Context, parentID int64) ([]Item, error)
+	// ListAllOwnedTransitive returns the carrier's top-level inventory
+	// plus every item nested inside any container they own (any depth).
+	// Used by encumbrance + the inventory display.
+	ListAllOwnedTransitive(ctx context.Context, ownerCharID int64) ([]Item, error)
+	// TransferOwnerToContainer moves an item from a character's
+	// inventory into a parent container item. Guards on prior
+	// location (fromOwnerID) so a give/drop race surfaces as
+	// ErrItemMoved.
+	TransferOwnerToContainer(ctx context.Context, itemID, fromOwnerID, parentID int64) error
+	// TransferContainerToOwner pulls an item out of a container into
+	// a character's inventory. Guards on prior parent (fromParentID).
+	TransferContainerToOwner(ctx context.Context, itemID, fromParentID, toOwnerID int64) error
 }
 
 // ErrItemNotFound is returned by GetByID when no row matches the id.

@@ -19,7 +19,7 @@ func NewSQLiteItemRepo(db *sql.DB) *SQLiteItemRepo {
 	return &SQLiteItemRepo{db: db}
 }
 
-const itemSelectCols = `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, ` +
+const itemSelectCols = `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id, ` +
 	`type, weight_lbs, value_cp, quality, flags, stats_json, created_at`
 
 func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
@@ -59,11 +59,15 @@ func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
 	if i.OwnerCharacterID != 0 {
 		ownerID = i.OwnerCharacterID
 	}
+	var parentID any
+	if i.ParentItemID != 0 {
+		parentID = i.ParentItemID
+	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id,
+		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id,
 			type, weight_lbs, value_cp, quality, flags, stats_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ExternalID, i.Name, i.NameLower, i.ShortDesc, roomID, ownerID,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ExternalID, i.Name, i.NameLower, i.ShortDesc, roomID, ownerID, parentID,
 		string(i.Type), i.Weight, int64(i.Value), string(i.Quality),
 		int64(i.Flags), statsJSON, i.CreatedAt,
 	)
@@ -87,7 +91,7 @@ func (r *SQLiteItemRepo) ListInRoom(ctx context.Context, roomID int64) ([]Item, 
 	// (an item with both columns set should never appear in the room
 	// view alongside its inventory view). Mirrors the memory repo.
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+itemSelectCols+` FROM items WHERE room_id = ? AND owner_character_id IS NULL ORDER BY name_lower`,
+		`SELECT `+itemSelectCols+` FROM items WHERE room_id = ? AND owner_character_id IS NULL AND parent_item_id IS NULL ORDER BY name_lower`,
 		roomID,
 	)
 	if err != nil {
@@ -107,7 +111,7 @@ func (r *SQLiteItemRepo) ListInRoom(ctx context.Context, roomID int64) ([]Item, 
 
 func (r *SQLiteItemRepo) ListInInventory(ctx context.Context, ownerCharID int64) ([]Item, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+itemSelectCols+` FROM items WHERE owner_character_id = ? ORDER BY name_lower`,
+		`SELECT `+itemSelectCols+` FROM items WHERE owner_character_id = ? AND parent_item_id IS NULL ORDER BY name_lower`,
 		ownerCharID,
 	)
 	if err != nil {
@@ -148,7 +152,7 @@ func (r *SQLiteItemRepo) SetOwner(ctx context.Context, itemID, ownerCharID int64
 		return fmt.Errorf("set owner: ownerCharID must be non-zero")
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE items SET owner_character_id = ?, room_id = NULL WHERE id = ?`,
+		`UPDATE items SET owner_character_id = ?, room_id = NULL, parent_item_id = NULL WHERE id = ?`,
 		ownerCharID, itemID,
 	)
 	if err != nil {
@@ -170,7 +174,7 @@ func (r *SQLiteItemRepo) SetRoom(ctx context.Context, itemID, roomID int64) erro
 		return fmt.Errorf("set room: roomID must be non-zero")
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE items SET room_id = ?, owner_character_id = NULL WHERE id = ?`,
+		`UPDATE items SET room_id = ?, owner_character_id = NULL, parent_item_id = NULL WHERE id = ?`,
 		roomID, itemID,
 	)
 	if err != nil {
@@ -223,8 +227,8 @@ func (r *SQLiteItemRepo) TransferRoomToOwner(ctx context.Context, itemID, fromRo
 		return fmt.Errorf("transfer room->owner: ids must be non-zero")
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE items SET owner_character_id = ?, room_id = NULL
-		 WHERE id = ? AND room_id = ? AND owner_character_id IS NULL`,
+		`UPDATE items SET owner_character_id = ?, room_id = NULL, parent_item_id = NULL
+		 WHERE id = ? AND room_id = ? AND owner_character_id IS NULL AND parent_item_id IS NULL`,
 		toOwnerID, itemID, fromRoomID,
 	)
 	if err != nil {
@@ -239,8 +243,8 @@ func (r *SQLiteItemRepo) TransferOwnerToRoom(ctx context.Context, itemID, fromOw
 		return fmt.Errorf("transfer owner->room: ids must be non-zero")
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE items SET room_id = ?, owner_character_id = NULL
-		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL`,
+		`UPDATE items SET room_id = ?, owner_character_id = NULL, parent_item_id = NULL
+		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL AND parent_item_id IS NULL`,
 		toRoomID, itemID, fromOwnerID,
 	)
 	if err != nil {
@@ -255,14 +259,110 @@ func (r *SQLiteItemRepo) TransferOwnerToOwner(ctx context.Context, itemID, fromO
 		return fmt.Errorf("transfer owner->owner: ids must be non-zero")
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE items SET owner_character_id = ?
-		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL`,
+		`UPDATE items SET owner_character_id = ?, parent_item_id = NULL
+		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL AND parent_item_id IS NULL`,
 		toOwnerID, itemID, fromOwnerID,
 	)
 	if err != nil {
 		return fmt.Errorf("transfer owner->owner: %w", err)
 	}
 	return r.transferRowsResult(ctx, res, itemID, "transfer owner->owner")
+}
+
+// ListInContainer returns items nested directly inside the given
+// container item. Sorted by name. The parent_item_id index keeps
+// this O(log n) on lookup.
+func (r *SQLiteItemRepo) ListInContainer(ctx context.Context, parentID int64) ([]Item, error) {
+	if parentID == 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+itemSelectCols+` FROM items WHERE parent_item_id = ? ORDER BY name_lower`,
+		parentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list container: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		i, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// ListAllOwnedTransitive returns the carrier's top-level inventory
+// plus everything nested inside any container they own (any depth).
+// Implemented as a recursive CTE so a deep stack of bag-in-pack-in-
+// chest is one query, not N. Sort is stable by parent_item_id then
+// name so callers can render the tree by walking the slice.
+func (r *SQLiteItemRepo) ListAllOwnedTransitive(ctx context.Context, ownerCharID int64) ([]Item, error) {
+	if ownerCharID == 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`WITH RECURSIVE owned(id) AS (
+			SELECT id FROM items WHERE owner_character_id = ? AND parent_item_id IS NULL
+			UNION ALL
+			SELECT i.id FROM items i JOIN owned o ON i.parent_item_id = o.id
+		)
+		SELECT `+itemSelectCols+` FROM items WHERE id IN owned ORDER BY parent_item_id, name_lower`,
+		ownerCharID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list owned transitive: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		i, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// TransferOwnerToContainer is the conditional `put` path. Only an
+// item currently held by fromOwnerID with no other location can move
+// — concurrent gives, drops, and rival puts surface as ErrItemMoved.
+func (r *SQLiteItemRepo) TransferOwnerToContainer(ctx context.Context, itemID, fromOwnerID, parentID int64) error {
+	if fromOwnerID == 0 || parentID == 0 {
+		return fmt.Errorf("transfer owner->container: ids must be non-zero")
+	}
+	if itemID == parentID {
+		return fmt.Errorf("transfer owner->container: item cannot be its own parent")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET parent_item_id = ?, owner_character_id = NULL, room_id = NULL
+		 WHERE id = ? AND owner_character_id = ? AND room_id IS NULL AND parent_item_id IS NULL`,
+		parentID, itemID, fromOwnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("transfer owner->container: %w", err)
+	}
+	return r.transferRowsResult(ctx, res, itemID, "transfer owner->container")
+}
+
+// TransferContainerToOwner is the conditional `get from` path.
+func (r *SQLiteItemRepo) TransferContainerToOwner(ctx context.Context, itemID, fromParentID, toOwnerID int64) error {
+	if fromParentID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer container->owner: ids must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET owner_character_id = ?, parent_item_id = NULL, room_id = NULL
+		 WHERE id = ? AND parent_item_id = ? AND room_id IS NULL AND owner_character_id IS NULL`,
+		toOwnerID, itemID, fromParentID,
+	)
+	if err != nil {
+		return fmt.Errorf("transfer container->owner: %w", err)
+	}
+	return r.transferRowsResult(ctx, res, itemID, "transfer container->owner")
 }
 
 // scanItemRow reads one row from a SELECT itemSelectCols result and
@@ -274,6 +374,7 @@ func scanItemRow(s rowScanner) (Item, error) {
 		i         Item
 		rid       sql.NullInt64
 		oid       sql.NullInt64
+		pid       sql.NullInt64
 		typeStr   string
 		quality   string
 		valueCP   int64
@@ -281,7 +382,7 @@ func scanItemRow(s rowScanner) (Item, error) {
 		statsJSON string
 	)
 	if err := s.Scan(
-		&i.ID, &i.ExternalID, &i.Name, &i.NameLower, &i.ShortDesc, &rid, &oid,
+		&i.ID, &i.ExternalID, &i.Name, &i.NameLower, &i.ShortDesc, &rid, &oid, &pid,
 		&typeStr, &i.Weight, &valueCP, &quality, &flags, &statsJSON, &i.CreatedAt,
 	); err != nil {
 		return Item{}, fmt.Errorf("scan item row: %w", err)
@@ -291,6 +392,9 @@ func scanItemRow(s rowScanner) (Item, error) {
 	}
 	if oid.Valid {
 		i.OwnerCharacterID = oid.Int64
+	}
+	if pid.Valid {
+		i.ParentItemID = pid.Int64
 	}
 	i.Type = ItemType(typeStr)
 	i.Quality = ItemQuality(quality)

@@ -455,12 +455,17 @@ will need on top of those tables.
       container nesting + `take` / `put` / `open container` (§14),
       light radius affecting room visibility (§10), Power-wrought
       unbreakable handling.
-- [ ] **Container semantics** — capacity (weight + slot count),
+- [~] **Container semantics** — `parent_item_id` (migration 0028)
+      adds nesting as a third reachable location alongside room/owner;
+      `put <item> in <container>` and `get <item> from <container>`
+      verbs honor `ContainerStats.CapacityLbs`, `DepthCap`, `WeightMult`
+      (bag-of-holding compounds across nested bags), and reject
+      self/cycle puts. `inventory` renders a tree; encumbrance counts
+      transitive contents through the multiplier chain. Pending:
       open/closed/locked state sharing the door schema, content
-      visibility flag (`see-inside`), nested-container depth cap,
-      take/put permission flags, weight-reduction multiplier (bag of
-      holding), liquid containers as a separate subtype with capacity
-      in sips and a liquid id.
+      visibility flag (`see-inside`), slot count caps, take/put
+      permission flags, liquid containers (pour/fill/drink), YAML
+      `contents:` for builders, `look in <container>` verb.
 - [~] **Mob / NPC** — `repo.Mob` has id, room/zone, name,
       description, `external_id`; `mob_templates` / `mob_instances`
       tables and `creature.MobTemplate` / `MobInstance` types now

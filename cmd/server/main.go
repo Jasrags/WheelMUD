@@ -392,6 +392,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewGet(items, characters, sessions),
 		cmd.NewDrop(items, characters, sessions),
 		cmd.NewGive(items, characters, sessions),
+		cmd.NewPut(items, characters, sessions),
 	); err != nil {
 		return nil, err
 	}

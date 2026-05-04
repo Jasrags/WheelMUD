@@ -345,6 +345,114 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 		}
 	})
 
+	t.Run(name+"/transfer_owner_to_container_xor_invariant", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		bag, err := fix.items.Create(ctx, Item{
+			ExternalID: "bag", Name: "a bag", OwnerCharacterID: 7,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 10},
+		})
+		if err != nil {
+			t.Fatalf("Create bag: %v", err)
+		}
+		coin, err := fix.items.Create(ctx, Item{
+			ExternalID: "coin", Name: "a coin", OwnerCharacterID: 7, Weight: 0.1,
+		})
+		if err != nil {
+			t.Fatalf("Create coin: %v", err)
+		}
+		// Wrong source owner → ErrItemMoved.
+		if err := fix.items.TransferOwnerToContainer(ctx, coin.ID, 99, bag.ID); !errors.Is(err, ErrItemMoved) {
+			t.Fatalf("wrong source: got %v, want ErrItemMoved", err)
+		}
+		// Correct path → all three location columns reflect "in bag".
+		if err := fix.items.TransferOwnerToContainer(ctx, coin.ID, 7, bag.ID); err != nil {
+			t.Fatalf("transfer: %v", err)
+		}
+		got, err := fix.items.GetByID(ctx, coin.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if got.ParentItemID != bag.ID || got.OwnerCharacterID != 0 || got.RoomID != 0 {
+			t.Fatalf("bad state after put: %+v", got)
+		}
+		// Top-level inventory excludes nested items.
+		top, _ := fix.items.ListInInventory(ctx, 7)
+		for _, x := range top {
+			if x.ID == coin.ID {
+				t.Fatalf("nested coin leaked into top-level inventory: %+v", x)
+			}
+		}
+		// ListInContainer surfaces it.
+		inside, _ := fix.items.ListInContainer(ctx, bag.ID)
+		if len(inside) != 1 || inside[0].ID != coin.ID {
+			t.Fatalf("ListInContainer = %+v", inside)
+		}
+	})
+
+	t.Run(name+"/transfer_container_to_owner_xor_invariant", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		bag, err := fix.items.Create(ctx, Item{
+			ExternalID: "bag2", Name: "a sack", OwnerCharacterID: 7,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 10},
+		})
+		if err != nil {
+			t.Fatalf("Create bag: %v", err)
+		}
+		gem, err := fix.items.Create(ctx, Item{
+			ExternalID: "gem", Name: "a gem", ParentItemID: bag.ID, Weight: 0.5,
+		})
+		if err != nil {
+			t.Fatalf("Create gem: %v", err)
+		}
+		// Wrong source parent → ErrItemMoved.
+		if err := fix.items.TransferContainerToOwner(ctx, gem.ID, 99999, 7); !errors.Is(err, ErrItemMoved) {
+			t.Fatalf("wrong parent: got %v, want ErrItemMoved", err)
+		}
+		// Correct path.
+		if err := fix.items.TransferContainerToOwner(ctx, gem.ID, bag.ID, 7); err != nil {
+			t.Fatalf("transfer: %v", err)
+		}
+		got, _ := fix.items.GetByID(ctx, gem.ID)
+		if got.OwnerCharacterID != 7 || got.ParentItemID != 0 || got.RoomID != 0 {
+			t.Fatalf("bad state after get-from: %+v", got)
+		}
+	})
+
+	t.Run(name+"/list_all_owned_transitive_walks_chain", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		// pack (top) → pouch (nested) → coin (deeply nested).
+		pack, err := fix.items.Create(ctx, Item{
+			ExternalID: "pack", Name: "a pack", OwnerCharacterID: 7,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 50},
+		})
+		if err != nil {
+			t.Fatalf("Create pack: %v", err)
+		}
+		pouch, err := fix.items.Create(ctx, Item{
+			ExternalID: "pouch", Name: "a pouch", ParentItemID: pack.ID,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 5},
+		})
+		if err != nil {
+			t.Fatalf("Create pouch: %v", err)
+		}
+		_, err = fix.items.Create(ctx, Item{
+			ExternalID: "coin2", Name: "a coin", ParentItemID: pouch.ID, Weight: 0.1,
+		})
+		if err != nil {
+			t.Fatalf("Create coin: %v", err)
+		}
+		all, err := fix.items.ListAllOwnedTransitive(ctx, 7)
+		if err != nil {
+			t.Fatalf("ListAllOwnedTransitive: %v", err)
+		}
+		if len(all) != 3 {
+			t.Fatalf("got %d items, want 3 (%+v)", len(all), all)
+		}
+	})
+
 	t.Run(name+"/empty_room", func(t *testing.T) {
 		fix := newFix(t)
 		got, err := fix.items.ListInRoom(context.Background(), 99999)

@@ -88,7 +88,7 @@ func (r *MemoryItemRepo) ListInRoom(_ context.Context, roomID int64) ([]Item, er
 	defer r.mu.Unlock()
 	var out []Item
 	for _, i := range r.items {
-		if i.RoomID == roomID && i.OwnerCharacterID == 0 {
+		if i.RoomID == roomID && i.OwnerCharacterID == 0 && i.ParentItemID == 0 {
 			out = append(out, i)
 		}
 	}
@@ -101,11 +101,67 @@ func (r *MemoryItemRepo) ListInInventory(_ context.Context, ownerCharID int64) (
 	defer r.mu.Unlock()
 	var out []Item
 	for _, i := range r.items {
-		if i.OwnerCharacterID == ownerCharID && ownerCharID != 0 {
+		if i.OwnerCharacterID == ownerCharID && ownerCharID != 0 && i.ParentItemID == 0 {
 			out = append(out, i)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].NameLower < out[j].NameLower })
+	return out, nil
+}
+
+func (r *MemoryItemRepo) ListInContainer(_ context.Context, parentID int64) ([]Item, error) {
+	if parentID == 0 {
+		return nil, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Item
+	for _, i := range r.items {
+		if i.ParentItemID == parentID {
+			out = append(out, i)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].NameLower < out[j].NameLower })
+	return out, nil
+}
+
+// ListAllOwnedTransitive walks the parent chain in-memory: collect
+// top-level owned items, then iteratively pull anything whose parent
+// is already in the result set. Bounded by len(items) iterations.
+func (r *MemoryItemRepo) ListAllOwnedTransitive(_ context.Context, ownerCharID int64) ([]Item, error) {
+	if ownerCharID == 0 {
+		return nil, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	included := make(map[int64]bool)
+	var out []Item
+	for _, i := range r.items {
+		if i.OwnerCharacterID == ownerCharID && i.ParentItemID == 0 {
+			out = append(out, i)
+			included[i.ID] = true
+		}
+	}
+	// Fixed-point: keep adding children of already-included items.
+	for grew := true; grew; {
+		grew = false
+		for _, i := range r.items {
+			if included[i.ID] || i.ParentItemID == 0 {
+				continue
+			}
+			if included[i.ParentItemID] {
+				out = append(out, i)
+				included[i.ID] = true
+				grew = true
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ParentItemID != out[j].ParentItemID {
+			return out[i].ParentItemID < out[j].ParentItemID
+		}
+		return out[i].NameLower < out[j].NameLower
+	})
 	return out, nil
 }
 
@@ -130,6 +186,7 @@ func (r *MemoryItemRepo) SetOwner(_ context.Context, itemID, ownerCharID int64) 
 		if r.items[idx].ID == itemID {
 			r.items[idx].OwnerCharacterID = ownerCharID
 			r.items[idx].RoomID = 0
+			r.items[idx].ParentItemID = 0
 			return nil
 		}
 	}
@@ -146,6 +203,7 @@ func (r *MemoryItemRepo) SetRoom(_ context.Context, itemID, roomID int64) error 
 		if r.items[idx].ID == itemID {
 			r.items[idx].RoomID = roomID
 			r.items[idx].OwnerCharacterID = 0
+			r.items[idx].ParentItemID = 0
 			return nil
 		}
 	}
@@ -162,11 +220,12 @@ func (r *MemoryItemRepo) TransferRoomToOwner(_ context.Context, itemID, fromRoom
 		if r.items[idx].ID != itemID {
 			continue
 		}
-		if r.items[idx].RoomID != fromRoomID || r.items[idx].OwnerCharacterID != 0 {
+		if r.items[idx].RoomID != fromRoomID || r.items[idx].OwnerCharacterID != 0 || r.items[idx].ParentItemID != 0 {
 			return ErrItemMoved
 		}
 		r.items[idx].OwnerCharacterID = toOwnerID
 		r.items[idx].RoomID = 0
+		r.items[idx].ParentItemID = 0
 		return nil
 	}
 	return ErrItemNotFound
@@ -182,11 +241,12 @@ func (r *MemoryItemRepo) TransferOwnerToRoom(_ context.Context, itemID, fromOwne
 		if r.items[idx].ID != itemID {
 			continue
 		}
-		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 {
+		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 || r.items[idx].ParentItemID != 0 {
 			return ErrItemMoved
 		}
 		r.items[idx].RoomID = toRoomID
 		r.items[idx].OwnerCharacterID = 0
+		r.items[idx].ParentItemID = 0
 		return nil
 	}
 	return ErrItemNotFound
@@ -202,10 +262,56 @@ func (r *MemoryItemRepo) TransferOwnerToOwner(_ context.Context, itemID, fromOwn
 		if r.items[idx].ID != itemID {
 			continue
 		}
-		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 {
+		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 || r.items[idx].ParentItemID != 0 {
 			return ErrItemMoved
 		}
 		r.items[idx].OwnerCharacterID = toOwnerID
+		r.items[idx].ParentItemID = 0
+		return nil
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) TransferOwnerToContainer(_ context.Context, itemID, fromOwnerID, parentID int64) error {
+	if fromOwnerID == 0 || parentID == 0 {
+		return fmt.Errorf("transfer owner->container: ids must be non-zero")
+	}
+	if itemID == parentID {
+		return fmt.Errorf("transfer owner->container: item cannot be its own parent")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID != itemID {
+			continue
+		}
+		if r.items[idx].OwnerCharacterID != fromOwnerID || r.items[idx].RoomID != 0 || r.items[idx].ParentItemID != 0 {
+			return ErrItemMoved
+		}
+		r.items[idx].ParentItemID = parentID
+		r.items[idx].OwnerCharacterID = 0
+		r.items[idx].RoomID = 0
+		return nil
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) TransferContainerToOwner(_ context.Context, itemID, fromParentID, toOwnerID int64) error {
+	if fromParentID == 0 || toOwnerID == 0 {
+		return fmt.Errorf("transfer container->owner: ids must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID != itemID {
+			continue
+		}
+		if r.items[idx].ParentItemID != fromParentID || r.items[idx].RoomID != 0 || r.items[idx].OwnerCharacterID != 0 {
+			return ErrItemMoved
+		}
+		r.items[idx].OwnerCharacterID = toOwnerID
+		r.items[idx].ParentItemID = 0
+		r.items[idx].RoomID = 0
 		return nil
 	}
 	return ErrItemNotFound
