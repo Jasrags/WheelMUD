@@ -12,9 +12,11 @@
     of an ancient oak. The bubbling Winespring lies away to the west,
     and the whitewashed bulk of the Winespring Inn closes the green to
     the east. To the north stands Master Luhhan's forge, smoke rising
-    in a thin grey thread from its chimney. A small footbridge crosses
-    the Winespring Water to the northeast, leading toward Jon Thane's
-    mill. Roads run away to every side.
+    in a thin grey thread from its chimney. The Wagon Bridge crosses
+    the Winespring Water to the northeast, carrying the village path
+    on toward Jon Thane's mill. A short lane leaves the green to the
+    southwest, lined with the Cauthon, Calder, and Thane homes; roads
+    run away to every other side.
   exits:
     n: tr.emonds_field.forge_yard
     s: tr.emonds_field.south_road
@@ -22,6 +24,7 @@
     w: tr.emonds_field.winespring
     ne: tr.emonds_field.bridge_central
     nw: tr.north_road.central
+    sw: tr.emonds_field.south_lane
   flags:
     peaceful: true
   sector: city
@@ -96,17 +99,27 @@
       SHADOWS.
 
 - id: tr.emonds_field.bridge_central
-  name: The Village Bridge
-  short: A low stone bridge over the Winespring Water.
+  name: The Wagon Bridge
+  short: The broad stone bridge that carries the road over the Winespring.
   long: |
-    A handsome arch of mortared fieldstone carries the village path
-    over the Winespring Water. Mosses cling to the underside of the
-    arch; minnows dart in the clear current beneath. Jon Thane's mill
-    stands a little further along the north bank.
+    The Wagon Bridge spans the Winespring Water in a single broad arch
+    of mortared fieldstone, wide enough for two carts to pass. Worn
+    grooves run along the deck where iron-shod wheels have rolled for
+    generations. Mosses cling to the underside of the arch; minnows
+    dart in the clear current beneath. Jon Thane's mill stands a
+    little further along the north bank, and a path runs east along
+    the Winespring toward the new sickhouse and the Aybara farm
+    beyond.
   exits:
     sw: tr.emonds_field.green
     n: tr.emonds_field.mill_yard
   sector: city
+  descriptions:
+    bridge: |
+      The Wagon Bridge is older than anyone in the village can
+      remember; the stones at its base are smoothed to glass by the
+      patient water. They say the masons who set it did not come from
+      the Two Rivers.
 
 - id: tr.emonds_field.mill_yard
   name: Jon Thane's Yard
@@ -115,10 +128,13 @@
     Stone-ground meal-dust whitens every surface. Empty grain sacks
     lean in stacks beside the mill door, and the great wooden wheel
     creaks slowly in the millrace beside the building. The smell of
-    fresh-cut oats hangs in the air.
+    fresh-cut oats hangs in the air. A footpath leaves the yard to
+    the east, following the north bank of the Winespring toward the
+    new sickhouse.
   exits:
     s: tr.emonds_field.bridge_central
     n: tr.emonds_field.thanes_mill.floor
+    e: tr.emonds_field.sickhouse_lane
   sector: city
   descriptions:
     wheel: |
@@ -138,3 +154,113 @@
     n: tr.emonds_field.green
     s: tr.north_road.south
   sector: field
+
+# --- South Lane: the Cauthon / Calder / Beril Thane houses ------------------
+
+- id: tr.emonds_field.south_lane
+  name: South Lane
+  short: A narrow lane curling south of the green.
+  long: |
+    A packed-earth lane runs along the south side of the green,
+    flanked by neat hedges and the low garden walls of three of the
+    village's older families. The Cauthon house stands first to the
+    south, the Calder house beside it, and the Thane house — Beril's
+    half of the great Thane clan — closes the row to the west. The
+    green opens to the northeast.
+  exits:
+    ne: tr.emonds_field.green
+    s: tr.emonds_field.cauthon_house
+    se: tr.emonds_field.calder_house
+    w: tr.emonds_field.beril_thane_house
+  sector: city
+  descriptions:
+    hedges: |
+      The hedges are neatly clipped in summer and bristle with sloes
+      in autumn. Children duck through known gaps when no one is
+      watching.
+
+- id: tr.emonds_field.cauthon_house
+  name: The Cauthon House
+  short: A tidy whitewashed cottage with a tabac patch behind it.
+  long: |
+    Abell and Natti Cauthon's house sits behind a low stone wall,
+    its shutters painted a faded green. A patch of tabac grows in
+    neat rows behind the house, and a heavy bow leans against the
+    porch railing — Abell is the finest archer in the Two Rivers,
+    and the village does not let him forget it. Their boy Mat is
+    nowhere in sight; he rarely is.
+  exits:
+    n: tr.emonds_field.south_lane
+  flags:
+    peaceful: true
+  sector: city
+  descriptions:
+    bow: |
+      The bow is half again as tall as a man, of yew worn dark with
+      use. The string is kept oiled even when the bow is not.
+    tabac: |
+      The tabac plants stand in disciplined rows, broad-leaved and
+      already chest-high. Abell Cauthon takes ribbons for his crop
+      at Sunday and Bel Tine both.
+
+- id: tr.emonds_field.calder_house
+  name: The Calder House
+  short: A neat stone-built cottage with a slate roof.
+  long: |
+    Cenn Calder's house is a sturdier thing than most in the village
+    — slate-roofed and stone-built, with a brass-handled door. A
+    weather-vane in the shape of a leaping fish turns slowly on the
+    ridge. Cenn is on the Village Council and does not let anyone
+    forget that, either.
+  exits:
+    nw: tr.emonds_field.south_lane
+  flags:
+    peaceful: true
+  sector: city
+  descriptions:
+    weathervane: |
+      The leaping-fish weathervane is the work of Master Luhhan,
+      bartered for a season's good ale. It still turns true after
+      twenty winters.
+
+- id: tr.emonds_field.beril_thane_house
+  name: Beril Thane's House
+  short: A timber-framed house with a deep porch.
+  long: |
+    Beril Thane's house — Jon's brother — has the same broad,
+    flour-dusted look as the mill itself, though no millstone turns
+    here. A long porch runs the front of the house, hung with
+    drying herbs and a string of last year's onions. Children's
+    voices come from the kitchen at the back.
+  exits:
+    e: tr.emonds_field.south_lane
+  flags:
+    peaceful: true
+  sector: city
+  descriptions:
+    herbs: |
+      Bunches of sage, thyme, and rosemary hang in tidy rows along
+      the porch eaves. Most of them are gifts from Mistress al'Meara,
+      the Wisdom.
+
+# --- Sickhouse Lane: link from the village to the new sickhouse -------------
+
+- id: tr.emonds_field.sickhouse_lane
+  name: Sickhouse Lane
+  short: A footpath along the north bank of the Winespring.
+  long: |
+    The path runs east from Jon Thane's yard, hugging the north bank
+    of the Winespring. The water purls along beside you, sun-bright
+    and cold. The new sickhouse stands a little ahead to the north,
+    its whitewashed walls plain among the willows; the path runs on
+    east toward the Aybara farm.
+  exits:
+    w: tr.emonds_field.mill_yard
+    n: tr.emonds_field_new_sickhouse.porch
+    e: tr.aybara_trail
+  sector: field
+  descriptions:
+    willows: |
+      A line of grey willows leans out over the Winespring here,
+      their roots half exposed in the bank. Children fish for
+      minnows from beneath them in summer.

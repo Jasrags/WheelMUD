@@ -67,9 +67,12 @@
   long: |
     Cart tracks run through the long grass. A lone signpost leans
     westward — the carving worn but still readable: AL'THOR FARM.
+    A narrower track branches off south, half-overgrown, climbing
+    a low rise toward the derelict shape of the old sickhouse.
   exits:
     e: tr.emonds_field.winespring
     w: tr.althor_farm
+    s: tr.old_sickhouse
   sector: field
 
 - id: tr.althor_farm
@@ -131,3 +134,53 @@
   exits:
     n: tr.waterwood
   sector: water
+
+# --- Aybara Farm trail (east from village; farm zone deferred) --------------
+
+- id: tr.aybara_trail
+  name: The Aybara Farm Trail
+  short: A footpath winding east through hedgerows and pasture.
+  long: |
+    The path runs east of the village along the north bank of the
+    Winespring, past lambing pens and a rough-stoned blacksmith's
+    paddock. The Aybara farm proper lies a little further on,
+    hidden among the trees — Tam al'Thor and Master Luhhan often
+    walk down to share a cup with old Aybara. The Sickhouse Lane
+    runs back west toward the village.
+  exits:
+    w: tr.emonds_field.sickhouse_lane
+  sector: field
+  descriptions:
+    paddock: |
+      Master Aybara is a blacksmith in his own right, though
+      Master Luhhan keeps the village trade. The paddock holds
+      half a dozen unshod ponies on most days.
+
+# --- Old Sickhouse (derelict, southwest of the village) ---------------------
+
+- id: tr.old_sickhouse
+  name: The Old Sickhouse
+  short: A derelict stone-built sickhouse half-swallowed by brambles.
+  long: |
+    The old sickhouse sits abandoned on a low rise south of the
+    Quarry Road. Its slate roof has gone in places; brambles climb
+    its south wall and the door hangs at an angle on a single
+    hinge. A cracked stone basin lies overturned in the yard,
+    half-full of black rainwater. Wind moves through the empty
+    rooms with a soft, dry sigh. The track north climbs back to
+    the Quarry Road.
+  exits:
+    n: tr.quarry_road
+  flags:
+    dark: true
+  sector: city
+  descriptions:
+    basin: |
+      The basin is carved from a single block of grey-veined
+      limestone — heavier than two men can easily lift. It was
+      once used to wash the dead. No one in the village touches
+      it now.
+    door: |
+      The door is split oak, weathered to silver. Generations of
+      children have dared each other to step through it; few have
+      gone past the porch. The Wisdom does not encourage them.

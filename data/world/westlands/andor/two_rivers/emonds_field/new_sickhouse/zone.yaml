@@ -1,0 +1,12 @@
+id: emonds_field_new_sickhouse
+name: The New Sickhouse
+builder: jrags
+level_range: { min: 1, max: 5 }
+reset_interval_s: 900
+reset_mode: empty
+climate: temperate
+ambient:
+  - The smell of crushed sage and willow-bark drifts through the rooms.
+  - Someone, somewhere, coughs and is quietly hushed.
+  - The kettle on the herb-room hearth sings to itself.
+  - Dried bunches of yarrow rustle as the door opens.

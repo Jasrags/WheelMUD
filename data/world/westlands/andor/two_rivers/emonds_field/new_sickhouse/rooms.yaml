@@ -1,0 +1,93 @@
+# The New Sickhouse — Nynaeve's working ground while she serves as
+# Wisdom of Emond's Field. Built within the last decade, replacing the
+# Old Sickhouse southwest of the village (now derelict). Three rooms:
+# porch (entry), ward (sickbeds), and Wisdom's herb room.
+
+- id: tr.emonds_field_new_sickhouse.porch
+  name: The Sickhouse Porch
+  short: A whitewashed porch hung with drying herbs.
+  long: |
+    A broad porch shelters the door of the new sickhouse. Bunches of
+    yarrow, willow-bark, and feverfew hang from the rafters in slow,
+    fragrant rows. A bench under the eaves bears two clean wooden
+    cups for callers. The ward door stands ahead to the north; the
+    Wisdom's herb-room door is to the east. Sickhouse Lane runs back
+    south to the village.
+  exits:
+    s: tr.emonds_field.sickhouse_lane
+    n: tr.emonds_field_new_sickhouse.ward
+    e: tr.emonds_field_new_sickhouse.herb_room
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+  descriptions:
+    herbs: |
+      The Wisdom dries everything she gathers here under the eaves
+      where the air moves but the rain does not. The bunches are
+      labelled in Nynaeve's own neat hand on small wooden tags.
+    bench: |
+      A plain bench of split oak, scrubbed weekly. A pair of clean
+      cups stand on it, ready for any caller who needs water before
+      they speak.
+
+- id: tr.emonds_field_new_sickhouse.ward
+  name: The Sickhouse Ward
+  short: A long, quiet room of cots and clean linen.
+  long: |
+    Six low cots are arranged in two rows along the long room, their
+    blankets folded to a hand's-breadth standard at the foot of each.
+    A stone hearth on the south wall holds a small steady fire even
+    in summer; a kettle at its edge breathes a thin thread of steam.
+    Light falls through high windows onto whitewashed plank walls.
+    The porch lies south; a door to the east leads on to the herb
+    room.
+  exits:
+    s: tr.emonds_field_new_sickhouse.porch
+    e: tr.emonds_field_new_sickhouse.herb_room
+  flags:
+    indoors: true
+    peaceful: true
+    silent: true
+  sector: city
+  descriptions:
+    cots: |
+      The cots are simple oak frames strung with rope and topped with
+      straw-and-linen ticking. The linen is changed and laundered the
+      day each cot is vacated; the village does not say anything
+      about who pays for the soap.
+    kettle: |
+      The kettle is iron, blackened with smoke at its base and
+      polished to a soft shine on its top. It is rarely allowed to go
+      cold.
+
+- id: tr.emonds_field_new_sickhouse.herb_room
+  name: The Wisdom's Herb Room
+  short: A small, fragrant workroom lined with shelves of jars.
+  long: |
+    Every wall of the herb room is given over to shelving, every
+    shelf to small clay jars and corked bottles. A heavy worktable
+    runs down the centre, scarred from a hundred grindings, and a
+    mortar of grey stone sits at its head. Bundles of fresh herbs
+    hang from a drying rack overhead. The door west leads back to
+    the porch; the ward lies west through the connecting door.
+  exits:
+    w: tr.emonds_field_new_sickhouse.porch
+  flags:
+    indoors: true
+    peaceful: true
+  sector: city
+  descriptions:
+    jars: |
+      Each jar is labelled in the Wisdom's small, careful hand. Most
+      bear simple names — willow, sage, yarrow — but a few read
+      only with a single character that the village does not ask
+      after.
+    mortar: |
+      The mortar is older than the building. It came from the Old
+      Sickhouse when the new one was raised, and from somewhere
+      older than that before, no one remembers where.
+    table: |
+      The worktable is scrubbed daily but never quite clean — every
+      grain of the wood holds the ghost of some past poultice or
+      tea.

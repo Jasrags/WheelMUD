@@ -1,0 +1,27 @@
+- id: tr.sickhouse_kettle
+  room: tr.emonds_field_new_sickhouse.ward
+  name: a small iron kettle
+  short: a small iron kettle breathes steam at the hearth's edge
+  type: trash
+  weight: 3.0
+  value: 4cp
+  flags:
+    - notake
+
+- id: tr.willow_bark_bundle
+  room: tr.emonds_field_new_sickhouse.herb_room
+  name: a bundle of willow bark
+  short: a tied bundle of pale willow bark sits at the corner of the worktable
+  type: trash
+  weight: 0.2
+  value: 2cp
+
+- id: tr.stone_mortar
+  room: tr.emonds_field_new_sickhouse.herb_room
+  name: the Wisdom's stone mortar
+  short: a heavy grey stone mortar, pestle laid across its rim, dominates the worktable
+  type: trash
+  weight: 6.0
+  value: 0
+  flags:
+    - notake

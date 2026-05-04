@@ -1,8 +1,3 @@
-- id: tr.nynaeve_almeara
-  room: tr.winespring_water
-  name: Nynaeve al'Meara
-  short: a young woman in a green dress crouches by the bank, gathering herbs
-
 - id: tr.tam_althor
   room: tr.althor_farm
   name: Tam al'Thor
