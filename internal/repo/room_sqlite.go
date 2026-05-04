@@ -130,11 +130,7 @@ func scanRoom(row *sql.Row) (Room, error) {
 		NoMap:      nomap != 0,
 	}
 	room.Sector = Sector(sector)
-	descs, err := unmarshalExtraDescs(extraJSON)
-	if err != nil {
-		return Room{}, fmt.Errorf("scan room extra_descs (id=%d): %w", room.ID, err)
-	}
-	room.ExtraDescs = descs
+	room.ExtraDescs = unmarshalExtraDescs(extraJSON)
 	return room, nil
 }
 
@@ -164,23 +160,23 @@ func marshalExtraDescs(m map[string]string) (string, error) {
 	return string(out), nil
 }
 
-func unmarshalExtraDescs(raw string) (map[string]string, error) {
+// unmarshalExtraDescs decodes the extra_descs_json column. Returns nil
+// for empty / "{}" / corrupt blobs so a single bad row can't brick a
+// room; corrupt JSON logs a slog.Warn for the admin. No error return —
+// ExtraDescs is non-critical ambient text and the caller has no other
+// recovery action than to ignore it.
+func unmarshalExtraDescs(raw string) map[string]string {
 	if raw == "" || raw == "{}" {
-		return nil, nil
+		return nil
 	}
 	var out map[string]string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		// ExtraDescs is non-critical ambient text. A corrupt blob
-		// (operator typo, partial write) shouldn't brick every player
-		// who walks into the room; soft-fail to nil and log so the
-		// admin sees it. Preserve the err return shape for the
-		// existing call site, but never propagate the unmarshal err.
 		slog.Warn("unmarshal extra_descs: corrupt JSON, dropping",
 			"raw_len", len(raw), "error", err)
-		return nil, nil
+		return nil
 	}
 	if len(out) == 0 {
-		return nil, nil
+		return nil
 	}
-	return out, nil
+	return out
 }

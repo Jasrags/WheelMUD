@@ -48,7 +48,7 @@ func formatWhereAmI(room repo.Room) string {
 	if sector == "" {
 		sector = repo.SectorCity
 	}
-	fmt.Fprintf(&b, "  {{Sector:}}::yellow %s    {{Light:}}::yellow %d\r\n", sector, room.LightLevel)
+	fmt.Fprintf(&b, "  {{Sector:}}::yellow %s    {{Light:}}::yellow %d\r\n", defangWorldField(string(sector)), room.LightLevel)
 	fmt.Fprintf(&b, "  {{Coords:}}::yellow (%d, %d, %d)\r\n", room.CoordX, room.CoordY, room.CoordZ)
 	flags := whereFlags(room.Flags)
 	if flags == "" {
