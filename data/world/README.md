@@ -170,6 +170,45 @@ follow the same charset rules. Convention: snake_case, prefix with
 nation/region when ambiguous (e.g. `andor_caemlyn`,
 `shared_mountains_of_mist`, `ocean_aryth`).
 
+#### Settlement / building hierarchy
+
+The world tree is `continent → nation → region → settlement → building`
+(see **Hierarchy** above), and **each named building is its own zone**,
+not a room inside the settlement zone. This keeps reset cadence,
+ambient lines, builder ownership, and mob/item spawn lists scoped to
+the right granularity:
+
+- A **settlement zone** owns the outdoor streetscape (the green, lanes,
+  market, fields just outside the wall, etc.) and any unnamed
+  one-room interiors that don't deserve a zone of their own.
+- A **building zone** owns the interior of one named building
+  (inn, smithy, mill, temple, manor) plus any tightly-bound annex
+  rooms (cellar, stable yard, upstairs hall).
+
+Use the **settlement_building** zone-id prefix so `zones list` groups
+the children visually beneath their parent settlement:
+
+```
+emonds_field                      ← settlement zone (Green, lanes, fields)
+emonds_field_winespring_inn      ← building zone (taproom, kitchen, rooms)
+emonds_field_luhhans_forge       ← building zone (smithy, yard)
+emonds_field_thanes_mill         ← building zone (mill floor, loft)
+```
+
+The settlement zone owns the doored exits *into* each building; the
+building zone owns the corresponding return exit. Both sides reference
+each other via cross-zone exits (see **Cross-zone exits** below).
+
+When a building is small enough that it doesn't warrant its own zone
+(a single-room shop, a watchman's hut), put it in the settlement zone
+as a regular room and skip the building-zone split. The rule of thumb:
+**carve out a zone if the building has 3+ interior rooms, distinct
+reset cadence, distinct ownership, or its own mob/item spawn list.**
+
+Building zones inherit the settlement's `level_range` by default; bump
+them per-zone when the interior has higher-tier content (e.g., a
+basement crypt under a temple, a noble's strongroom).
+
 ### Directions
 
 Valid exit directions:
@@ -186,7 +225,16 @@ Valid `sector:` values (default `city` if omitted):
 
 ```
 city forest field hills mountain desert water underwater air underground
+blight waste stedding swamp
 ```
+
+The four extension sectors (`blight`, `waste`, `stedding`, `swamp`) were
+added by migration 0025 for Wheel-of-Time-flavored terrain. See
+`docs/wot_geography_mud.md` for region-by-region guidance on which sector
+to pick. Mechanical hooks for each (e.g., channeling suppression in
+stedding, ambient horror in blight) land in later phases — today these
+sectors render their own phase ambient lines but otherwise behave like
+generic outdoor terrain.
 
 ### Currency strings
 

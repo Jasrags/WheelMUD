@@ -106,6 +106,32 @@ func TestOpen_ZonesSchema(t *testing.T) {
 	}
 }
 
+func TestOpen_RoomSectorCheckAcceptsExtensions(t *testing.T) {
+	ctx := context.Background()
+	conn, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	// Migration 0025 widens the rooms.sector CHECK to admit the four
+	// WoT terrain extensions. Each insert should succeed; an unknown
+	// sector should still be rejected.
+	for _, s := range []string{"blight", "waste", "stedding", "swamp"} {
+		_, err := conn.ExecContext(ctx,
+			`INSERT INTO rooms(external_id, name, sector) VALUES (?, ?, ?)`,
+			"sector_"+s, "S "+s, s)
+		if err != nil {
+			t.Errorf("insert sector=%q: unexpected error %v", s, err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO rooms(external_id, name, sector) VALUES (?, ?, ?)`,
+		"sector_bogus", "Bogus", "definitely_not_a_sector"); err == nil {
+		t.Fatal("expected CHECK violation on unknown sector, got nil")
+	}
+}
+
 func TestOpen_EnablesPragmas(t *testing.T) {
 	ctx := context.Background()
 	conn, err := Open(ctx, ":memory:")

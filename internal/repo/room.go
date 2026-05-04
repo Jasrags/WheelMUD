@@ -8,7 +8,9 @@ import (
 
 // Sector classifies a room's terrain/medium for movement gating and
 // rendering. The same enum lives in the rooms.sector CHECK constraint
-// (see migration 0012); changing one without the other breaks inserts.
+// (originally migration 0012, widened by 0025); changing one without
+// the other breaks inserts. The validate-loader keeps its own copy in
+// internal/world/validate.go::validSectors and must move in lock-step.
 type Sector string
 
 const (
@@ -22,6 +24,12 @@ const (
 	SectorUnderwater  Sector = "underwater" // submerged — needs swim
 	SectorAir         Sector = "air"        // needs fly
 	SectorUnderground Sector = "underground"
+	// Wheel-of-Time terrain extensions (migration 0025). See
+	// docs/wot_geography_mud.md for builder guidance.
+	SectorBlight    Sector = "blight"    // corrupted lands; ambient horror, future DoT hook
+	SectorWaste     Sector = "waste"     // Aiel Waste; arid rocky steppe distinct from desert
+	SectorStedding  Sector = "stedding"  // Ogier sanctuary; channeling suppressed (mechanic TBD)
+	SectorSwamp     Sector = "swamp"     // Haddon Mirk, Drowned Lands, Paetrinh
 )
 
 // RoomFlags groups the boolean tags that gate gameplay behavior in a

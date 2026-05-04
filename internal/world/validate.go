@@ -126,6 +126,12 @@ var validSectors = map[repo.Sector]bool{
 	repo.SectorUnderwater:  true,
 	repo.SectorAir:         true,
 	repo.SectorUnderground: true,
+	// Migration 0025 (WoT terrain extensions). Keep in lock-step with
+	// the rooms.sector CHECK constraint and repo.Sector constants.
+	repo.SectorBlight:   true,
+	repo.SectorWaste:    true,
+	repo.SectorStedding: true,
+	repo.SectorSwamp:    true,
 }
 
 func validateStarter(rooms []Room) error {

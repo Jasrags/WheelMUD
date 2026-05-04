@@ -348,11 +348,26 @@ will need on top of those tables.
       underground / underwater rooms ride the static baseline; the
       `Dark` flag is an explicit "always pitch black" override.
       `look` and `whereami` consult the clock; persistence runs on
-      the existing Save bucket. Pending: per-room reset hooks (block
-      on §9 zone schema); `coords` consumed by `map`/`track`
-      rendering (block on §10); player-carried light sources
-      (block on item taxonomy + §11 combat); `time` admin command;
-      phase-change ambient broadcasts.
+      the existing Save bucket. The `time` admin command (gated at
+      AuthAdmin) reports tick count, phase, phase progress, and the
+      countdown to the next phase boundary so builders can sanity-
+      check the cycle without scraping `whereami`. Phase-change ambient
+      broadcasts ship sector defaults: a 1-second tick poll
+      (`world.PhaseAmbientWatcher`) detects dawn/sunrise/dusk/nightfall
+      crossings and writes a single sector-appropriate sentence to every
+      session in an outdoor, non-Silent, non-Dark, non-Indoors room
+      (Underground/Underwater filtered too); seed-on-construct prevents
+      a spurious fire on boot, and non-adjacent phase jumps (future
+      `time set` rebases) advance lastPhase silently. Pending: per-room
+      reset hooks (block on §9 zone schema); `coords` consumed by
+      `map`/`track` rendering (block on §10); player-carried light
+      sources (block on item taxonomy + §11 combat); deferred ambient
+      extensions tracked in `phase_ambients_open_questions.md` memory
+      (empty-sector default policy alignment, optional `RoomFlags.
+      Windowed` for shuttered indoor rooms, per-room ambient overrides
+      `rooms.ambient_phase_json` for hand-built set-piece rooms, and
+      zone-`climate` variants for sector-by-climate text tuples once
+      overrides exist).
 - [~] **Exit** — `repo.Exit` covers `from_room_id`, `direction`,
       `to_room_id`, `ExitFlags` (`Closed` / `Locked` / `Pickable` /
       `Hidden` / `NoPass`), `KeyExternalID`, `LockDifficulty`, and
@@ -1103,3 +1118,18 @@ Items already tracked elsewhere — included here so the roadmap points at them:
   `Name`/`Builder` UTF-8 vs ASCII enforcement, `CountByZone` shared-
   suite gap, loader/schema default duplication) —
   `zones_followups.md`.
+- **Off-world realms — design pending** (`docs/wot_geography_mud.md`):
+  - **The Ways** (Waygate-linked off-world travel realm; reserved zone
+    block 30000–30999). Mechanics: Avendesora-leaf seals, Machin Shin
+    encounter, Island/Bridge/Guiding structure, time-slip on exit.
+  - **Portal Stones / Mirror Worlds** (reserved zone block 31000–31999).
+    Activation, instanced parallel-reality zones, alt-history one-shot
+    spaces. **No schema or commands designed yet** — revisit once §10
+    travel and §15 quest scripting are further along.
+- **Sector enum extension — migration 0025 landed**: `blight`, `waste`,
+  `stedding`, `swamp` added to `repo.Sector`, `validate.go::validSectors`,
+  the rooms.sector CHECK (via writable_schema REPLACE on sqlite_master),
+  `phase_ambient.go::sectorAmbients`, and `data/world/README.md`. Mechanical
+  hooks still pending: channeling suppression in stedding (§12), ambient
+  horror / DoT in blight (§11), movement-cost / encounter flavor in swamp
+  and waste (§10–11).
