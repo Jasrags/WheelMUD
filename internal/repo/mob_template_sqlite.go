@@ -26,12 +26,27 @@ func NewSQLiteMobTemplateRepo(db DBTX) *SQLiteMobTemplateRepo {
 // block — challenge code, behavior, loot/dialogue, Shadowspawn
 // fields, descriptions. Order matches 0008_create_creatures.sql.
 const templateExtraColumns = `challenge_code, organization, behavior_flags,
+		wander_chance,
 		loot_table_id, gold_dice, dialogue_tree_id, shopkeeper_json,
 		corpse_decay_ticks, respawn_zone_reset_id,
 		shadow_link_myrddraal_id, taint_immune, fade_link_master_ticks,
 		short_desc, long_desc,
 		natural_attacks_json, special_attacks_json, traits_json,
 		advancement_json, climate_json, terrain_json, trigger_scripts_json`
+
+// clampWanderChance pins values to the CHECK-enforced [0, 1] range
+// so a Create with an out-of-range field reports the typo via the
+// caller's data instead of a SQL CHECK constraint failure.
+func clampWanderChance(v float64) float64 {
+	switch {
+	case v < 0:
+		return 0
+	case v > 1:
+		return 1
+	default:
+		return v
+	}
+}
 
 func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTemplate) (creature.MobTemplate, error) {
 	if t.ExternalID == "" {
@@ -66,6 +81,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 	args = append(args, coreValues(t.Core, j.dr, j.resists)...)
 	args = append(args,
 		challengeCode, t.Organization, t.BehaviorFlags,
+		clampWanderChance(t.WanderChance),
 		t.LootTableID, t.GoldDice, t.DialogueTreeID, shopJSON,
 		t.CorpseDecayTicks, t.RespawnZoneResetID,
 		t.ShadowLinkMyrddraalID, boolToInt(t.TaintImmune), fadeTicks,
@@ -122,6 +138,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 	dest = append(dest, coreScanDest(&t.Core, &j.dr, &j.resists)...)
 	dest = append(dest,
 		&challengeCode, &t.Organization, &t.BehaviorFlags,
+		&t.WanderChance,
 		&t.LootTableID, &t.GoldDice, &t.DialogueTreeID, &shopJSON,
 		&t.CorpseDecayTicks, &t.RespawnZoneResetID,
 		&t.ShadowLinkMyrddraalID, &taintImmune, &fadeTicks,

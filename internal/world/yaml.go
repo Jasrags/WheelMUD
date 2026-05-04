@@ -194,6 +194,11 @@ type Mob struct {
 	Room  string `yaml:"room"`
 	Name  string `yaml:"name"`
 	Short string `yaml:"short"`
+	// WanderChance overrides the §10 wander tick's per-template
+	// probability for this mob. Optional; nil keeps the
+	// creature.DefaultWanderChance baseline. Values outside [0, 1]
+	// are clamped at the repo layer.
+	WanderChance *float64 `yaml:"wander_chance,omitempty"`
 
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`

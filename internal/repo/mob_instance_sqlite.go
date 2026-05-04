@@ -95,6 +95,29 @@ func (r *SQLiteMobInstanceRepo) ListInRoom(ctx context.Context, roomID int64) ([
 	return out, rows.Err()
 }
 
+func (r *SQLiteMobInstanceRepo) ListSpawned(ctx context.Context, limit int) ([]creature.MobInstance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx,
+		instanceSelect+` WHERE i.room_id IS NOT NULL AND i.room_id != 0 ORDER BY i.id ASC LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list spawned mob_instances: %w", err)
+	}
+	defer rows.Close()
+	var out []creature.MobInstance
+	for rows.Next() {
+		m, err := scanInstance(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (r *SQLiteMobInstanceRepo) UpdateLive(ctx context.Context, id int64, hp, subdual int32, cond creature.Condition, pos creature.PositionFlags) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE mob_instances SET hp_current = ?, subdual = ?, conditions = ?, position_flags = ?

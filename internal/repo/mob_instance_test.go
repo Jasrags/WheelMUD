@@ -340,6 +340,67 @@ func runMobInstanceRepoTests(t *testing.T, name string, newFix func(t *testing.T
 		}
 	})
 
+	t.Run(name+"/list_spawned_filters_zero_room_and_sorts", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		room2, err := fix.rooms.Create(ctx, Room{ExternalID: "alley", Name: "Alley"})
+		if err != nil {
+			t.Fatalf("second room: %v", err)
+		}
+		mobA, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		mobB, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: room2.ID},
+		})
+		if err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+		mobC, err := fix.instances.Create(ctx, creature.MobInstance{
+			TemplateID: tplID, Core: creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+		})
+		if err != nil {
+			t.Fatalf("Create C: %v", err)
+		}
+		// Despawn C — should drop out of the spawned listing.
+		if err := fix.instances.UpdateRoom(ctx, mobC.ID, 0); err != nil {
+			t.Fatalf("UpdateRoom 0: %v", err)
+		}
+
+		got, err := fix.instances.ListSpawned(ctx, 10)
+		if err != nil {
+			t.Fatalf("ListSpawned: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2: %+v", len(got), got)
+		}
+		if got[0].ID != mobA.ID || got[1].ID != mobB.ID {
+			t.Fatalf("order = [%d, %d], want [%d, %d]",
+				got[0].ID, got[1].ID, mobA.ID, mobB.ID)
+		}
+
+		// limit honored.
+		one, err := fix.instances.ListSpawned(ctx, 1)
+		if err != nil {
+			t.Fatalf("ListSpawned(1): %v", err)
+		}
+		if len(one) != 1 || one[0].ID != mobA.ID {
+			t.Fatalf("limit 1 = %+v, want [%d]", one, mobA.ID)
+		}
+
+		// limit <= 0 is empty.
+		zero, err := fix.instances.ListSpawned(ctx, 0)
+		if err != nil {
+			t.Fatalf("ListSpawned(0): %v", err)
+		}
+		if len(zero) != 0 {
+			t.Fatalf("limit 0 returned %d", len(zero))
+		}
+	})
+
 	t.Run(name+"/recent_trails_limit_zero", func(t *testing.T) {
 		fix, roomID, tplID := makeFixtures(t)
 		ctx := context.Background()

@@ -42,6 +42,11 @@ type MobInstanceRepo interface {
 	// ListInRoom returns every live mob in the given room, sorted by
 	// id (stable spawn order). An empty result is not an error.
 	ListInRoom(ctx context.Context, roomID int64) ([]creature.MobInstance, error)
+	// ListSpawned returns every mob with a non-zero room_id, ordered
+	// by id ASC, capped at limit. limit <= 0 returns nothing. The
+	// wander tick uses this to enumerate eligible movers each pulse
+	// without walking every room.
+	ListSpawned(ctx context.Context, limit int) ([]creature.MobInstance, error)
 	// UpdateLive persists the four mutable runtime fields. Combat
 	// hits, condition application, and stance changes call this.
 	UpdateLive(ctx context.Context, id int64, hpCurrent, subdual int32, conditions creature.Condition, position creature.PositionFlags) error

@@ -98,6 +98,11 @@ type Buckets struct {
 	Combat    *Bucket
 	Regen     *Bucket
 	AreaReset *Bucket
+	// Wander drives mob ambient movement (non-Sentinel mobs roll a
+	// chance per pulse to step into a neighboring room, recording a
+	// trail row via MobInstanceRepo.UpdateRoom). 20 s × 25 % chance
+	// averages ~80 s between moves per mob.
+	Wander *Bucket
 	// Save fires the persist.Manager flush — see ROADMAP §7. Held
 	// here so the bucket lifetime tracks the rest of the game loop.
 	Save *Bucket
@@ -110,6 +115,7 @@ const (
 	DefaultCombatInterval    = 4 * time.Second
 	DefaultRegenInterval     = 30 * time.Second
 	DefaultAreaResetInterval = 5 * time.Minute
+	DefaultWanderInterval    = 20 * time.Second
 	DefaultSaveInterval      = 30 * time.Second
 )
 
@@ -119,6 +125,7 @@ func NewBuckets(s *Scheduler) *Buckets {
 		Combat:    NewBucket(s, "combat", DefaultCombatInterval),
 		Regen:     NewBucket(s, "regen", DefaultRegenInterval),
 		AreaReset: NewBucket(s, "areaReset", DefaultAreaResetInterval),
+		Wander:    NewBucket(s, "wander", DefaultWanderInterval),
 		Save:      NewBucket(s, "save", DefaultSaveInterval),
 	}
 }
@@ -136,6 +143,9 @@ func (bs *Buckets) Stop() {
 	}
 	if bs.AreaReset != nil {
 		bs.AreaReset.Stop()
+	}
+	if bs.Wander != nil {
+		bs.Wander.Stop()
 	}
 	if bs.Save != nil {
 		bs.Save.Stop()

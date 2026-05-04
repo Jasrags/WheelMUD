@@ -538,6 +538,12 @@ type ShopConfig struct {
 // once §9 lands its full item model.
 type ItemType int8
 
+// DefaultWanderChance is the per-template default for the §10
+// wander tick. Templates loaded from YAML without an explicit value
+// inherit this number. Mirrored in migration 0022 as the column
+// DEFAULT, so memory and sqlite stay aligned.
+const DefaultWanderChance = 0.25
+
 // MobTemplate is the immutable archetype. Builders edit these; live
 // mobs are MobInstances spawned from them.
 type MobTemplate struct {
@@ -551,7 +557,15 @@ type MobTemplate struct {
 	Terrain       []string // "forest", "mountain", …
 	Advancement   []AdvanceRule
 
-	BehaviorFlags  BehaviorFlags
+	BehaviorFlags BehaviorFlags
+	// WanderChance is the per-mob, per-pulse probability that the
+	// wander tick relocates instances of this template. Clamped to
+	// [0, 1] at the storage layer (CHECK in 0022). Zero disables
+	// wandering for this template even if BehavSentinel is unset;
+	// 1.0 forces every eligible pulse to move. Templates loaded from
+	// pre-0022 rows or schemas missing the column default to 0.25
+	// (DefaultWanderChance) so behavior stays compatible.
+	WanderChance   float64
 	NaturalAttacks []Attack
 	SpecialAttacks []SpecialAttack
 	Traits         []int32

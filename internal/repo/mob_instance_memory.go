@@ -64,6 +64,26 @@ func (r *MemoryMobInstanceRepo) ListInRoom(_ context.Context, roomID int64) ([]c
 	return out, nil
 }
 
+func (r *MemoryMobInstanceRepo) ListSpawned(_ context.Context, limit int) ([]creature.MobInstance, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []creature.MobInstance
+	for _, m := range r.byID {
+		if m.Core.CurrentRoomID == 0 {
+			continue
+		}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (r *MemoryMobInstanceRepo) UpdateLive(_ context.Context, id int64, hp, subdual int32, cond creature.Condition, pos creature.PositionFlags) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -22,6 +22,36 @@ const (
 	DirSouthwest = "sw"
 )
 
+// DirLong renders a direction short code as the player-facing word
+// ("n" → "north", "ne" → "northeast", "u" → "up"). Returns the input
+// unchanged when no canonical mapping exists, which keeps logging
+// safe for direction strings of unknown provenance.
+func DirLong(code string) string {
+	switch code {
+	case DirNorth:
+		return "north"
+	case DirSouth:
+		return "south"
+	case DirEast:
+		return "east"
+	case DirWest:
+		return "west"
+	case DirUp:
+		return "up"
+	case DirDown:
+		return "down"
+	case DirNortheast:
+		return "northeast"
+	case DirNorthwest:
+		return "northwest"
+	case DirSoutheast:
+		return "southeast"
+	case DirSouthwest:
+		return "southwest"
+	}
+	return code
+}
+
 // ExitFlags groups the door-state and gating tags on a single exit.
 // Closed and locked are runtime-mutable (open/close/lock/unlock — §16);
 // hidden / nopass / pickable are immutable authoring choices.

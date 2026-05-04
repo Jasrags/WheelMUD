@@ -34,15 +34,10 @@ func resolveDir(s string) (string, bool) {
 	return d, ok
 }
 
-// dirLong renders a short code as a player-facing word (north, etc.).
-// Falls back to the short code when no entry exists; the door verbs
-// only run after resolveDir, so this is just defensive.
-func dirLong(code string) string {
-	if name, ok := directionLongName[code]; ok {
-		return name
-	}
-	return code
-}
+// dirLong is a tiny shim around repo.DirLong so the door verbs read
+// naturally (`dirLong(dir)`); kept for consistency with the call
+// sites below until they migrate too.
+func dirLong(code string) string { return repo.DirLong(code) }
 
 // playerHasKey reports whether the player can satisfy a key requirement
 // for an exit. The key must be in the player's inventory (§14). AuthAdmin

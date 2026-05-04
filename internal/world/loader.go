@@ -464,10 +464,15 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 
 	for _, m := range mobs {
 		roomID := roomIDs[m.Room]
+		wander := creature.DefaultWanderChance
+		if m.WanderChance != nil {
+			wander = *m.WanderChance
+		}
 		tpl := creature.MobTemplate{
 			ExternalID:    m.ID,
 			ChallengeCode: 'A',
 			Organization:  "solitary",
+			WanderChance:  wander,
 			ShortDesc:     m.Short,
 			Core: creature.Core{
 				Name:    m.Name,

@@ -9,21 +9,6 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// directionLongName maps the short direction codes stored on Exit
-// (n/s/e/w/u/d/ne/nw/se/sw) to the words rendered in look output.
-var directionLongName = map[string]string{
-	repo.DirNorth:     "north",
-	repo.DirSouth:     "south",
-	repo.DirEast:      "east",
-	repo.DirWest:      "west",
-	repo.DirUp:        "up",
-	repo.DirDown:      "down",
-	repo.DirNortheast: "northeast",
-	repo.DirNorthwest: "northwest",
-	repo.DirSoutheast: "southeast",
-	repo.DirSouthwest: "southwest",
-}
-
 // NewLook builds the look command. With no args it renders the current
 // room (description, exits, items, mobs). With a noun it resolves the
 // noun against the room's ExtraDescs map (e.g. `look fountain`); if no
@@ -133,10 +118,7 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			name, ok := directionLongName[e.Direction]
-			if !ok {
-				name = e.Direction
-			}
+			name := repo.DirLong(e.Direction)
 			// Closed (and especially locked) doors are dimmed and
 			// annotated so a player can tell what blocks them at a
 			// glance instead of bumping into the door on `north`.

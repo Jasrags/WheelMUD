@@ -627,11 +627,25 @@ will need on top of those tables.
       it. Not yet shipped: dynamic depth from `Session.Width`, door
       state in connectors, depth-boundary `[?]` hint when a visited
       cell has unrecursed exits.
-- [ ] Trails / `track` command — `mob_trails` ring buffer keyed by
+- [~] Trails / `track` command — `mob_trails` ring buffer keyed by
       `(mob_id, room_id, ts)` updated on every move; `track <name>`
       finds the freshest trail entry within the last N minutes and
       reports the first-step direction. Fades with time; skill
       check determines the max staleness the tracker can read.
+      Storage shipped (migration 0021, `MobInstanceRepo.UpdateRoom`
+      records the row + caps at `MobTrailCap`); the wander tick
+      (`internal/mob/wander.go`, `tick.Buckets.Wander` at 20 s,
+      per-template `WanderChance` × global multiplier, non-Sentinel
+      mobs only, in-zone walkable exits) drives organic movement
+      so trails accumulate in normal play. Per-template tuning via
+      migration 0022 (`mob_templates.wander_chance`, default 0.25)
+      and `wander_chance` on `mobs.yaml`. Admin `track <name>` verb
+      shipped (`internal/cmd/track.go`, AuthAdmin) — keyword-resolves
+      across all spawned mobs, reports current room + last-step
+      direction + elapsed time. Pending: §12 skill-check gate on
+      staleness window so players (not just admins) can `track`,
+      and per-template `wander_radius` once `mob_instances` carries
+      a stable spawn-room id.
 
 ## 11. Combat
 
