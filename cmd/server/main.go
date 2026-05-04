@@ -387,7 +387,7 @@ func (srv *server) handleConnection(s *telnet.Session) {
 		slog.Error("Failed to enter initial mode", "remote", s.RemoteAddress, "error", err)
 		return
 	}
-	if err := s.WriteRaw([]byte(initial.Prompt(s))); err != nil {
+	if err := s.WriteRaw([]byte(initial.Prompt(s.Context(), s))); err != nil {
 		return
 	}
 

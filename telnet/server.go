@@ -32,6 +32,7 @@ func RunSession(s *Session) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	s.ctx = ctx
 
 	dispatcherDone := make(chan struct{})
 	go runDispatcher(ctx, s, dispatcherDone)
@@ -103,7 +104,7 @@ func runDispatcher(ctx context.Context, s *Session, done chan<- struct{}) {
 			slog.Debug("Mode.Handle error", "remote", s.RemoteAddress, "error", err)
 		}
 		if mode := s.CurrentMode(); mode != nil {
-			if prompt := mode.Prompt(s); prompt != "" {
+			if prompt := mode.Prompt(ctx, s); prompt != "" {
 				if werr := s.WriteRaw([]byte(prompt)); werr != nil {
 					if !shouldEndSession(werr) {
 						slog.Debug("Prompt write failed", "remote", s.RemoteAddress, "error", werr)
@@ -290,7 +291,7 @@ func handleLineBreak(s *Session) error {
 	if len(s.Input.Buf) == 0 {
 		// Bare Enter: redraw the current mode's prompt without dispatching.
 		if mode := s.CurrentMode(); mode != nil {
-			if prompt := mode.Prompt(s); prompt != "" {
+			if prompt := mode.Prompt(s.Context(), s); prompt != "" {
 				return s.WriteRaw([]byte("\r\n" + prompt))
 			}
 		}
@@ -436,7 +437,7 @@ func listAndRedraw(s *Session, mode Mode, cands []Candidate) error {
 	listing := formatCandidates(cands, s.Width)
 	prompt := ""
 	if mode != nil {
-		prompt = mode.Prompt(s)
+		prompt = mode.Prompt(s.Context(), s)
 	}
 
 	var b strings.Builder

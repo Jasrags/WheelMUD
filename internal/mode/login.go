@@ -71,7 +71,7 @@ func NewLogin(accounts repo.AccountRepo, characters repo.CharacterRepo, sessions
 	}
 }
 
-func (l *Login) Prompt(_ *telnet.Session) string {
+func (l *Login) Prompt(_ context.Context, _ *telnet.Session) string {
 	switch l.step {
 	case stepUsername:
 		return "Username (or 'new' to create an account): "

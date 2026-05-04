@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -105,6 +106,23 @@ type Session struct {
 	modes  []Mode
 
 	inbox chan string
+
+	// ctx is the per-session context, canceled when the read loop
+	// returns (EOF / idle / flood). Set once by RunSession and read
+	// via Context() so prompt and helper paths can honor cancellation
+	// without threading ctx through every byte-handler signature.
+	ctx context.Context
+}
+
+// Context returns the per-session context. It is canceled when the
+// read loop exits. Returns context.Background() if RunSession hasn't
+// initialized the session yet (test fixtures construct Session
+// directly without going through RunSession).
+func (s *Session) Context() context.Context {
+	if s.ctx == nil {
+		return context.Background()
+	}
+	return s.ctx
 }
 
 // SetLastTellFrom records the name of the most recent `tell` sender

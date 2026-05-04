@@ -24,7 +24,7 @@ func NewCharacterSelect(chars []repo.Character, characters repo.CharacterRepo, g
 	return &CharacterSelect{chars: chars, repo: characters, game: game}
 }
 
-func (m *CharacterSelect) Prompt(_ *telnet.Session) string {
+func (m *CharacterSelect) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Pick a character (or 'create' / 'quit'): "
 }
 

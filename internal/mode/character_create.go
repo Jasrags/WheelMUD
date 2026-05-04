@@ -37,7 +37,7 @@ func NewCharacterCreate(characters repo.CharacterRepo, game telnet.Mode) *Charac
 	return &CharacterCreate{repo: characters, game: game}
 }
 
-func (m *CharacterCreate) Prompt(_ *telnet.Session) string {
+func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Choose a character name: "
 }
 

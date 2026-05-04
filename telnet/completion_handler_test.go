@@ -16,7 +16,7 @@ type completingMode struct {
 }
 
 func (m *completingMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
-func (m *completingMode) Prompt(_ *Session) string {
+func (m *completingMode) Prompt(_ context.Context, _ *Session) string {
 	if m.prompt == "" {
 		return "> "
 	}
@@ -41,7 +41,7 @@ func (m *completingMode) Complete(_ *Session, buffer string) []Candidate {
 type quietMode struct{}
 
 func (m *quietMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
-func (m *quietMode) Prompt(_ *Session) string                             { return "> " }
+func (m *quietMode) Prompt(_ context.Context, _ *Session) string                             { return "> " }
 func (m *quietMode) OnEnter(_ *Session) error                             { return nil }
 func (m *quietMode) OnExit(_ *Session) error                              { return nil }
 

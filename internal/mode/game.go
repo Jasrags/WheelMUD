@@ -57,8 +57,11 @@ func (g *Game) Handle(ctx context.Context, s *telnet.Session, line string) error
 
 // Prompt renders Template against the session's live character /
 // room state. Falls back to "> " (logged at warn) if anything goes
-// wrong — the player should always get a usable prompt.
-func (g *Game) Prompt(s *telnet.Session) string {
+// wrong — the player should always get a usable prompt. parent is
+// the dispatcher's per-session ctx; it is canceled when the read
+// loop exits, so a stalled lookup against a torn-down session
+// returns immediately instead of blocking on the timeout.
+func (g *Game) Prompt(parent context.Context, s *telnet.Session) string {
 	// Guard order matters: an empty template or missing CharacterRepo
 	// short-circuits to the legacy "> " literal before we attempt any
 	// repo work. A nil Characters therefore renders no placeholders at
@@ -68,7 +71,7 @@ func (g *Game) Prompt(s *telnet.Session) string {
 	if g.Template == "" || g.Characters == nil || s.CharacterName == "" {
 		return promptFallback
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), promptLookupTimeout)
+	ctx, cancel := context.WithTimeout(parent, promptLookupTimeout)
 	defer cancel()
 
 	c, err := g.Characters.FindByName(ctx, s.CharacterName)

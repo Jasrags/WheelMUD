@@ -25,7 +25,7 @@ func (m *scriptedMode) Handle(_ context.Context, s *Session, line string) error 
 	m.mu.Unlock()
 	return s.WriteRaw([]byte("ack:" + line + "\r\n"))
 }
-func (m *scriptedMode) Prompt(_ *Session) string { return "> " }
+func (m *scriptedMode) Prompt(_ context.Context, _ *Session) string { return "> " }
 func (m *scriptedMode) OnEnter(_ *Session) error { return nil }
 func (m *scriptedMode) OnExit(_ *Session) error  { m.closed.Store(true); return nil }
 
@@ -159,7 +159,7 @@ func (m *ctxObservingMode) Handle(ctx context.Context, s *Session, _ string) err
 	_ = s.WriteRaw([]byte("ack\r\n"))
 	return nil
 }
-func (m *ctxObservingMode) Prompt(_ *Session) string { return "> " }
+func (m *ctxObservingMode) Prompt(_ context.Context, _ *Session) string { return "> " }
 func (m *ctxObservingMode) OnEnter(_ *Session) error { return nil }
 func (m *ctxObservingMode) OnExit(_ *Session) error  { return nil }
 
@@ -296,7 +296,7 @@ func (b *blockingMode) Handle(_ context.Context, _ *Session, _ string) error {
 	<-b.released
 	return nil
 }
-func (b *blockingMode) Prompt(_ *Session) string { return "" }
+func (b *blockingMode) Prompt(_ context.Context, _ *Session) string { return "" }
 func (b *blockingMode) OnEnter(_ *Session) error { return nil }
 func (b *blockingMode) OnExit(_ *Session) error  { return nil }
 
@@ -308,7 +308,7 @@ func (m *terminalMode) Handle(_ context.Context, s *Session, _ string) error {
 	_ = s.Conn.Close()
 	return ErrSessionEnded
 }
-func (m *terminalMode) Prompt(_ *Session) string { return "should-not-write> " }
+func (m *terminalMode) Prompt(_ context.Context, _ *Session) string { return "should-not-write> " }
 func (m *terminalMode) OnEnter(_ *Session) error { return nil }
 func (m *terminalMode) OnExit(_ *Session) error  { return nil }
 

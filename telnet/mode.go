@@ -15,8 +15,10 @@ type Mode interface {
 	Handle(ctx context.Context, s *Session, line string) error
 	// Prompt returns the bytes to write after a line is handled. Empty
 	// string means "no prompt this time" — useful for modes that print
-	// their own prompt inside Handle.
-	Prompt(s *Session) string
+	// their own prompt inside Handle. ctx is canceled when the session
+	// ends; impls that do blocking I/O (DB lookups for live placeholders)
+	// must respect it.
+	Prompt(ctx context.Context, s *Session) string
 	// OnEnter runs when this mode is pushed onto the stack.
 	OnEnter(s *Session) error
 	// OnExit runs when this mode is popped off the stack.

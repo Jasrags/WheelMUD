@@ -51,7 +51,7 @@ func NewCreate(accounts repo.AccountRepo, characters repo.CharacterRepo, session
 	return &Create{accounts: accounts, characters: characters, sessions: sessions, game: game}
 }
 
-func (c *Create) Prompt(_ *telnet.Session) string {
+func (c *Create) Prompt(_ context.Context, _ *telnet.Session) string {
 	switch c.step {
 	case createStepUsername:
 		return "Choose a username: "

@@ -26,7 +26,7 @@ func TestGamePromptRendersHP(t *testing.T) {
 	g := NewGame(telnet.NewRegistry(), chars, nil, "<%h/%H hp> ")
 	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
 
-	if got, want := g.Prompt(s), "<7/10 hp> "; got != want {
+	if got, want := g.Prompt(context.Background(), s), "<7/10 hp> "; got != want {
 		t.Fatalf("Prompt = %q, want %q", got, want)
 	}
 }
@@ -55,7 +55,7 @@ func TestGamePromptFallbacks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.g.Prompt(tc.s); got != "> " {
+			if got := tc.g.Prompt(context.Background(), tc.s); got != "> " {
 				t.Fatalf("Prompt = %q, want fallback %q", got, "> ")
 			}
 		})
@@ -77,7 +77,7 @@ func TestGamePromptRendersGold(t *testing.T) {
 	g := NewGame(telnet.NewRegistry(), chars, nil, "%h/%H %g")
 	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
 
-	got := g.Prompt(s)
+	got := g.Prompt(context.Background(), s)
 	want := c.Coin.Short()
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected coin %q in prompt; got %q", want, got)
@@ -98,7 +98,7 @@ func TestGamePromptCfmtColor(t *testing.T) {
 	g := NewGame(telnet.NewRegistry(), chars, nil, "{{%h}}::red/%H ")
 	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
 
-	got := g.Prompt(s)
+	got := g.Prompt(context.Background(), s)
 	// cfmt emits a real ANSI escape for the colorized run.
 	if !strings.Contains(got, "\x1b[") {
 		t.Fatalf("expected ANSI escape from cfmt; got %q", got)
@@ -129,7 +129,7 @@ func TestGamePromptDefangsRoomName(t *testing.T) {
 		CurrentRoomID: 9,
 	}
 
-	got := g.Prompt(s)
+	got := g.Prompt(context.Background(), s)
 	// `}}` must have been broken; verify the cfmt close sequence is gone.
 	if strings.Contains(got, "}}::red") {
 		t.Fatalf("undefanged cfmt syntax leaked from room name: %q", got)
@@ -155,7 +155,7 @@ func TestGamePromptCharacterTemplateOverride(t *testing.T) {
 	g := NewGame(telnet.NewRegistry(), chars, nil, "<%h/%H hp> ")
 	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
 
-	if got, want := g.Prompt(s), "(8)"; got != want {
+	if got, want := g.Prompt(context.Background(), s), "(8)"; got != want {
 		t.Fatalf("Prompt = %q, want %q (per-character override)", got, want)
 	}
 }
@@ -179,7 +179,7 @@ func TestGamePromptRoomLookup(t *testing.T) {
 		CharacterName: c.Name,
 		CurrentRoomID: 42,
 	}
-	if got, want := g.Prompt(s), "[Vast Glade] 5/5> "; got != want {
+	if got, want := g.Prompt(context.Background(), s), "[Vast Glade] 5/5> "; got != want {
 		t.Fatalf("Prompt = %q, want %q", got, want)
 	}
 }

@@ -15,7 +15,7 @@ type failingEnterMode struct {
 var sentinelEnterErr = errors.New("on-enter failed")
 
 func (m *failingEnterMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
-func (m *failingEnterMode) Prompt(_ *Session) string                             { return "" }
+func (m *failingEnterMode) Prompt(_ context.Context, _ *Session) string                             { return "" }
 func (m *failingEnterMode) OnEnter(_ *Session) error                             { return sentinelEnterErr }
 func (m *failingEnterMode) OnExit(_ *Session) error                              { m.exitCalled = true; return nil }
 
