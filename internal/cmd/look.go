@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -15,7 +16,11 @@ import (
 // keyword matches, the player is told there's nothing special to see.
 // Mob/item inspection is delegated to the `examine` command so each
 // verb has a single concern.
-func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command {
+//
+// The clock parameter drives the §9 day/night cycle. May be nil in
+// tests that don't care about lighting; nil falls back to the legacy
+// `Flags.Dark && LightLevel <= 0` pitch-black gate.
+func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) *telnet.Command {
 	return &telnet.Command{
 		Name:    "look",
 		Aliases: []string{"l"},
@@ -23,9 +28,9 @@ func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
 			if len(c.Args) == 0 {
-				return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs)
+				return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs, clock)
 			}
-			return lookKeyword(c, rooms, strings.Join(c.Args, " "))
+			return lookKeyword(c, rooms, strings.Join(c.Args, " "), clock)
 		},
 	}
 }
@@ -34,10 +39,10 @@ func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 // noun is matched case-insensitively after trimming. Pitch-black rooms
 // suppress the lookup so dark-room ambience stays consistent with the
 // no-arg path.
-func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string) error {
+func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string, clock *world.Clock) error {
 	noun = strings.ToLower(strings.TrimSpace(noun))
 	if noun == "" {
-		return RenderRoom(c.Ctx, c.Session, rooms, nil, nil, nil)
+		return RenderRoom(c.Ctx, c.Session, rooms, nil, nil, nil, clock)
 	}
 	if c.Session.CurrentRoomID == 0 {
 		return c.Session.WriteString("{{You are nowhere in particular.}}::red\r\n")
@@ -49,13 +54,25 @@ func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string) error {
 		}
 		return c.Session.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
-	if room.Flags.Dark && room.LightLevel <= 0 {
+	if pitchBlack(room, clock) {
 		return c.Session.WriteString("{{It is pitch black — you can't see a thing.}}::gray\r\n")
 	}
 	if desc, ok := room.ExtraDescs[noun]; ok && desc != "" {
 		return c.Session.WriteString(toCRLF(desc) + "\r\n")
 	}
 	return c.Session.WriteString("{{You see nothing special.}}::gray\r\n")
+}
+
+// pitchBlack centralizes the "render nothing" gate so both the no-arg
+// and `look <noun>` paths agree. With a non-nil clock the §9 day/night
+// cycle drives the answer; without one (test fixtures, future internal
+// callers), fall back to the original `Flags.Dark && LightLevel<=0`
+// rule so legacy callers keep observable behavior.
+func pitchBlack(room repo.Room, clock *world.Clock) bool {
+	if clock != nil {
+		return clock.EffectiveLight(room) <= 0
+	}
+	return room.Flags.Dark && room.LightLevel <= 0
 }
 
 // RenderRoom produces the standard "you are here" view for the session's
@@ -66,7 +83,9 @@ func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string) error {
 // Output uses cfmt {{...}}::style tags via Session.WriteString — never
 // pass untrusted input through this path. World text comes from the
 // YAML loader, which is operator-controlled, so it's safe.
-func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo) error {
+//
+// clock may be nil; see pitchBlack for the fallback rule.
+func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) error {
 	if s.CurrentRoomID == 0 {
 		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")
 	}
@@ -79,11 +98,11 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 		return s.WriteString("{{Could not look around right now.}}::red\r\n")
 	}
 
-	// Dark room with no light: render only the title-as-shadow plus
-	// an exits hint. Items/mobs/desc stay hidden until something lights
-	// the room (torch in inventory, daylight, weave). Builders who
-	// want a "you see nothing" feel set dark=true and light_level=0.
-	if room.Flags.Dark && room.LightLevel <= 0 {
+	// Pitch-black: render only the suppressed message. Items/mobs/desc
+	// stay hidden until something lights the room (torch in inventory,
+	// daylight curve, weave). Day/night cycle drives this when a clock
+	// is wired; without a clock the legacy Dark+0 rule applies.
+	if pitchBlack(room, clock) {
 		return s.WriteString("{{It is pitch black — you can't see a thing.}}::gray\r\n")
 	}
 

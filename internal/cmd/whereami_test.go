@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -18,7 +20,7 @@ func TestWhereAmI_RendersAllFields(t *testing.T) {
 		CoordX: 5, CoordY: -2, CoordZ: 0,
 		ExtraDescs: map[string]string{"fountain": "marble basin"},
 	})
-	cmd := NewWhereAmI(rooms)
+	cmd := NewWhereAmI(rooms, nil)
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
@@ -42,9 +44,34 @@ func TestWhereAmI_RendersAllFields(t *testing.T) {
 	}
 }
 
+func TestWhereAmI_LightLineShowsCycleAdjustedValue(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, ExternalID: "field", Name: "Open Field",
+		Sector: repo.SectorField, LightLevel: 100,
+	})
+	frozen := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	clock := world.NewClock(1500, world.WithNow(func() time.Time { return frozen })) // night
+
+	cmd := NewWhereAmI(rooms, clock)
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	s.AuthLevel = telnet.AuthAdmin
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "whereami"}
+	if err := cmd.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := conn.String()
+	// Format: "Light: 100 (now 0, night)" — baseline + effective + phase.
+	if !strings.Contains(got, "100 (now 0, night)") {
+		t.Fatalf("expected baseline+effective+phase line; got %q", got)
+	}
+}
+
 func TestWhereAmI_NowhereSession(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
-	cmd := NewWhereAmI(rooms)
+	cmd := NewWhereAmI(rooms, nil)
 	s, conn := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 

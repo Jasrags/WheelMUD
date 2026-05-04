@@ -21,7 +21,7 @@ func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, 
 // thin wrapper so the test reads naturally even though NewTeleport
 // already takes the same shape.
 func cmdNewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, chars repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
-	return NewTeleport(rooms, exits, items, mobs, chars, sessions)
+	return NewTeleport(rooms, exits, items, mobs, chars, sessions, nil)
 }
 
 func TestTeleport_SelfByExternalID(t *testing.T) {

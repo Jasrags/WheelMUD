@@ -34,7 +34,7 @@ func TestMove_BlockedDirection(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 	// Plaza has only n/s exits in seedWorld; "up" is blocked.
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 	up := findCmd(t, family, "up")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "up"}
@@ -59,7 +59,7 @@ func TestMove_SectorGatesAirUnderwater(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 	east := findCmd(t, family, "east")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "east"}
@@ -94,7 +94,7 @@ func TestMove_DoorFlagsBlock(t *testing.T) {
 
 			s, conn := bufSession(t)
 			s.CurrentRoomID = 1
-			family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+			family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 			east := findCmd(t, family, "east")
 
 			ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "east"}
@@ -131,7 +131,7 @@ func TestMove_FlySpeedAllowsAir(t *testing.T) {
 	// promoteToGame in production; tests set it directly to mirror
 	// the post-login state.
 	s.Speed = flyer.Core.Speed
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 	up := findCmd(t, family, "up")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "up"}
@@ -152,7 +152,7 @@ func TestMove_SuccessUpdatesSessionAndPersists(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CharacterID = c.ID
 	s.CurrentRoomID = 1
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 	north := findCmd(t, family, "north")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "north"}
@@ -202,7 +202,7 @@ func TestMove_PublishesPlayerEnteredAndLeft(t *testing.T) {
 	s, _ := bufSession(t)
 	s.CharacterID = c.ID
 	s.CurrentRoomID = 1
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, bus)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, bus, nil)
 	north := findCmd(t, family, "north")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "north"}
@@ -242,7 +242,7 @@ func TestMove_DiagonalDirections(t *testing.T) {
 		exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: tc.dest, Direction: tc.dir})
 	}
 
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,7 +270,7 @@ func TestMove_NoCharacterStillMovesInProcess(t *testing.T) {
 
 	s, _ := bufSession(t)
 	s.CurrentRoomID = 1
-	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil)
+	family := NewMoveFamily(rooms, exits, items, mobs, chars, nil, nil)
 	north := findCmd(t, family, "north")
 
 	ctx := &telnet.Context{Ctx: context.Background(), Session: s, Name: "north"}

@@ -341,10 +341,18 @@ will need on top of those tables.
       `creature.Speed` to gate `air`/`underwater` (FlyFt/SwimFt
       requirements; zero-speed defaults to "blocked"); `whereami`
       command surfaces id/sector/flags/light/coords/keywords for
-      builders. Pending: auto day/night light cycling (needs a
-      clock source); per-room reset hooks (block on §9 zone
-      schema); `coords` consumed by `map`/`track` rendering (block
-      on §10).
+      builders. Day/night cycling shipped via `internal/world.Clock`
+      (migration 0024 + `world_state` table, 30 real-min per game
+      day, 4 phases of 450 ticks each). `EffectiveLight(room)` ramps
+      outdoor rooms dawn → noon → dusk → midnight; indoor /
+      underground / underwater rooms ride the static baseline; the
+      `Dark` flag is an explicit "always pitch black" override.
+      `look` and `whereami` consult the clock; persistence runs on
+      the existing Save bucket. Pending: per-room reset hooks (block
+      on §9 zone schema); `coords` consumed by `map`/`track`
+      rendering (block on §10); player-carried light sources
+      (block on item taxonomy + §11 combat); `time` admin command;
+      phase-change ambient broadcasts.
 - [~] **Exit** — `repo.Exit` covers `from_room_id`, `direction`,
       `to_room_id`, `ExitFlags` (`Closed` / `Locked` / `Pickable` /
       `Hidden` / `NoPass`), `KeyExternalID`, `LockDifficulty`, and

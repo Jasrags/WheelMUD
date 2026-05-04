@@ -10,6 +10,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -28,7 +29,7 @@ import (
 // current single-tier auth model. This is a builder/admin tool and
 // should be promoted to AuthAdmin as soon as an admin role exists on
 // accounts. See world_aggregates_followups.md.
-func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
+func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) *telnet.Command {
 	return &telnet.Command{
 		Name:    "teleport",
 		Aliases: []string{"tp"},
@@ -42,9 +43,9 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 		Run: func(c *telnet.Context) error {
 			switch len(c.Args) {
 			case 1:
-				return tpSelf(c, c.Args[0], rooms, exits, items, mobs, characters)
+				return tpSelf(c, c.Args[0], rooms, exits, items, mobs, characters, clock)
 			case 2:
-				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions)
+				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions, clock)
 			default:
 				return c.Session.WriteRaw([]byte("Usage: tp <room>   or   tp <user> <room>\r\n"))
 			}
@@ -55,7 +56,7 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 // tpSelf teleports the calling session to the resolved room and
 // re-renders it. Persistence and session.CurrentRoomID update mirror
 // what the move family does on a successful step.
-func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo) error {
+func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, clock *world.Clock) error {
 	room, err := resolveRoom(c.Ctx, rooms, roomArg)
 	if errors.Is(err, repo.ErrRoomNotFound) {
 		return c.Session.WriteString("{{No such room: " + sanitizeArg(roomArg) + "}}::red\r\n")
@@ -68,13 +69,13 @@ func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.E
 		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, c.Session, room.ID, characters)
-	return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs)
+	return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs, clock)
 }
 
 // tpOther teleports another live session by character name. The caller
 // gets a confirmation; the target gets a "world ripples" notice plus
 // the new room rendered into their own connection.
-func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry) error {
+func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) error {
 	target := lookupByCharacter(sessions, username)
 	if target == nil {
 		return c.Session.WriteString("{{No such player online: " + sanitizeArg(username) + "}}::red\r\n")
@@ -100,7 +101,7 @@ func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, e
 	// Render to the target with a detached context: the caller's ctx
 	// dies when the caller's command dispatch returns / disconnects,
 	// which would abort the unrelated target's render mid-flight.
-	return RenderRoom(context.Background(), target, rooms, exits, items, mobs)
+	return RenderRoom(context.Background(), target, rooms, exits, items, mobs, clock)
 }
 
 // resolveRoom turns a user-supplied room argument into an existing

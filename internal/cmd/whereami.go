@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -16,7 +17,7 @@ import (
 // per-keyword reveal. The command is registered today but unreachable
 // until an admin role lands; promote a session via teleport-style
 // elevation when that mechanism exists.
-func NewWhereAmI(rooms repo.RoomRepo) *telnet.Command {
+func NewWhereAmI(rooms repo.RoomRepo, clock *world.Clock) *telnet.Command {
 	return &telnet.Command{
 		Name: "whereami",
 		Help: "Show the current room's id, sector, flags, light, and coords",
@@ -33,12 +34,12 @@ func NewWhereAmI(rooms repo.RoomRepo) *telnet.Command {
 				}
 				return s.WriteString("{{Could not look up your location right now.}}::red\r\n")
 			}
-			return s.WriteString(formatWhereAmI(room))
+			return s.WriteString(formatWhereAmI(room, clock))
 		},
 	}
 }
 
-func formatWhereAmI(room repo.Room) string {
+func formatWhereAmI(room repo.Room, clock *world.Clock) string {
 	var b strings.Builder
 	// ExternalID and Name are interpolated into cfmt-styled spans;
 	// defang `}}::` in case a builder typo authored an injection.
@@ -48,7 +49,16 @@ func formatWhereAmI(room repo.Room) string {
 	if sector == "" {
 		sector = repo.SectorCity
 	}
-	fmt.Fprintf(&b, "  {{Sector:}}::yellow %s    {{Light:}}::yellow %d\r\n", defangWorldField(string(sector)), room.LightLevel)
+	// Show baseline (stored) light alongside the cycle-adjusted current
+	// value so admins can confirm the day/night clock is moving.
+	currentLight := room.LightLevel
+	phase := "static"
+	if clock != nil {
+		currentLight = clock.EffectiveLight(room)
+		phase = clock.Phase().String()
+	}
+	fmt.Fprintf(&b, "  {{Sector:}}::yellow %s    {{Light:}}::yellow %d (now %d, %s)\r\n",
+		defangWorldField(string(sector)), room.LightLevel, currentLight, phase)
 	fmt.Fprintf(&b, "  {{Coords:}}::yellow (%d, %d, %d)\r\n", room.CoordX, room.CoordY, room.CoordZ)
 	flags := whereFlags(room.Flags)
 	if flags == "" {

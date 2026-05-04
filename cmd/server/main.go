@@ -97,16 +97,24 @@ func main() {
 		slog.Error("Failed to load channel catalog", "error", err)
 		os.Exit(1)
 	}
+	worldState := repo.NewSQLiteWorldStateRepo(conn)
 
 	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
 		slog.Error("World load failed", "error", err)
 		os.Exit(1)
 	}
 
+	baseTicks, err := worldState.GetTicks(context.Background())
+	if err != nil {
+		slog.Warn("World clock load failed; defaulting to noon", "error", err)
+		baseTicks = 675
+	}
+	clock := world.NewClock(baseTicks)
+
 	sessions := session.NewRegistry()
 	bus := eventbus.New()
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels)
+	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels, clock)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -118,6 +126,9 @@ func main() {
 	saves := persist.New()
 	saves.Register("character.lastPlayed", func(ctx context.Context) error {
 		return savePlayTimes(ctx, sessions, characters)
+	})
+	saves.Register("world.ticks", func(ctx context.Context) error {
+		return worldState.SetTicks(ctx, clock.Ticks())
 	})
 	buckets.Save.Subscribe(func(ctx context.Context) {
 		saves.FlushAll(ctx)
@@ -290,7 +301,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -320,13 +331,13 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs)); err != nil {
+	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs, clock)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewExamine(items, mobs)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus)...); err != nil {
+	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus, clock)...); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
@@ -338,7 +349,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions)); err != nil {
+	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions, clock)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
@@ -352,7 +363,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewMap(rooms, exits)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewWhereAmI(rooms)); err != nil {
+	if err := r.Register(cmd.NewWhereAmI(rooms, clock)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewTrack(mobs, rooms, exits)); err != nil {

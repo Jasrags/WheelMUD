@@ -22,7 +22,7 @@ import (
 //
 // bus may be nil during tests that don't care about event emission;
 // moveDir tolerates a nil bus.
-func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus) []*telnet.Command {
+func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock) []*telnet.Command {
 	build := func(name, dir string) *telnet.Command {
 		return &telnet.Command{
 			Name:    name,
@@ -30,7 +30,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			Help:    "Move " + name,
 			Auth:    telnet.AuthPlayer,
 			Run: func(c *telnet.Context) error {
-				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus)
+				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus, clock)
 			},
 		}
 	}
@@ -51,7 +51,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 // moveDir is the work behind every direction command. Pulled out as a
 // helper so each direction's Run is a one-liner and the move semantics
 // live in one place.
-func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus) error {
+func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock) error {
 	s := c.Session
 	if s.CurrentRoomID == 0 {
 		return s.WriteRaw([]byte("You are nowhere — cannot move.\r\n"))
@@ -135,7 +135,7 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		})
 	}
 
-	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs)
+	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs, clock)
 }
 
 // sectorGate returns a refusal message + true when the destination

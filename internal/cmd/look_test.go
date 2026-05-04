@@ -12,6 +12,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -107,7 +108,7 @@ func TestLook_RendersRoomWithExitsItemsAndMobs(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 
@@ -138,7 +139,7 @@ func TestLook_OmitsEmptySubsections(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 7
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -166,7 +167,7 @@ func TestLook_MissingRoomMessage(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 999
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -188,7 +189,7 @@ func TestLook_DarkRoomHidesContents(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 5
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -217,7 +218,7 @@ func TestLook_HidesHiddenExitsAndAnnotatesDoors(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -244,7 +245,7 @@ func TestLook_KeywordHitRendersExtraDesc(t *testing.T) {
 	items := repo.NewMemoryItemRepo()
 	mobs := repo.NewMemoryMobInstanceRepo()
 
-	look := NewLook(rooms, exits, items, mobs)
+	look := NewLook(rooms, exits, items, mobs, nil)
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 	s.AuthLevel = telnet.AuthPlayer
@@ -265,7 +266,7 @@ func TestLook_KeywordMissFallsThrough(t *testing.T) {
 	items := repo.NewMemoryItemRepo()
 	mobs := repo.NewMemoryMobInstanceRepo()
 
-	look := NewLook(rooms, exits, items, mobs)
+	look := NewLook(rooms, exits, items, mobs, nil)
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 	s.AuthLevel = telnet.AuthPlayer
@@ -286,10 +287,115 @@ func TestLook_EmitsANSIEscapes(t *testing.T) {
 	rooms, exits, items, mobs := seedWorld(t)
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	if !strings.Contains(conn.String(), "\x1b[") {
 		t.Fatalf("output has no ANSI escapes; got %q", conn.String())
+	}
+}
+
+// fixedDayClock pins the day clock to a specific tick so tests can
+// exercise the night/dusk/dawn paths deterministically.
+func fixedDayClock(t *testing.T, ticks int64) *world.Clock {
+	t.Helper()
+	frozen := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	return world.NewClock(ticks, world.WithNow(func() time.Time { return frozen }))
+}
+
+func TestLook_OutdoorRoomAtMidnightRendersPitchBlack(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, Name: "Open Field", LongDesc: "Tall grass under a wide sky.",
+		Sector:     repo.SectorField,
+		LightLevel: 100,
+	})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	clock := fixedDayClock(t, 1500) // night quarter
+
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, clock); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	if !strings.Contains(conn.String(), "pitch black") {
+		t.Fatalf("expected pitch-black at night; got %q", conn.String())
+	}
+	if strings.Contains(conn.String(), "Open Field") {
+		t.Fatalf("room title should not render at night; got %q", conn.String())
+	}
+}
+
+func TestLook_OutdoorRoomAtNoonRendersNormally(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, Name: "Open Field", LongDesc: "Tall grass under a wide sky.",
+		Sector:     repo.SectorField,
+		LightLevel: 100,
+	})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	clock := fixedDayClock(t, 675) // day quarter
+
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, clock); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	if !strings.Contains(conn.String(), "Open Field") {
+		t.Fatalf("expected room title; got %q", conn.String())
+	}
+}
+
+func TestLook_IndoorRoomIgnoresCycle(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, Name: "Inn Common Room", LongDesc: "A warm hearth.",
+		Sector:     repo.SectorCity,
+		Flags:      repo.RoomFlags{Indoors: true},
+		LightLevel: 80,
+	})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	clock := fixedDayClock(t, 1500) // night, but indoors should ignore
+
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, clock); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	if strings.Contains(conn.String(), "pitch black") {
+		t.Fatalf("indoor room should not go pitch-black at night; got %q", conn.String())
+	}
+}
+
+func TestLook_DarkFlagOverridesCycle(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{
+		ID: 1, Name: "Sealed Vault",
+		Sector:     repo.SectorUnderground,
+		Flags:      repo.RoomFlags{Dark: true},
+		LightLevel: 100, // ignored by Dark
+	})
+	exits := repo.NewMemoryExitRepo()
+	items := repo.NewMemoryItemRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+
+	s, conn := bufSession(t)
+	s.CurrentRoomID = 1
+	clock := fixedDayClock(t, 675) // would be full daylight outdoors
+
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, clock); err != nil {
+		t.Fatalf("RenderRoom: %v", err)
+	}
+	if !strings.Contains(conn.String(), "pitch black") {
+		t.Fatalf("Dark-flagged room should always be pitch black; got %q", conn.String())
 	}
 }
