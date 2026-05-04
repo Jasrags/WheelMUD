@@ -83,7 +83,13 @@ type Exit struct {
 // ExitRepo is the persistence boundary the look / move commands and the
 // YAML world loader use to resolve room connectivity.
 type ExitRepo interface {
-	// ListFrom returns every exit leaving fromRoomID, sorted by direction.
+	// ListFrom returns every exit leaving fromRoomID, sorted by
+	// direction (ascending lexicographic order on the short code:
+	// d, e, n, ne, nw, s, se, sw, u, w). The auto-coord BFS runner
+	// (internal/world/coords_derive) relies on this ordering for
+	// deterministic first-arrival on contested rooms; a future
+	// implementation that returns exits in insertion order would
+	// silently change which path "wins" a coord conflict.
 	// An empty result is not an error.
 	ListFrom(ctx context.Context, fromRoomID int64) ([]Exit, error)
 	// FindByDirection resolves the exit leaving fromRoomID in the given

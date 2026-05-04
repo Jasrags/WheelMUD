@@ -21,7 +21,7 @@ func NewSQLiteRoomRepo(db *sql.DB) *SQLiteRoomRepo {
 
 const roomSelectCols = `id, external_id, zone_id, name, short_desc, long_desc, ` +
 	`indoors, nopvp, noteleport, dark, silent, peaceful, nomap, ` +
-	`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
+	`sector, light_level, coord_x, coord_y, coord_z, coords_auto, extra_descs_json, created_at`
 
 func (r *SQLiteRoomRepo) FindByID(ctx context.Context, id int64) (Room, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -63,7 +63,11 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 
 	insertCols := `external_id, zone_id, name, short_desc, long_desc, ` +
 		`indoors, nopvp, noteleport, dark, silent, peaceful, nomap, ` +
-		`sector, light_level, coord_x, coord_y, coord_z, extra_descs_json, created_at`
+		`sector, light_level, coord_x, coord_y, coord_z, coords_auto, extra_descs_json, created_at`
+	// CoordsAutoInt centralises the SQL coords_auto inversion (see
+	// repo.CoordsAutoInt doc). Test fixtures and OLC callers leave
+	// CoordsAnchor at its zero value (false) and get coords_auto=1,
+	// matching the migration 0026 default.
 	insertVals := []any{
 		room.ExternalID, room.ZoneID, room.Name, room.ShortDesc, room.LongDesc,
 		boolToInt(room.Flags.Indoors), boolToInt(room.Flags.NoPVP),
@@ -71,6 +75,7 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 		boolToInt(room.Flags.Silent), boolToInt(room.Flags.Peaceful),
 		boolToInt(room.Flags.NoMap),
 		string(room.Sector), room.LightLevel, room.CoordX, room.CoordY, room.CoordZ,
+		CoordsAutoInt(room.CoordsAnchor),
 		extraJSON, room.CreatedAt,
 	}
 
@@ -103,15 +108,15 @@ func (r *SQLiteRoomRepo) Create(ctx context.Context, room Room) (Room, error) {
 
 func scanRoom(row *sql.Row) (Room, error) {
 	var (
-		room                                                      Room
-		indoors, nopvp, noteleport, dark, silent, peaceful, nomap int
-		sector                                                    string
-		extraJSON                                                 string
+		room                                                                  Room
+		indoors, nopvp, noteleport, dark, silent, peaceful, nomap, coordsAuto int
+		sector                                                                string
+		extraJSON                                                             string
 	)
 	err := row.Scan(
 		&room.ID, &room.ExternalID, &room.ZoneID, &room.Name, &room.ShortDesc, &room.LongDesc,
 		&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful, &nomap,
-		&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ,
+		&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ, &coordsAuto,
 		&extraJSON, &room.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -130,8 +135,69 @@ func scanRoom(row *sql.Row) (Room, error) {
 		NoMap:      nomap != 0,
 	}
 	room.Sector = Sector(sector)
+	room.CoordsAnchor = CoordsAnchorFromInt(coordsAuto)
 	room.ExtraDescs = unmarshalExtraDescs(extraJSON)
 	return room, nil
+}
+
+func (r *SQLiteRoomRepo) ListAll(ctx context.Context) ([]Room, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+roomSelectCols+` FROM rooms ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list rooms: %w", err)
+	}
+	defer rows.Close()
+	var out []Room
+	for rows.Next() {
+		var (
+			room                                                                  Room
+			indoors, nopvp, noteleport, dark, silent, peaceful, nomap, coordsAuto int
+			sector                                                                string
+			extraJSON                                                             string
+		)
+		if err := rows.Scan(
+			&room.ID, &room.ExternalID, &room.ZoneID, &room.Name, &room.ShortDesc, &room.LongDesc,
+			&indoors, &nopvp, &noteleport, &dark, &silent, &peaceful, &nomap,
+			&sector, &room.LightLevel, &room.CoordX, &room.CoordY, &room.CoordZ, &coordsAuto,
+			&extraJSON, &room.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan room: %w", err)
+		}
+		room.Flags = RoomFlags{
+			Indoors: indoors != 0, NoPVP: nopvp != 0, NoTeleport: noteleport != 0,
+			Dark: dark != 0, Silent: silent != 0, Peaceful: peaceful != 0, NoMap: nomap != 0,
+		}
+		room.Sector = Sector(sector)
+		room.CoordsAnchor = CoordsAnchorFromInt(coordsAuto)
+		room.ExtraDescs = unmarshalExtraDescs(extraJSON)
+		out = append(out, room)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rooms: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateCoords overwrites coord_x/y/z for the given room. CoordsAnchor
+// (the coords_auto SQL column) is left alone — anchors keep their
+// anchor flag even when their coords are updated. The auto-coord
+// runner uses this to persist derived coords without flipping
+// authored anchors back into derive mode.
+func (r *SQLiteRoomRepo) UpdateCoords(ctx context.Context, id int64, x, y, z int) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE rooms SET coord_x = ?, coord_y = ?, coord_z = ? WHERE id = ?`,
+		x, y, z, id)
+	if err != nil {
+		return fmt.Errorf("update coords: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrRoomNotFound
+	}
+	return nil
 }
 
 func mapRoomInsertErr(err error) error {

@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -123,4 +124,32 @@ func (r *MemoryRoomRepo) CountByZone(_ context.Context, zoneID int64) (int, erro
 		}
 	}
 	return n, nil
+}
+
+func (r *MemoryRoomRepo) ListAll(_ context.Context) ([]Room, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Room, 0, len(r.byID))
+	for _, room := range r.byID {
+		out = append(out, *room)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// UpdateCoords mirrors the SQLite contract: coords are overwritten
+// in place; CoordsAnchor is preserved so the auto-coord runner's
+// per-anchor distinction survives a rebuild round-trip.
+func (r *MemoryRoomRepo) UpdateCoords(_ context.Context, id int64, x, y, z int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	room, ok := r.byID[id]
+	if !ok {
+		return ErrRoomNotFound
+	}
+	room.CoordX = x
+	room.CoordY = y
+	room.CoordZ = z
+	r.byID[id] = room
+	return nil
 }

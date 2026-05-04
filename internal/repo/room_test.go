@@ -201,6 +201,113 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 			t.Fatalf("FindByExternalID err = %v", err)
 		}
 	})
+
+	t.Run(name+"/coords_anchor_default_false_via_create", func(t *testing.T) {
+		// Create() callers (test fixtures, OLC) leave CoordsAnchor at
+		// the zero value; the SQL default is coords_auto=1, so the
+		// readback should report CoordsAnchor=false (= "auto-derive").
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{ExternalID: "auto.room", Name: "Auto"})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.CoordsAnchor {
+			t.Errorf("CoordsAnchor = true, want false for repo-created room")
+		}
+	})
+
+	t.Run(name+"/coords_anchor_explicit_round_trip", func(t *testing.T) {
+		// Loader-style anchor: CoordsAnchor=true survives a round trip
+		// so the auto-coord runner can recognize it later.
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{
+			ExternalID:   "anchor.room",
+			Name:         "Anchor",
+			CoordX:       5, CoordY: -2, CoordZ: 1,
+			CoordsAnchor: true,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if !got.CoordsAnchor {
+			t.Error("CoordsAnchor lost across round trip")
+		}
+		if got.CoordX != 5 || got.CoordY != -2 || got.CoordZ != 1 {
+			t.Errorf("Coords = (%d,%d,%d), want (5,-2,1)", got.CoordX, got.CoordY, got.CoordZ)
+		}
+	})
+
+	t.Run(name+"/list_all_returns_id_sorted", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		// Insert out of id order to verify the repo sorts on read.
+		if _, err := r.Create(ctx, Room{ID: 10, ExternalID: "ten", Name: "Ten"}); err != nil {
+			t.Fatalf("Create 10: %v", err)
+		}
+		if _, err := r.Create(ctx, Room{ID: 3, ExternalID: "three", Name: "Three"}); err != nil {
+			t.Fatalf("Create 3: %v", err)
+		}
+		if _, err := r.Create(ctx, Room{ID: 7, ExternalID: "seven", Name: "Seven"}); err != nil {
+			t.Fatalf("Create 7: %v", err)
+		}
+		all, err := r.ListAll(ctx)
+		if err != nil {
+			t.Fatalf("ListAll: %v", err)
+		}
+		if len(all) != 3 {
+			t.Fatalf("len(all) = %d, want 3", len(all))
+		}
+		want := []int64{3, 7, 10}
+		for i, id := range want {
+			if all[i].ID != id {
+				t.Errorf("all[%d].ID = %d, want %d", i, all[i].ID, id)
+			}
+		}
+	})
+
+	t.Run(name+"/update_coords_overwrites_xyz_preserves_anchor", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		created, err := r.Create(ctx, Room{
+			ExternalID:   "moveable",
+			Name:         "Moveable",
+			CoordsAnchor: true, // explicit anchor
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := r.UpdateCoords(ctx, created.ID, 4, 5, 6); err != nil {
+			t.Fatalf("UpdateCoords: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("FindByID: %v", err)
+		}
+		if got.CoordX != 4 || got.CoordY != 5 || got.CoordZ != 6 {
+			t.Errorf("Coords = (%d,%d,%d), want (4,5,6)", got.CoordX, got.CoordY, got.CoordZ)
+		}
+		if !got.CoordsAnchor {
+			t.Error("UpdateCoords cleared CoordsAnchor; should have preserved it")
+		}
+	})
+
+	t.Run(name+"/update_coords_missing_room", func(t *testing.T) {
+		r := newRepo(t)
+		err := r.UpdateCoords(context.Background(), 99999, 0, 0, 0)
+		if !errors.Is(err, ErrRoomNotFound) {
+			t.Fatalf("UpdateCoords err = %v, want ErrRoomNotFound", err)
+		}
+	})
 }
 
 func TestMemoryRoomRepo(t *testing.T) {

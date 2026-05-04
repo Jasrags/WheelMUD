@@ -73,6 +73,17 @@ type Room struct {
 	CoordX     int
 	CoordY     int
 	CoordZ     int
+	// CoordsAnchor marks rooms whose coords were explicitly authored
+	// in YAML. The auto-coord BFS runner (internal/world/coords_derive)
+	// propagates *from* anchors but never overwrites them; non-anchor
+	// rooms are derived. Zero value (false) means "auto-derive" so
+	// repo-created rooms (test fixtures, OLC) inherit the SQL default
+	// of coords_auto=1 without ceremony. The world loader sets this
+	// true whenever a room's YAML carries a `coords:` block. The SQL
+	// column on disk is `coords_auto` (1=derive, 0=anchor), inverted
+	// from this field name; conversion happens at the repo boundary.
+	// Migration 0026 added the column.
+	CoordsAnchor bool
 	// ExtraDescs maps lowercased keyword -> long-form description.
 	// `look <noun>` resolves against this map. Keys are normalized to
 	// lowercase on write so lookups are case-insensitive without
@@ -101,6 +112,41 @@ type RoomRepo interface {
 	// Rooms inserted via in-memory test fixtures default to zone_id=0
 	// and are counted under that bucket like any other.
 	CountByZone(ctx context.Context, zoneID int64) (int, error)
+	// ListAll returns every room in the database in id order. Used by
+	// the auto-coord BFS runner (internal/world/coords_derive) at boot
+	// to enumerate the world graph. Order is stable so anchor
+	// selection is deterministic across boots.
+	ListAll(ctx context.Context) ([]Room, error)
+	// UpdateCoords overwrites the (x,y,z) of an existing room without
+	// touching CoordsAuto. The auto-coord runner uses it to persist
+	// derived coords; an explicit anchor's CoordsAuto stays false
+	// regardless of whether its coords change. Returns ErrRoomNotFound
+	// when no row matches.
+	UpdateCoords(ctx context.Context, id int64, x, y, z int) error
+}
+
+// CoordsAutoInt converts a CoordsAnchor bool to the int the SQL
+// rooms.coords_auto column expects. The on-disk encoding is inverted
+// from the Go field name on purpose: coords_auto=1 ("auto-derive me",
+// the schema default from migration 0026) corresponds to
+// CoordsAnchor=false ("not pinned"). Centralized here so every site
+// that writes the column — repo.Create, the world loader's raw INSERT
+// in roomInsertValues, and any future OLC code path — uses the same
+// conversion. A divergence between sites would silently flip every
+// affected room's anchor state.
+func CoordsAutoInt(anchor bool) int {
+	if anchor {
+		return 0
+	}
+	return 1
+}
+
+// CoordsAnchorFromInt is the inverse of CoordsAutoInt: turns a
+// scanned coords_auto int back into the CoordsAnchor bool. Used by
+// every scan site so the encoding direction lives in exactly one
+// place.
+func CoordsAnchorFromInt(coordsAuto int) bool {
+	return coordsAuto == 0
 }
 
 // StarterRoomID is where new characters spawn. The YAML loader pins the

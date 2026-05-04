@@ -347,17 +347,24 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 			extraJSON = string(raw)
 		}
 	}
+	// coords_auto stamps the auto-coord BFS runner's anchor flag (see
+	// migration 0026 and repo.CoordsAutoInt). When YAML provides an
+	// explicit `coords:` block the room is a builder-authored anchor
+	// and the runner must not overwrite it. CoordsAutoInt centralises
+	// the bool→int inversion so this raw-SQL path stays in lock-step
+	// with repo.Create.
+	coordsAuto := repo.CoordsAutoInt(r.Coords != nil)
 	cols := `external_id, name, short_desc, long_desc,
 		indoors, nopvp, noteleport, dark, silent, peaceful, nomap,
-		sector, light_level, coord_x, coord_y, coord_z, extra_descs_json,
-		zone_id`
+		sector, light_level, coord_x, coord_y, coord_z, coords_auto,
+		extra_descs_json, zone_id`
 	vals := []any{
 		r.ID, r.Name, r.Short, r.Long,
 		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
 		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
 		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
 		repo.BoolToInt(r.Flags.NoMap),
-		sector, light, x, y, z, extraJSON,
+		sector, light, x, y, z, coordsAuto, extraJSON,
 		zoneID,
 	}
 	return cols, vals

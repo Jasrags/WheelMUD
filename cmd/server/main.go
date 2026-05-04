@@ -104,6 +104,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Auto-derive coords for non-anchor rooms (see migration 0026 +
+	// internal/world/coords_derive.go). Runs before listener accept
+	// so the very first `look` / `map` / future `zonemap` already
+	// sees consistent coords. The summary lands in the boot log so a
+	// builder can spot orphans / conflicts without an extra command.
+	if summary, err := world.DeriveCoords(context.Background(), rooms, exits); err != nil {
+		slog.Error("Coord derivation failed", "error", err)
+		os.Exit(1)
+	} else {
+		slog.Info("Coord derivation complete",
+			"anchors", summary.Anchors,
+			"synthetic_anchor", summary.SyntheticAnchor,
+			"assigned", summary.Assigned,
+			"conflicts", len(summary.Conflicts),
+			"orphans", len(summary.Orphans))
+	}
+
 	baseTicks, err := worldState.GetTicks(context.Background())
 	if err != nil {
 		slog.Warn("World clock load failed; defaulting to noon", "error", err)
@@ -376,6 +393,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewZones(zones, rooms)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewCoords(rooms, exits)); err != nil {
 		return nil, err
 	}
 	return r, nil
