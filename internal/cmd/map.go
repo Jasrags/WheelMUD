@@ -42,9 +42,46 @@ type cell struct {
 	roomID  int64
 	hasUp   bool
 	hasDown bool
-	// unknown rooms (NoMap destinations) render as `[?]` and the BFS
-	// does not recurse through them.
+	// unknown rooms (NoMap destinations under a NoMap-respecting BFS)
+	// render as `[?]` and the BFS does not recurse through them.
 	unknown bool
+	// offZone is set when exploreMap was given a non-zero
+	// boundaryZoneID and the room sits in a different zone. The BFS
+	// records the cell as a 1-hop boundary marker (rendered `( X )`)
+	// and does not recurse through it. Player `map` calls leave the
+	// boundary unset, so this is always false on that path.
+	offZone bool
+	// sector is populated by exploreMap on the zonemap path (non-zero
+	// boundaryZoneID) so the renderer can pick a glyph without re-
+	// fetching the room. Empty on the player-map path; the player
+	// renderer ignores it.
+	sector repo.Sector
+}
+
+// mapOptions modulates the BFS for player vs. admin callers. The
+// player command supplies the strict defaults (respectNoMap +
+// respectHidden, no zone boundary); zonemap relaxes the gates and
+// passes its zone id so the BFS can flag off-zone neighbours without
+// recursing through them.
+type mapOptions struct {
+	// respectNoMap=true preserves the player-map behaviour: NoMap
+	// rooms render `[?]` and the BFS stops at them. zonemap sets
+	// false so admins see the actual sector glyph.
+	respectNoMap bool
+	// respectHidden=true skips hidden exits during traversal (player
+	// behaviour). zonemap sets false so admins see hidden doors.
+	respectHidden bool
+	// boundaryZoneID, when non-zero, marks any room outside this zone
+	// as offZone in the cells map and stops recursion at it. Zero
+	// means "no zone boundary" — the player-map default.
+	boundaryZoneID int64
+}
+
+// playerMapOptions returns the strict-defaults options used by the
+// player `map` command. Centralised so the player call site reads
+// declaratively and a future tweak doesn't drift between callers.
+func playerMapOptions() mapOptions {
+	return mapOptions{respectNoMap: true, respectHidden: true}
 }
 
 // edge connects two grid coords; recorded once per exit so the renderer
@@ -98,14 +135,14 @@ func renderMap(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exit
 		return s.WriteString("{{Could not draw the map right now.}}::red\r\n")
 	}
 
-	cells, edges, err := exploreMap(ctx, rooms, exits, cur, depth)
+	cells, edges, err := exploreMap(ctx, rooms, exits, cur, depth, playerMapOptions())
 	if err != nil {
 		return s.WriteString("{{Could not draw the map right now.}}::red\r\n")
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "{{Map (depth %d):}}::cyan|bold\r\n", depth)
-	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}))
+	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}, playerGlyph, colorizeMapRow))
 	// Legend uses unbracketed glyphs to avoid colliding with the
 	// bracketed cell forms (`[*]`, `[?]`, ...) when callers grep the
 	// output for grid contents.
@@ -124,7 +161,7 @@ func renderMap(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exit
 // Returned edges record the (from, to) grid coords of every non-vertical
 // exit whose destination is also placed on the grid; the renderer uses
 // edges (not grid adjacency) to decide where to draw connectors.
-func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, start repo.Room, depth int) (map[[2]int]*cell, []edge, error) {
+func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, start repo.Room, depth int, opts mapOptions) (map[[2]int]*cell, []edge, error) {
 	cells := make(map[[2]int]*cell)
 	visited := make(map[int64][2]int)
 	var edges []edge
@@ -136,7 +173,13 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 	origin := [2]int{0, 0}
 	queue := []qItem{{start.ID, origin, 0}}
 	visited[start.ID] = origin
-	cells[origin] = &cell{roomID: start.ID}
+	// Seed cell carries the seed room's sector when zonemap (non-zero
+	// boundaryZoneID) is calling. Player-map calls leave it empty.
+	startSector := repo.Sector("")
+	if opts.boundaryZoneID != 0 {
+		startSector = start.Sector
+	}
+	cells[origin] = &cell{roomID: start.ID, sector: startSector}
 
 	for len(queue) > 0 {
 		item := queue[0]
@@ -147,7 +190,7 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 			return nil, nil, err
 		}
 		for _, e := range outs {
-			if e.Flags.Hidden {
+			if opts.respectHidden && e.Flags.Hidden {
 				continue
 			}
 			vec, ok := dirVec[e.Direction]
@@ -215,14 +258,35 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 				return nil, nil, err
 			}
 
-			if dest.Flags.NoMap {
+			if opts.respectNoMap && dest.Flags.NoMap {
 				cells[nextCoord] = &cell{roomID: dest.ID, unknown: true}
 				visited[dest.ID] = nextCoord
 				edges = append(edges, edge{item.coord, nextCoord})
 				continue
 			}
 
-			cells[nextCoord] = &cell{roomID: dest.ID}
+			// zonemap path: a room in a different zone gets recorded
+			// as an off-zone boundary cell, the edge is recorded so
+			// the renderer can draw the connector to it, but the BFS
+			// does not enqueue it for further traversal. Off-zone
+			// adjacency to the seed zone is the only depth at which
+			// off-zone rooms appear.
+			if opts.boundaryZoneID != 0 && dest.ZoneID != opts.boundaryZoneID {
+				cells[nextCoord] = &cell{
+					roomID:  dest.ID,
+					offZone: true,
+					sector:  dest.Sector,
+				}
+				visited[dest.ID] = nextCoord
+				edges = append(edges, edge{item.coord, nextCoord})
+				continue
+			}
+
+			c := &cell{roomID: dest.ID}
+			if opts.boundaryZoneID != 0 {
+				c.sector = dest.Sector
+			}
+			cells[nextCoord] = c
 			visited[dest.ID] = nextCoord
 			edges = append(edges, edge{item.coord, nextCoord})
 			queue = append(queue, qItem{dest.ID, nextCoord, item.d + 1})
@@ -232,14 +296,22 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 }
 
 // drawGrid lays cells onto a fixed-pitch character grid. Each cell is a
-// 3-char glyph; cells are separated by one connector column horizontally
-// and one connector row vertically. Cell (x, y) lands at column
-// (x-minX)*4 (..+2) and row (y-minY)*2.
+// 3-char glyph chosen by the caller-supplied glyphFor; cells are
+// separated by one connector column horizontally and one connector row
+// vertically. Cell (x, y) lands at column (x-minX)*4 (..+2) and row
+// (y-minY)*2.
+//
+// glyphFor receives the cell and whether it's the current room and
+// returns the 3-rune glyph to place. colorizeRow is applied to each
+// final row before emission — callers wire their own cfmt tag table.
 //
 // Connectors are drawn from the edges slice — never from grid adjacency
 // — so two rooms that are visually next to each other but lack an exit
 // between them stay disconnected.
-func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int) string {
+func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int,
+	glyphFor func(c *cell, isCurrent bool) string,
+	colorizeRow func(string) string,
+) string {
 	if len(cells) == 0 {
 		return "  (empty)\r\n"
 	}
@@ -292,19 +364,7 @@ func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int) string {
 		info := cells[k]
 		col := (k[0] - minX) * 4
 		row := (k[1] - minY) * 2
-		glyph := "[ ]"
-		switch {
-		case k == current:
-			glyph = "[*]"
-		case info.unknown:
-			glyph = "[?]"
-		case info.hasUp && info.hasDown:
-			glyph = "[%]"
-		case info.hasUp:
-			glyph = "[^]"
-		case info.hasDown:
-			glyph = "[v]"
-		}
+		glyph := glyphFor(info, k == current)
 		// glyph is always a 3-rune ASCII bracketed form; guard the
 		// write so a future multi-byte glyph (or a stray cfmt tag
 		// accidentally placed here instead of in colorizeMapRow)
@@ -365,10 +425,31 @@ func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int) string {
 	var b strings.Builder
 	for _, r := range rows {
 		b.WriteString("  ")
-		b.WriteString(colorizeMapRow(string(r)))
+		b.WriteString(colorizeRow(string(r)))
 		b.WriteString("\r\n")
 	}
 	return b.String()
+}
+
+// playerGlyph picks the bracketed cell glyph used by the player `map`
+// command. Mirrors the prior inline switch in drawGrid so the player
+// behaviour is preserved exactly: starter is `[*]`, NoMap-blocked
+// destinations are `[?]`, vertical-link decorations are `[^]/[v]/[%]`,
+// and everything else is the empty `[ ]`.
+func playerGlyph(c *cell, isCurrent bool) string {
+	switch {
+	case isCurrent:
+		return "[*]"
+	case c.unknown:
+		return "[?]"
+	case c.hasUp && c.hasDown:
+		return "[%]"
+	case c.hasUp:
+		return "[^]"
+	case c.hasDown:
+		return "[v]"
+	}
+	return "[ ]"
 }
 
 // colorizeMapRow wraps each known cell glyph with cfmt color tags.

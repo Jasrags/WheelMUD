@@ -398,6 +398,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewCoords(rooms, exits)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewZoneMap(rooms, exits, zones)); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
