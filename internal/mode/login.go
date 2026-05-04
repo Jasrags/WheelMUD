@@ -82,14 +82,14 @@ func (l *Login) Prompt(_ context.Context, _ *telnet.Session) string {
 }
 
 func (l *Login) OnEnter(s *telnet.Session) error {
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 	s.AuthLevel = telnet.AuthGuest
 	return nil
 }
 
 func (l *Login) OnExit(s *telnet.Session) error {
 	// Defensive: ensure password masking doesn't leak into the next mode.
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 	return nil
 }
 
@@ -130,12 +130,12 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 
 	l.username = username
 	l.step = stepPassword
-	s.InPasswordMode = true
+	s.SetPasswordMode(true)
 	return nil
 }
 
 func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line string) error {
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 
 	if l.account == nil {
 		// No such user. Sleep-equivalent: still write a uniform failure

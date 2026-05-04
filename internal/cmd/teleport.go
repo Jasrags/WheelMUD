@@ -95,7 +95,7 @@ func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, e
 	if err := c.Session.WriteString("{{Teleported " + target.CharacterName + " to " + room.Name + ".}}::green\r\n"); err != nil {
 		return fmt.Errorf("write caller ack: %w", err)
 	}
-	if err := target.WriteString("{{The world ripples; you are somewhere else.}}::magenta\r\n"); err != nil {
+	if err := target.WriteAsync("{{The world ripples; you are somewhere else.}}::magenta"); err != nil {
 		slog.Debug("tp: target notify failed", "target", target.CharacterID, "error", err)
 	}
 	// Render to the target with a detached context: the caller's ctx

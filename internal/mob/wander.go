@@ -258,22 +258,22 @@ func (h *WanderHandler) broadcast(m creature.MobInstance, fromRoomID int64, exit
 		return
 	}
 	name := safeMobName(m.Core.Name)
-	leave := "{{" + name + " leaves " + repo.DirLong(exit.Direction) + ".}}::white\r\n"
+	leave := "{{" + name + " leaves " + repo.DirLong(exit.Direction) + ".}}::white"
 	rev := repo.DirLong(reverseDir(exit.Direction))
 	var arrive string
 	if rev != "" {
-		arrive = "{{" + name + " arrives from the " + rev + ".}}::white\r\n"
+		arrive = "{{" + name + " arrives from the " + rev + ".}}::white"
 	} else {
-		arrive = "{{" + name + " arrives.}}::white\r\n"
+		arrive = "{{" + name + " arrives.}}::white"
 	}
 	for _, peer := range h.sessions.Snapshot() {
 		switch peer.CurrentRoomID {
 		case fromRoomID:
-			if err := peer.WriteString(leave); err != nil {
+			if err := peer.WriteAsync(leave); err != nil {
 				slog.Debug("wander: peer write failed", "to", peer.CharacterName, "error", err)
 			}
 		case exit.ToRoomID:
-			if err := peer.WriteString(arrive); err != nil {
+			if err := peer.WriteAsync(arrive); err != nil {
 				slog.Debug("wander: peer write failed", "to", peer.CharacterName, "error", err)
 			}
 		}

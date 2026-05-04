@@ -285,7 +285,7 @@ func giveCoin(c *telnet.Context, characters repo.CharacterRepo, s, peer *telnet.
 	}
 
 	short := amount.Format()
-	_ = peer.WriteString("{{" + safeActor(s) + " hands you " + short + ".}}::cyan\r\n")
+	_ = peer.WriteAsync("{{" + safeActor(s) + " hands you " + short + ".}}::cyan")
 	return s.WriteString("{{You hand " + peer.CharacterName + " " + short + ".}}::cyan\r\n")
 }
 
@@ -339,16 +339,16 @@ func giveItem(c *telnet.Context, items repo.ItemRepo, characters repo.CharacterR
 	_ = characters.RecordInventory(c.Ctx, peerChar.ID, appendOnce(peerChar.Inventory, it.ID))
 
 	actorName := safeActor(s)
-	_ = peer.WriteString("{{" + actorName + " gives you " + it.Name + ".}}::cyan\r\n")
+	_ = peer.WriteAsync("{{" + actorName + " gives you " + it.Name + ".}}::cyan")
 	// Skip the room broadcast for actor and peer; both already got
 	// targeted lines above. broadcastRoom only excludes one session,
 	// so spell out the loop here to skip both.
-	roomMsg := "{{" + actorName + " gives " + it.Name + " to " + peer.CharacterName + ".}}::cyan\r\n"
+	roomMsg := "{{" + actorName + " gives " + it.Name + " to " + peer.CharacterName + ".}}::cyan"
 	for _, other := range sessions.Snapshot() {
 		if other == s || other == peer || other.CurrentRoomID != s.CurrentRoomID {
 			continue
 		}
-		if err := other.WriteString(roomMsg); err != nil {
+		if err := other.WriteAsync(roomMsg); err != nil {
 			slog.Debug("give: peer broadcast failed", "to", other.CharacterName, "error", err)
 		}
 	}

@@ -85,7 +85,7 @@ func broadcastRoom(sessions *session.Registry, roomID int64, except *telnet.Sess
 		if peer == except || peer.CurrentRoomID != roomID {
 			continue
 		}
-		if err := peer.WriteString(msg); err != nil {
+		if err := peer.WriteAsync(msg); err != nil {
 			slog.Debug("door: peer write failed", "to", peer.CharacterName, "error", err)
 		}
 	}

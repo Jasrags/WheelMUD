@@ -64,12 +64,12 @@ func (c *Create) Prompt(_ context.Context, _ *telnet.Session) string {
 }
 
 func (c *Create) OnEnter(s *telnet.Session) error {
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 	return nil
 }
 
 func (c *Create) OnExit(s *telnet.Session) error {
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 	return nil
 }
 
@@ -92,7 +92,7 @@ func (c *Create) handleUsername(s *telnet.Session, line string) error {
 	}
 	c.username = username
 	c.step = createStepPassword
-	s.InPasswordMode = true
+	s.SetPasswordMode(true)
 	return nil
 }
 
@@ -113,12 +113,12 @@ func (c *Create) handlePassword(s *telnet.Session, line string) error {
 }
 
 func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line string) error {
-	s.InPasswordMode = false
+	s.SetPasswordMode(false)
 	if !auth.Verify(c.hash, line) {
 		// Reset to the password step; keep the chosen username.
 		c.hash = ""
 		c.step = createStepPassword
-		s.InPasswordMode = true
+		s.SetPasswordMode(true)
 		return s.WriteRaw([]byte("Passwords did not match. Try again.\r\n"))
 	}
 

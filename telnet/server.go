@@ -109,7 +109,7 @@ func runDispatcher(ctx context.Context, s *Session, done chan<- struct{}) {
 		}
 		if mode := s.CurrentMode(); mode != nil {
 			if prompt := mode.Prompt(ctx, s); prompt != "" {
-				if werr := s.WriteRaw([]byte(prompt)); werr != nil {
+				if werr := s.WritePrompt([]byte(prompt)); werr != nil {
 					if !shouldEndSession(werr) {
 						slog.Debug("Prompt write failed", "remote", s.RemoteAddress, "error", werr)
 					}
@@ -234,75 +234,87 @@ func handleEscape(s *Session, r *bufio.Reader) error {
 }
 
 func handleMotion(s *Session, kind motionKind) error {
-	if s.InPasswordMode {
-		return s.WriteRaw([]byte{ASCII_BEL})
-	}
-	var echo []byte
-	switch kind {
-	case motionLeft:
-		echo = s.Input.MoveLeft()
-	case motionRight:
-		echo = s.Input.MoveRight()
-	case motionHome:
-		echo = s.Input.MoveHome()
-	case motionEnd:
-		echo = s.Input.MoveEnd()
-	case motionDelete:
-		echo = s.Input.Delete()
-	}
-	if len(echo) == 0 {
-		return s.WriteRaw([]byte{ASCII_BEL})
-	}
-	return s.WriteRaw(echo)
+	return s.EditAndWrite(func() []byte {
+		if s.InPasswordMode {
+			return []byte{ASCII_BEL}
+		}
+		var echo []byte
+		switch kind {
+		case motionLeft:
+			echo = s.Input.MoveLeft()
+		case motionRight:
+			echo = s.Input.MoveRight()
+		case motionHome:
+			echo = s.Input.MoveHome()
+		case motionEnd:
+			echo = s.Input.MoveEnd()
+		case motionDelete:
+			echo = s.Input.Delete()
+		}
+		if len(echo) == 0 {
+			return []byte{ASCII_BEL}
+		}
+		return echo
+	})
 }
 
 func handleKill(s *Session, kind killKind) error {
-	if s.InPasswordMode {
-		return s.WriteRaw([]byte{ASCII_BEL})
-	}
-	var echo []byte
-	switch kind {
-	case killToStart:
-		echo = s.Input.KillToStart()
-	case killToEnd:
-		echo = s.Input.KillToEnd()
-	case killPrevWord:
-		echo = s.Input.KillPrevWord()
-	}
-	if len(echo) == 0 {
-		return s.WriteRaw([]byte{ASCII_BEL})
-	}
-	return s.WriteRaw(echo)
+	return s.EditAndWrite(func() []byte {
+		if s.InPasswordMode {
+			return []byte{ASCII_BEL}
+		}
+		var echo []byte
+		switch kind {
+		case killToStart:
+			echo = s.Input.KillToStart()
+		case killToEnd:
+			echo = s.Input.KillToEnd()
+		case killPrevWord:
+			echo = s.Input.KillPrevWord()
+		}
+		if len(echo) == 0 {
+			return []byte{ASCII_BEL}
+		}
+		return echo
+	})
 }
 
 func handleHistoryStep(s *Session, prev bool) error {
-	var (
-		line string
-		ok   bool
-	)
-	if prev {
-		line, ok = s.History.Prev(string(s.Input.Buf))
-	} else {
-		line, ok = s.History.Next()
-	}
-	if !ok {
-		return s.WriteRaw([]byte{ASCII_BEL})
-	}
-	return s.WriteRaw(s.Input.Replace(line))
+	return s.EditAndWrite(func() []byte {
+		var (
+			line string
+			ok   bool
+		)
+		if prev {
+			line, ok = s.History.Prev(string(s.Input.Buf))
+		} else {
+			line, ok = s.History.Next()
+		}
+		if !ok {
+			return []byte{ASCII_BEL}
+		}
+		return s.Input.Replace(line)
+	})
 }
 
 func handleLineBreak(s *Session) error {
 	if len(s.Input.Buf) == 0 {
 		// Bare Enter: redraw the current mode's prompt without dispatching.
+		// Combine the CRLF and the prompt into a single critical section
+		// so a concurrent WriteAsync cannot interleave between the two.
 		if mode := s.CurrentMode(); mode != nil {
 			if prompt := mode.Prompt(s.Context(), s); prompt != "" {
-				return s.WriteRaw([]byte("\r\n" + prompt))
+				return s.writeBareEnter([]byte(prompt))
 			}
 		}
 		return s.WriteRaw([]byte("\r\n"))
 	}
-	input := string(s.Input.Buf)
-	s.Input.Reset()
+	var input string
+	s.EditAndWrite(func() []byte {
+		input = string(s.Input.Buf)
+		s.Input.Reset()
+		return nil
+	})
 	// Never log raw input while password masking is active — login,
 	// account-create, password-change, etc. all set InPasswordMode and
 	// the cleartext password must not enter logs. Same rule for history:
@@ -327,33 +339,33 @@ func handleLineBreak(s *Session) error {
 }
 
 func handleBackspace(s *Session) error {
-	if s.InPasswordMode {
-		// Password mode keeps the legacy end-of-buffer-only behavior so
-		// the asterisk echo stays in lockstep with the buffer length.
-		if len(s.Input.Buf) == 0 {
-			return nil
+	return s.EditAndWrite(func() []byte {
+		if s.InPasswordMode {
+			// Password mode keeps the legacy end-of-buffer-only behavior so
+			// the asterisk echo stays in lockstep with the buffer length.
+			if len(s.Input.Buf) == 0 {
+				return nil
+			}
+			s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-1]
+			s.Input.Cursor = len(s.Input.Buf)
+			return []byte("\b \b")
 		}
-		s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-1]
-		s.Input.Cursor = len(s.Input.Buf)
-		return s.WriteRaw([]byte("\b \b"))
-	}
-	echo := s.Input.Backspace()
-	if echo == nil {
-		return nil
-	}
-	return s.WriteRaw(echo)
+		return s.Input.Backspace()
+	})
 }
 
 func bufferInput(s *Session, b byte) error {
-	if s.InPasswordMode {
-		// In password mode we keep an end-only model: append to buffer,
-		// echo a single asterisk. Cursor tracks the end so backspace
-		// stays aligned.
-		s.Input.Buf = append(s.Input.Buf, b)
-		s.Input.Cursor = len(s.Input.Buf)
-		return s.WriteRaw([]byte("*"))
-	}
-	return s.WriteRaw(s.Input.Insert(b))
+	return s.EditAndWrite(func() []byte {
+		if s.InPasswordMode {
+			// In password mode we keep an end-only model: append to buffer,
+			// echo a single asterisk. Cursor tracks the end so backspace
+			// stays aligned.
+			s.Input.Buf = append(s.Input.Buf, b)
+			s.Input.Cursor = len(s.Input.Buf)
+			return []byte("*")
+		}
+		return s.Input.Insert(b)
+	})
 }
 
 // handleTab implements end-of-buffer tab completion. Behavior:
@@ -422,19 +434,20 @@ func applyCompletion(s *Session, mode Mode, partial string, cands []Candidate) e
 // erase the old partial with backspaces (one per displayed rune) and
 // write the replacement, keeping the cursor at the new end.
 func extendBuffer(s *Session, partial, replacement string) error {
-	if len(partial) > len(s.Input.Buf) {
-		// Defensive: should never happen, but don't slice past the start.
-		return nil
-	}
-	s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-len(partial)]
-	s.Input.Buf = append(s.Input.Buf, replacement...)
-	s.Input.Cursor = len(s.Input.Buf)
+	return s.EditAndWrite(func() []byte {
+		if len(partial) > len(s.Input.Buf) {
+			// Defensive: should never happen, but don't slice past the start.
+			return nil
+		}
+		s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-len(partial)]
+		s.Input.Buf = append(s.Input.Buf, replacement...)
+		s.Input.Cursor = len(s.Input.Buf)
 
-	// Erase one display cell per rune of the old partial. ASCII verbs are
-	// the steady state today; this stays correct if non-ASCII candidates
-	// land later (and validVerb is loosened).
-	out := strings.Repeat("\b \b", utf8.RuneCountInString(partial)) + replacement
-	return s.WriteRaw([]byte(out))
+		// Erase one display cell per rune of the old partial. ASCII verbs are
+		// the steady state today; this stays correct if non-ASCII candidates
+		// land later (and validVerb is loosened).
+		return []byte(strings.Repeat("\b \b", utf8.RuneCountInString(partial)) + replacement)
+	})
 }
 
 func listAndRedraw(s *Session, mode Mode, cands []Candidate) error {
@@ -443,11 +456,19 @@ func listAndRedraw(s *Session, mode Mode, cands []Candidate) error {
 	if mode != nil {
 		prompt = mode.Prompt(s.Context(), s)
 	}
-
-	var b strings.Builder
-	b.WriteString("\r\n")
-	b.WriteString(listing)
-	b.WriteString(prompt)
-	b.Write(s.Input.Buf)
-	return s.WriteRaw([]byte(b.String()))
+	// Build the payload, refresh the prompt cache, and emit it all in
+	// one writeMu critical section so a concurrent WriteAsync cannot
+	// observe a stale cached prompt after we've already redrawn the
+	// line with the new one.
+	return s.EditAndWrite(func() []byte {
+		var b strings.Builder
+		b.WriteString("\r\n")
+		b.WriteString(listing)
+		b.WriteString(prompt)
+		b.Write(s.Input.Buf)
+		if prompt != "" {
+			s.lastPrompt = append(s.lastPrompt[:0], prompt...)
+		}
+		return []byte(b.String())
+	})
 }

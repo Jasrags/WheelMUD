@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -101,7 +102,20 @@ type Session struct {
 	// other dispatchers iterating Snapshot() during a broadcast.
 	channelMuted map[string]bool
 
+	// writeMu is the single serializer for everything visible on the
+	// wire and for the line-edit state that drives async-write redraws.
+	// It guards lastPrompt, Input.Buf, Input.Cursor, InPasswordMode,
+	// and every Conn.Write. Read-goroutine keystroke handlers wrap
+	// "mutate Input + echo" in EditAndWrite so a concurrent WriteAsync
+	// cannot observe an already-mutated buffer and emit a redraw that
+	// then races against the echo bytes (which would double-display
+	// the just-typed character).
 	writeMu sync.Mutex
+
+	// lastPrompt caches the most recently emitted prompt bytes (cfmt
+	// already resolved). WriteAsync replays them after async output so
+	// the prompt isn't left half-overwritten by a mid-line broadcast.
+	lastPrompt []byte
 
 	modeMu sync.Mutex
 	modes  []Mode
@@ -287,9 +301,171 @@ func (s *Session) WriteRaw(b []byte) error {
 	return nil
 }
 
+// WritePrompt is the dispatcher's prompt-write path: it caches the
+// rendered bytes for later WriteAsync replay and emits them, all under
+// writeMu so a concurrent WriteAsync sees the new prompt or the old
+// one but never half of each. Callers should pass cfmt-resolved bytes.
+func (s *Session) WritePrompt(p []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.lastPrompt = append(s.lastPrompt[:0], p...)
+	if len(p) == 0 {
+		return nil
+	}
+	if _, err := s.Conn.Write(p); err != nil {
+		return fmt.Errorf("session prompt write: %w", err)
+	}
+	return nil
+}
+
+// writeBareEnter is the bare-Enter redraw: emit CRLF, repaint the
+// prompt, and update the cache — all under writeMu so a concurrent
+// WriteAsync sees either the pre-Enter state or the post-Enter state,
+// never an in-between split write.
+func (s *Session) writeBareEnter(prompt []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	out := make([]byte, 0, 2+len(prompt))
+	out = append(out, '\r', '\n')
+	out = append(out, prompt...)
+	s.lastPrompt = append(s.lastPrompt[:0], prompt...)
+	if _, err := s.Conn.Write(out); err != nil {
+		return fmt.Errorf("session bare-enter write: %w", err)
+	}
+	return nil
+}
+
+// CacheLastPrompt updates the cached prompt without writing it. Used
+// by paths that emitted the prompt as part of a larger payload (tab
+// completion's listing+prompt+buffer redraw) so subsequent WriteAsync
+// calls still replay the correct bytes.
+func (s *Session) CacheLastPrompt(p []byte) {
+	s.writeMu.Lock()
+	s.lastPrompt = append(s.lastPrompt[:0], p...)
+	s.writeMu.Unlock()
+}
+
+// ClearLastPrompt drops the cached prompt so the next async write does
+// not replay stale bytes from a prior mode. Called by mode-stack
+// transitions; the next dispatcher cycle paints a fresh prompt.
+func (s *Session) ClearLastPrompt() {
+	s.writeMu.Lock()
+	s.lastPrompt = s.lastPrompt[:0]
+	s.writeMu.Unlock()
+}
+
+// EditAndWrite runs fn under writeMu and emits any bytes fn returns
+// to the wire — all atomically against concurrent WriteAsync /
+// WritePrompt callers. fn may mutate Input.Buf / Input.Cursor /
+// InPasswordMode; the returned bytes are the echo the terminal needs.
+// Returning nil/empty is fine; nothing is written.
+//
+// This is the keystroke-handler entry point: read goroutine paths
+// that mutate Input use it instead of taking writeMu manually so the
+// "decide-what-to-emit, mutate, emit" cycle is one critical section.
+// Without this, a WriteAsync between mutation and echo would observe
+// the new buffer state and repaint with the just-typed byte already
+// in it, then the deferred echo would print the byte a second time.
+func (s *Session) EditAndWrite(fn func() []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	out := fn()
+	if len(out) == 0 {
+		return nil
+	}
+	if _, err := s.Conn.Write(out); err != nil {
+		return fmt.Errorf("session edit write: %w", err)
+	}
+	return nil
+}
+
+// SetPasswordMode flips InPasswordMode under writeMu so a concurrent
+// WriteAsync's snapshot observes a consistent value.
+func (s *Session) SetPasswordMode(on bool) {
+	s.writeMu.Lock()
+	s.InPasswordMode = on
+	s.writeMu.Unlock()
+}
+
+// snapshotInputLocked copies Input.Buf and reads InPasswordMode. The
+// caller must hold writeMu.
+func (s *Session) snapshotInputLocked() (buf []byte, masked bool) {
+	if n := len(s.Input.Buf); n > 0 {
+		buf = make([]byte, n)
+		copy(buf, s.Input.Buf)
+	}
+	return buf, s.InPasswordMode
+}
+
+// WriteAsync renders cfmt tags on text and emits it sandwiched between
+// "erase the prompt line" and "repaint the prompt + in-progress
+// input." Use it from any goroutine that is NOT the recipient session's
+// dispatcher — broadcast helpers, tick subscribers, channel fanout,
+// phase-ambient writers, mob arrival/departure broadcasts. Synchronous
+// command output should keep using WriteString / WriteWrapped /
+// WriteRaw because the dispatcher repaints the prompt right after
+// Mode.Handle returns.
+//
+// Layout written in a single Conn.Write so the redraw is atomic:
+//
+//	[CR + erase-to-EOL]  text  CRLF  cached-prompt  echo-of-input
+//
+// In password mode the input echo is N asterisks; on no-color
+// terminals (ColorLevelNone) the erase falls back to CR + Width
+// spaces + CR.
+func (s *Session) WriteAsync(text string) error {
+	rendered := []byte(cfmt.Sprint(text))
+	if !bytes.HasSuffix(rendered, []byte("\r\n")) {
+		rendered = append(rendered, '\r', '\n')
+	}
+
+	var prefix []byte
+	if s.ColorLevel == ColorLevelNone {
+		// No-ANSI fallback: blank the line with spaces, then return to
+		// column 0. Width is the negotiated terminal width or 80.
+		w := s.Width
+		if w <= 0 {
+			w = 80
+		}
+		prefix = make([]byte, 0, 2+w)
+		prefix = append(prefix, '\r')
+		prefix = append(prefix, bytes.Repeat([]byte(" "), w)...)
+		prefix = append(prefix, '\r')
+	} else {
+		prefix = []byte("\r\x1b[K")
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	inputBuf, masked := s.snapshotInputLocked()
+	var inputEcho []byte
+	switch {
+	case len(inputBuf) == 0:
+		inputEcho = nil
+	case masked:
+		inputEcho = bytes.Repeat([]byte("*"), len(inputBuf))
+	default:
+		inputEcho = inputBuf
+	}
+	out := make([]byte, 0, len(prefix)+len(rendered)+len(s.lastPrompt)+len(inputEcho))
+	out = append(out, prefix...)
+	out = append(out, rendered...)
+	out = append(out, s.lastPrompt...)
+	out = append(out, inputEcho...)
+	if _, err := s.Conn.Write(out); err != nil {
+		return fmt.Errorf("session async write: %w", err)
+	}
+	return nil
+}
+
 // PushMode adds m to the top of the mode stack and calls m.OnEnter. If
 // OnEnter returns an error the push is rolled back so the stack stays
 // consistent (the caller treats a failed push as "not on the stack").
+//
+// The cached prompt is dropped on every transition: the new mode's
+// Prompt() is called next dispatcher tick and refreshes the cache;
+// during the gap an async write would otherwise replay a prompt from
+// the previous mode (login banner bleeding into game, etc.).
 func (s *Session) PushMode(m Mode) error {
 	if m == nil {
 		return errors.New("telnet: PushMode(nil)")
@@ -297,6 +473,7 @@ func (s *Session) PushMode(m Mode) error {
 	s.modeMu.Lock()
 	s.modes = append(s.modes, m)
 	s.modeMu.Unlock()
+	s.ClearLastPrompt()
 	if err := m.OnEnter(s); err != nil {
 		s.modeMu.Lock()
 		// Defensive: only trim if our mode is still on top — a concurrent
@@ -321,6 +498,7 @@ func (s *Session) PopMode() error {
 	top := s.modes[len(s.modes)-1]
 	s.modes = s.modes[:len(s.modes)-1]
 	s.modeMu.Unlock()
+	s.ClearLastPrompt()
 	return top.OnExit(s)
 }
 

@@ -139,6 +139,32 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   inside `RunSession`. Do not mutate it from another goroutine.
 - `Session.WriteRaw` is the only safe write path; it holds `writeMu`.
   Layer new helpers on top of it rather than calling `Conn.Write` directly.
+- Cross-session output (broadcasts to peers, channel fanout, mob
+  arrival/departure, phase ambients, anything writing to a session
+  that isn't the current dispatcher's `c.Session`) MUST use
+  `Session.WriteAsync`, not `WriteString`. WriteAsync wraps the message
+  with a CR+EL erase prefix and replays the cached prompt + line-edit
+  buffer afterwards so a mid-line broadcast doesn't clobber the
+  player's prompt or in-progress input. The dispatcher caches each
+  prompt via `WritePrompt`; mode transitions clear the cache via
+  `ClearLastPrompt` (handled by `PushMode`/`PopMode`). Synchronous
+  dispatcher output (the command's own response to `c.Session`) keeps
+  using `WriteString` because the dispatcher repaints the prompt
+  immediately after `Mode.Handle` returns.
+- Read-goroutine paths that mutate `Session.Input` (every keystroke
+  handler in `telnet/server.go`) wrap "decide echo + mutate Input +
+  emit echo" in `Session.EditAndWrite(fn)`. `fn` runs under `writeMu`
+  and returns the bytes the terminal needs; the wrapper writes them
+  in the same critical section. This serializes against `WriteAsync`,
+  `WritePrompt`, and `listAndRedraw` so a concurrent broadcast cannot
+  observe a half-mutated Input or replay a stale prompt cache.
+  `InPasswordMode` writes from mode handlers go through
+  `Session.SetPasswordMode(bool)` (also under `writeMu`). Top-level
+  password-mode reads in `handleEscape`/`handleTab` are pre-existing
+  fast-path checks that race with mode-handler writes; the inner
+  EditAndWrite paths re-read under the lock so the race only widens
+  the bell vs. dispatch decision by one keystroke and never corrupts
+  state.
 - Cross-goroutine session fields (`lastTellFrom`, `lastInputAt`,
   `channelMuted`) MUST go through the helpers — they take `crossMu`.
   In-world fields (`CharacterID`, `CharacterName`, `CurrentRoomID`) are

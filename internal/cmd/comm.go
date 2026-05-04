@@ -58,7 +58,7 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 				if peer.CurrentRoomID != c.Session.CurrentRoomID {
 					continue
 				}
-				if err := peer.WriteString(otherMsg); err != nil {
+				if err := peer.WriteAsync(otherMsg); err != nil {
 					slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
 				}
 			}
@@ -96,7 +96,7 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 				speaker = "Someone"
 			}
 			peer.SetLastTellFrom(speaker)
-			if err := peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n"); err != nil {
+			if err := peer.WriteAsync("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\""); err != nil {
 				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
 			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")
@@ -129,7 +129,7 @@ func NewReply(sessions *session.Registry) *telnet.Command {
 				speaker = "Someone"
 			}
 			peer.SetLastTellFrom(speaker)
-			if err := peer.WriteString("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\"\r\n"); err != nil {
+			if err := peer.WriteAsync("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\""); err != nil {
 				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
 			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")

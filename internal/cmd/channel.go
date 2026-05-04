@@ -64,7 +64,7 @@ func NewChannel(ch repo.Channel, sessions *session.Registry, characters repo.Cha
 				if peer.IsChannelMuted(name) {
 					continue
 				}
-				if err := peer.WriteString(otherMsg); err != nil {
+				if err := peer.WriteAsync(otherMsg); err != nil {
 					slog.Debug("channel: peer write failed", "channel", name, "to", peer.CharacterName, "error", err)
 				}
 			}
