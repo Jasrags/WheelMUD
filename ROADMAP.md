@@ -996,6 +996,19 @@ will need on top of those tables.
       via `net.ParseCIDR`. `kick <player> [reason]` closes the
       socket with a notice. `mute <player> <duration>` flips a
       flag blocking channel + say emits.
+- [ ] `spawn` admin command — `spawn mob <external_id> [count]` /
+      `spawn item <external_id> [count]` instantiates a fresh
+      mob_instance or item from a template (e.g. `spawn mob
+      tr.village_dog 3`, `spawn item tr.inn_lantern`) and drops it
+      in the admin's current room. Resolves the external_id via
+      MobTemplateRepo / ItemRepo, copies the template stats/flags/
+      stats_json, then writes a new row with a unique runtime id.
+      Default count = 1, capped at a safety limit (e.g. 20) to
+      prevent fat-finger floods. Tab completion against existing
+      template external_ids. Gated AuthAdmin, audited via the admin
+      audit log. Stretch: `spawn item <ext> in <container_keyword>`
+      to pre-fill a container; `spawn mob <ext> at <room_id>` to
+      target a remote room.
 - [ ] Audit log of admin actions — `admin_audit` table (`actor_id`,
       `verb`, `target`, `args`, `at`). Wrap admin commands at
       dispatch with a logger middleware; queryable via `audit
