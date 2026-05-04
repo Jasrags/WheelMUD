@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -39,8 +40,10 @@ func NewWhereAmI(rooms repo.RoomRepo) *telnet.Command {
 
 func formatWhereAmI(room repo.Room) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "{{Room %d}}::cyan|bold {{(%s)}}::gray\r\n", room.ID, room.ExternalID)
-	fmt.Fprintf(&b, "  {{Name:}}::yellow %s\r\n", room.Name)
+	// ExternalID and Name are interpolated into cfmt-styled spans;
+	// defang `}}::` in case a builder typo authored an injection.
+	fmt.Fprintf(&b, "{{Room %d}}::cyan|bold {{(%s)}}::gray\r\n", room.ID, defangWorldField(room.ExternalID))
+	fmt.Fprintf(&b, "  {{Name:}}::yellow %s\r\n", defangWorldField(room.Name))
 	sector := room.Sector
 	if sector == "" {
 		sector = repo.SectorCity
@@ -55,8 +58,9 @@ func formatWhereAmI(room repo.Room) string {
 	if len(room.ExtraDescs) > 0 {
 		keys := make([]string, 0, len(room.ExtraDescs))
 		for k := range room.ExtraDescs {
-			keys = append(keys, k)
+			keys = append(keys, defangWorldField(k))
 		}
+		sort.Strings(keys)
 		fmt.Fprintf(&b, "  {{Keywords:}}::yellow %s\r\n", strings.Join(keys, ", "))
 	}
 	return b.String()

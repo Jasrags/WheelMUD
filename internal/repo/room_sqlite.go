@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -169,7 +170,14 @@ func unmarshalExtraDescs(raw string) (map[string]string, error) {
 	}
 	var out map[string]string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, err
+		// ExtraDescs is non-critical ambient text. A corrupt blob
+		// (operator typo, partial write) shouldn't brick every player
+		// who walks into the room; soft-fail to nil and log so the
+		// admin sees it. Preserve the err return shape for the
+		// existing call site, but never propagate the unmarshal err.
+		slog.Warn("unmarshal extra_descs: corrupt JSON, dropping",
+			"raw_len", len(raw), "error", err)
+		return nil, nil
 	}
 	if len(out) == 0 {
 		return nil, nil

@@ -34,14 +34,16 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 			if c.Session.CurrentRoomID == 0 {
 				return c.Session.WriteString("{{You are nowhere — no one will hear you.}}::yellow\r\n")
 			}
-			if rooms != nil {
-				if room, err := rooms.FindByID(c.Ctx, c.Session.CurrentRoomID); err == nil {
-					if room.Flags.Silent {
-						return c.Session.WriteString("{{The air smothers your words; nothing carries.}}::yellow\r\n")
-					}
-				} else if !errors.Is(err, repo.ErrRoomNotFound) {
-					slog.Debug("say: room lookup failed", "room", c.Session.CurrentRoomID, "error", err)
+			// rooms is guaranteed non-nil in production (buildRegistry).
+			// A FindByID miss (ErrRoomNotFound) is a soft-deleted-room
+			// race and is allowed to broadcast — the speech still
+			// reaches peers in the same logical CurrentRoomID.
+			if room, err := rooms.FindByID(c.Ctx, c.Session.CurrentRoomID); err == nil {
+				if room.Flags.Silent {
+					return c.Session.WriteString("{{The air smothers your words; nothing carries.}}::yellow\r\n")
 				}
+			} else if !errors.Is(err, repo.ErrRoomNotFound) {
+				slog.Debug("say: room lookup failed", "room", c.Session.CurrentRoomID, "error", err)
 			}
 			speaker := c.Session.CharacterName
 			if speaker == "" {
@@ -134,6 +136,23 @@ func NewReply(sessions *session.Registry) *telnet.Command {
 		},
 	}
 }
+
+// worldFieldDefanger neutralizes the cfmt close-and-style sequence
+// (`}}::`) inside name-shaped world strings spliced into colored
+// templates (room names, item names, mob names, ExtraDescs keywords).
+// Standalone `}}` and `::` are left alone so legitimate prose like
+// "Lv:: 5" or "the inn's roof tiles" survives. Description-shaped
+// fields (LongDesc, ExtraDescs values) are NOT defanged — builders
+// can intentionally color them with cfmt.
+//
+// Same shape as game.go::cfmtDefanger; consolidating both copies into
+// a shared internal/display package is tracked in
+// world_aggregates_followups.md.
+var worldFieldDefanger = strings.NewReplacer("{{", "{ {", "}}::", "} }::")
+
+// defangWorldField scrubs cfmt injection from a name-shaped world
+// string before it is spliced into a colored template.
+func defangWorldField(s string) string { return worldFieldDefanger.Replace(s) }
 
 // sanitizeChat strips control bytes and trims, caps length, and
 // returns ok=false if the result is empty. cfmt template syntax

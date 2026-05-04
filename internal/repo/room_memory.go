@@ -24,8 +24,10 @@ func NewMemoryRoomRepo() *MemoryRoomRepo {
 
 // Insert adds a room directly without ExternalID validation. Test
 // fixtures use this; production code (the YAML loader) goes through
-// Create.
+// Create. ExtraDescs keys are normalized so the case-insensitive
+// look <noun> contract matches whichever entry path produced the row.
 func (r *MemoryRoomRepo) Insert(room Room) Room {
+	room.ExtraDescs = normalizeExtraDescs(room.ExtraDescs)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.insertLocked(room)
@@ -38,19 +40,27 @@ func (r *MemoryRoomRepo) Create(_ context.Context, room Room) (Room, error) {
 	if room.Sector == "" {
 		room.Sector = SectorCity
 	}
-	if len(room.ExtraDescs) > 0 {
-		normalized := make(map[string]string, len(room.ExtraDescs))
-		for k, v := range room.ExtraDescs {
-			normalized[strings.ToLower(strings.TrimSpace(k))] = v
-		}
-		room.ExtraDescs = normalized
-	}
+	room.ExtraDescs = normalizeExtraDescs(room.ExtraDescs)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.byExt[room.ExternalID]; exists {
 		return Room{}, ErrDuplicateExternalID
 	}
 	return r.insertLocked(room), nil
+}
+
+// normalizeExtraDescs lowercases + trims keys so look-keyword matches
+// regardless of how the row was authored. Returns nil for an empty
+// input so storage stays sparse.
+func normalizeExtraDescs(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[strings.ToLower(strings.TrimSpace(k))] = v
+	}
+	return out
 }
 
 func (r *MemoryRoomRepo) insertLocked(room Room) Room {

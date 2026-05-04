@@ -166,6 +166,50 @@ func TestTeleport_OtherSession(t *testing.T) {
 	}
 }
 
+func TestTeleport_OtherNoTeleportFlagBlocks(t *testing.T) {
+	// Sibling of TestTeleport_NoTeleportFlagBlocks for the two-arg
+	// `tp <user> <room>` path. The same NoTeleport guard must hold;
+	// pinning it prevents drift if the two code paths diverge later.
+	sessions := session.NewRegistry()
+	tp, chars, rooms, _, _, _ := newTeleportCmd(t, sessions)
+	rooms.Insert(repo.Room{
+		ID: 9, Name: "Warded Sanctum", LongDesc: "Air bites the skin.",
+		Flags: repo.RoomFlags{NoTeleport: true},
+	})
+	caller, _ := chars.Create(context.Background(), repo.Character{AccountID: 1, Name: "Caller"})
+	target, _ := chars.Create(context.Background(), repo.Character{AccountID: 2, Name: "Target"})
+
+	callerSession, callerConn := bufSession(t)
+	callerSession.CharacterID = caller.ID
+	callerSession.CharacterName = caller.Name
+	callerSession.AuthLevel = telnet.AuthAdmin
+
+	targetSession, targetConn := bufSession(t)
+	targetSession.CharacterID = target.ID
+	targetSession.CharacterName = target.Name
+	targetSession.CurrentRoomID = 1
+	targetSession.AuthLevel = telnet.AuthPlayer
+	sessions.Bind(2, targetSession)
+
+	ctx := &telnet.Context{Ctx: context.Background(), Session: callerSession, Name: "tp", Args: []string{"Target", "9"}}
+	if err := tp.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if targetSession.CurrentRoomID != 1 {
+		t.Fatalf("target should not have moved; CurrentRoomID = %d", targetSession.CurrentRoomID)
+	}
+	if !strings.Contains(callerConn.String(), "Pattern resists") {
+		t.Fatalf("caller missing resist message; got %q", callerConn.String())
+	}
+	if strings.Contains(targetConn.String(), "ripples") {
+		t.Fatalf("target should not have seen a ripple on a blocked tp; got %q", targetConn.String())
+	}
+	stored, _ := chars.FindByName(context.Background(), "Target")
+	if stored.CurrentRoomID != 1 {
+		t.Fatalf("persisted target CurrentRoomID = %d, want 1", stored.CurrentRoomID)
+	}
+}
+
 func TestTeleport_OtherUserNotOnline(t *testing.T) {
 	sessions := session.NewRegistry()
 	tp, chars, _, _, _, _ := newTeleportCmd(t, sessions)

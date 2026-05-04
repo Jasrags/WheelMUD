@@ -57,7 +57,7 @@ func runCmd(t *testing.T, c *telnet.Command, s *telnet.Session, raw string) {
 
 func TestSay_BroadcastsToSameRoom(t *testing.T) {
 	sessions, alice, _, aOut, bOut := commPair(t)
-	say := NewSay(sessions, nil)
+	say := NewSay(sessions, repo.NewMemoryRoomRepo())
 
 	runCmd(t, say, alice, "hello there")
 
@@ -88,10 +88,26 @@ func TestSay_SilentRoomBlocks(t *testing.T) {
 	}
 }
 
+func TestSay_BroadcastsWhenRoomMissing(t *testing.T) {
+	// A FindByID miss (e.g. soft-deleted room) is intentionally
+	// allowed to broadcast — speech still reaches peers in the same
+	// logical CurrentRoomID. Pin the behavior so a future refactor
+	// can't silently regress it to "smother".
+	sessions, alice, _, _, bOut := commPair(t)
+	emptyRooms := repo.NewMemoryRoomRepo() // no row for room 1
+	say := NewSay(sessions, emptyRooms)
+
+	runCmd(t, say, alice, "still here?")
+
+	if !strings.Contains(bOut.String(), "still here?") {
+		t.Fatalf("bob did not hear speech under ErrRoomNotFound: %q", bOut.String())
+	}
+}
+
 func TestSay_DoesNotReachOtherRooms(t *testing.T) {
 	sessions, alice, bob, _, bOut := commPair(t)
 	bob.CurrentRoomID = 99 // different room
-	say := NewSay(sessions, nil)
+	say := NewSay(sessions, repo.NewMemoryRoomRepo())
 
 	runCmd(t, say, alice, "anyone there?")
 

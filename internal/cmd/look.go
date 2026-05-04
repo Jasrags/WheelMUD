@@ -102,8 +102,11 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 
 	var b strings.Builder
 	// Room title: bright + bold so it stands out as the section header.
+	// Defang interpolated names so a stray `}}::` in a builder-authored
+	// name can't recolor everything below; LongDesc stays verbatim
+	// because builders may intentionally cfmt-color description prose.
 	b.WriteString("{{")
-	b.WriteString(room.Name)
+	b.WriteString(defangWorldField(room.Name))
 	b.WriteString("}}::cyan|bold\r\n")
 	if room.LongDesc != "" {
 		// Description stays uncoloured so the room title and the
@@ -148,7 +151,7 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 				b.WriteString(", ")
 			}
 			b.WriteString("{{")
-			b.WriteString(it.Name)
+			b.WriteString(defangWorldField(it.Name))
 			b.WriteString("}}::green")
 		}
 		b.WriteString("\r\n")
@@ -160,7 +163,7 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 				b.WriteString(", ")
 			}
 			b.WriteString("{{")
-			b.WriteString(m.Core.Name)
+			b.WriteString(defangWorldField(m.Core.Name))
 			b.WriteString("}}::magenta")
 		}
 		b.WriteString("\r\n")
