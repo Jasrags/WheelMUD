@@ -81,11 +81,12 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 // flips ownership and persists.
 func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "get",
-		Aliases: []string{"take"},
-		Help:    "Get <item> — pick something up off the floor",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "get",
+		Aliases:   []string{"take"},
+		Help:      "Get <item> — pick something up off the floor",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeRoomItems(items),
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			if s.CurrentRoomID == 0 {
@@ -150,10 +151,11 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 // NewDrop builds the `drop <item>` command. Mirror of `get`.
 func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "drop",
-		Help:    "Drop <item> — set something down",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "drop",
+		Help:      "Drop <item> — set something down",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeInventoryItems(items),
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			if s.CurrentRoomID == 0 {
@@ -204,10 +206,11 @@ func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessi
 // the recipient to be online and in the same room.
 func NewGive(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "give",
-		Help:    "Give <item|amount> <name> — hand something to another player",
-		MinArgs: 2,
-		Auth:    telnet.AuthPlayer,
+		Name:      "give",
+		Help:      "Give <item|amount> <name> — hand something to another player",
+		MinArgs:   2,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeGive(items, sessions),
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			recipient := c.Args[len(c.Args)-1]
@@ -401,5 +404,73 @@ func totalWeight(items []repo.Item) float64 {
 		w += it.Weight
 	}
 	return w
+}
+
+// completeRoomItems suggests item keywords from the floor of the
+// actor's current room. Used by `get`. Returns nil past slot 0 so
+// "get sword from chest" 3-arg forms (when containers land) don't
+// surprise players with a stale completer.
+func completeRoomItems(items repo.ItemRepo) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if slot != 0 || s.CurrentRoomID == 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		floor, err := items.ListInRoom(ctx, s.CurrentRoomID)
+		if err != nil {
+			return nil
+		}
+		return itemKeywordCandidates(floor, partial)
+	}
+}
+
+// completeInventoryItems suggests item keywords from the actor's
+// inventory. Used by `drop`.
+func completeInventoryItems(items repo.ItemRepo) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if slot != 0 || s.CharacterID == 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		held, err := items.ListInInventory(ctx, s.CharacterID)
+		if err != nil {
+			return nil
+		}
+		return itemKeywordCandidates(held, partial)
+	}
+}
+
+// completeGive offers inventory item keywords on slot 0 and online
+// character names on slot 1. The Run handler treats the LAST arg as
+// the recipient (so multi-word item names work), but tab completion
+// only sees a positional view of typing — a 1-token-then-name flow
+// is by far the common case, so slot 1 = recipient is the right
+// default. Players who quote multi-word items still complete on slot
+// 0 because Tokenize counts a quoted blob as a single token.
+func completeGive(items repo.ItemRepo, sessions *session.Registry) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		switch slot {
+		case 0:
+			if s.CharacterID == 0 {
+				return nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			held, err := items.ListInInventory(ctx, s.CharacterID)
+			if err != nil {
+				return nil
+			}
+			return itemKeywordCandidates(held, partial)
+		case 1:
+			return onlineNameCandidates(s, sessions, partial)
+		default:
+			return nil
+		}
+	}
 }
 

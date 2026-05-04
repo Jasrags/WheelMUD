@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -38,8 +39,9 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 			"       tp <user> <room>   - teleport another player\n\n" +
 			"<room> is a numeric room id (e.g. 1) or a stable\n" +
 			"external id (e.g. tr.emonds_field).",
-		Auth:    telnet.AuthPlayer,
-		MinArgs: 1,
+		Auth:      telnet.AuthPlayer,
+		MinArgs:   1,
+		Completer: completeTeleport(rooms, sessions),
 		Run: func(c *telnet.Context) error {
 			switch len(c.Args) {
 			case 1:
@@ -51,6 +53,52 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 			}
 		},
 	}
+}
+
+// completeTeleport offers room external-ids and (for the 2-arg form)
+// online character names. Slot 0 is union: a room id OR a player name,
+// since the dispatcher only knows which after a second token arrives.
+// Slot 1 is room ids only. Past slot 1 the bell fires.
+//
+// Room enumeration uses RoomRepo.ListAll — bounded by world size.
+// Once the world tops a few thousand rooms, swap this for a
+// prefix-bounded query (see deferred follow-ups).
+func completeTeleport(rooms repo.RoomRepo, sessions *session.Registry) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if slot < 0 || slot > 1 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out := roomIDCandidates(ctx, rooms, partial)
+		if slot == 0 {
+			out = append(out, onlineNameCandidates(s, sessions, partial)...)
+		}
+		return out
+	}
+}
+
+// roomIDCandidates returns one Candidate per room whose external id
+// has the partial as a prefix. Help is the room's display name.
+// Empty external ids (legacy rows) are filtered out.
+func roomIDCandidates(ctx context.Context, rooms repo.RoomRepo, partial string) []telnet.Candidate {
+	all, err := rooms.ListAll(ctx)
+	if err != nil {
+		return nil
+	}
+	partial = strings.ToLower(partial)
+	out := make([]telnet.Candidate, 0, len(all))
+	for _, r := range all {
+		if r.ExternalID == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(r.ExternalID), partial) {
+			continue
+		}
+		out = append(out, telnet.Candidate{Text: r.ExternalID, Help: r.Name})
+	}
+	return out
 }
 
 // tpSelf teleports the calling session to the resolved room and

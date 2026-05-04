@@ -77,6 +77,16 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 		Help:    "Tell <name> <text> — send a private message",
 		MinArgs: 2,
 		Auth:    telnet.AuthPlayer,
+		// Slot 0 completes online character names. Slot 1+ is the
+		// free-form message body — bell so a stray tab in mid-sentence
+		// can't surprise the player by injecting a name fragment.
+		Completer: func(s *telnet.Session, args string) []telnet.Candidate {
+			slot, partial := completerSlot(args)
+			if slot != 0 {
+				return nil
+			}
+			return onlineNameCandidates(s, sessions, partial)
+		},
 		Run: func(c *telnet.Context) error {
 			name := c.Args[0]
 			rest := strings.TrimSpace(strings.TrimPrefix(c.Raw, c.Args[0]))
@@ -153,6 +163,38 @@ var worldFieldDefanger = strings.NewReplacer("{{", "{ {", "}}::", "} }::")
 // defangWorldField scrubs cfmt injection from a name-shaped world
 // string before it is spliced into a colored template.
 func defangWorldField(s string) string { return worldFieldDefanger.Replace(s) }
+
+// onlineNameCandidates returns one Candidate per online peer whose
+// CharacterName has partial as a prefix (case-insensitive). The
+// caller's own session is filtered out, and peers whose AuthLevel
+// exceeds the caller's are hidden so a player can't enumerate admin
+// characters via `tell <TAB>` — same anti-enumeration policy that
+// Registry.Dispatch enforces for privileged verbs.
+func onlineNameCandidates(self *telnet.Session, sessions *session.Registry, partial string) []telnet.Candidate {
+	if sessions == nil {
+		return nil
+	}
+	lower := strings.ToLower(partial)
+	bound := sessions.Snapshot()
+	out := make([]telnet.Candidate, 0, len(bound))
+	for _, peer := range bound {
+		if peer == self {
+			continue
+		}
+		if peer.AuthLevel > self.AuthLevel {
+			continue
+		}
+		name := peer.CharacterName
+		if name == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(name), lower) {
+			continue
+		}
+		out = append(out, telnet.Candidate{Text: name, Help: "online"})
+	}
+	return out
+}
 
 // sanitizeChat strips control bytes and trims, caps length, and
 // returns ok=false if the result is empty. cfmt template syntax

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -20,11 +22,12 @@ import (
 // MatchItem / MatchMob.
 func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command {
 	return &telnet.Command{
-		Name:    "examine",
-		Aliases: []string{"exa", "ex"},
-		Help:    "Examine <target> for a closer look",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "examine",
+		Aliases:   []string{"exa", "ex"},
+		Help:      "Examine <target> for a closer look",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExamineTargets(items, mobs),
 		Run: func(c *telnet.Context) error {
 			if c.Session.CurrentRoomID == 0 {
 				return c.Session.WriteString("{{There is nothing here to examine.}}::yellow\r\n")
@@ -66,6 +69,61 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 			return c.Session.WriteString("{{You don't see anything like that here.}}::yellow\r\n")
 		},
 	}
+}
+
+// completeExamineTargets unions the three places examine looks: mobs
+// in the current room, items on the floor, and items in the actor's
+// inventory. Slot 0 only — examine takes exactly one target.
+//
+// Look order matches the runtime resolver: mobs first, then floor
+// items, then inventory. Tokens are deduped across sources so a
+// "rusty sword" on the floor and "rusty sword" in inventory yield
+// one candidate.
+func completeExamineTargets(items repo.ItemRepo, mobs repo.MobInstanceRepo) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if slot != 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var out []telnet.Candidate
+		if s.CurrentRoomID != 0 {
+			if list, err := mobs.ListInRoom(ctx, s.CurrentRoomID); err == nil {
+				out = append(out, mobKeywordCandidates(list, partial)...)
+			}
+			if list, err := items.ListInRoom(ctx, s.CurrentRoomID); err == nil {
+				out = append(out, itemKeywordCandidates(list, partial)...)
+			}
+		}
+		if s.CharacterID != 0 {
+			if list, err := items.ListInInventory(ctx, s.CharacterID); err == nil {
+				out = append(out, itemKeywordCandidates(list, partial)...)
+			}
+		}
+		return dedupCandidates(out)
+	}
+}
+
+// dedupCandidates collapses Candidates that share Text. The first
+// occurrence wins so look-order (mobs → floor → inventory) is
+// preserved when a player has e.g. an inventory item that shares a
+// token with a room mob.
+func dedupCandidates(in []telnet.Candidate) []telnet.Candidate {
+	if len(in) == 0 {
+		return nil
+	}
+	out := in[:0:0]
+	seen := make(map[string]bool, len(in))
+	for _, c := range in {
+		if seen[c.Text] {
+			continue
+		}
+		seen[c.Text] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 // nameMatches checks whether target matches name on a token-prefix

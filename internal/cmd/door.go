@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -38,6 +39,39 @@ func resolveDir(s string) (string, bool) {
 // naturally (`dirLong(dir)`); kept for consistency with the call
 // sites below until they migrate too.
 func dirLong(code string) string { return repo.DirLong(code) }
+
+// completeExits returns a Completer that suggests the visible exits
+// leaving the actor's current room. The first arg slot completes
+// short-codes (n/ne/u/...); subsequent slots return nil so the bell
+// fires instead. Hidden exits are filtered the same way resolveDoor
+// hides them — confirming a passage by tab-completing it would defeat
+// the Hidden flag's purpose.
+func completeExits(exits repo.ExitRepo) func(s *telnet.Session, args string) []telnet.Candidate {
+	return func(s *telnet.Session, args string) []telnet.Candidate {
+		slot, partial := completerSlot(args)
+		if slot != 0 || s.CurrentRoomID == 0 {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		list, err := exits.ListFrom(ctx, s.CurrentRoomID)
+		if err != nil {
+			return nil
+		}
+		partial = strings.ToLower(partial)
+		out := make([]telnet.Candidate, 0, len(list))
+		for _, e := range list {
+			if e.Flags.Hidden {
+				continue
+			}
+			if !strings.HasPrefix(e.Direction, partial) {
+				continue
+			}
+			out = append(out, telnet.Candidate{Text: e.Direction, Help: dirLong(e.Direction)})
+		}
+		return out
+	}
+}
 
 // playerHasKey reports whether the player can satisfy a key requirement
 // for an exit. The key must be in the player's inventory (§14). AuthAdmin
@@ -212,10 +246,11 @@ func announce(c *telnet.Context, exits repo.ExitRepo, sessions *session.Registry
 // already-open doors; otherwise clears Closed and broadcasts.
 func NewOpen(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "open",
-		Help:    "Open a door in the given direction",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "open",
+		Help:      "Open a door in the given direction",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExits(exits),
 		Run: func(c *telnet.Context) error {
 			exit, dir, ok := resolveDoor(c, exits)
 			if !ok {
@@ -248,10 +283,11 @@ func NewOpen(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 // NoPass exits; otherwise sets Closed and broadcasts.
 func NewClose(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "close",
-		Help:    "Close a door in the given direction",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "close",
+		Help:      "Close a door in the given direction",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExits(exits),
 		Run: func(c *telnet.Context) error {
 			exit, dir, ok := resolveDoor(c, exits)
 			if !ok {
@@ -285,10 +321,11 @@ func NewClose(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 // until §14 inventory lands; AuthAdmin always bypasses).
 func NewLock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "lock",
-		Help:    "Lock a closed door (requires the matching key)",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "lock",
+		Help:      "Lock a closed door (requires the matching key)",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExits(exits),
 		Run: func(c *telnet.Context) error {
 			exit, dir, ok := resolveDoor(c, exits)
 			if !ok {
@@ -324,10 +361,11 @@ func NewLock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registr
 // Locked and the player must have the matching key.
 func NewUnlock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "unlock",
-		Help:    "Unlock a locked door (requires the matching key)",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "unlock",
+		Help:      "Unlock a locked door (requires the matching key)",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExits(exits),
 		Run: func(c *telnet.Context) error {
 			exit, dir, ok := resolveDoor(c, exits)
 			if !ok {
@@ -365,10 +403,11 @@ func NewUnlock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Regis
 // the skill" refusal until lockpicking lands.
 func NewPick(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:    "pick",
-		Help:    "Attempt to pick a locked door",
-		MinArgs: 1,
-		Auth:    telnet.AuthPlayer,
+		Name:      "pick",
+		Help:      "Attempt to pick a locked door",
+		MinArgs:   1,
+		Auth:      telnet.AuthPlayer,
+		Completer: completeExits(exits),
 		Run: func(c *telnet.Context) error {
 			exit, dir, ok := resolveDoor(c, exits)
 			if !ok {

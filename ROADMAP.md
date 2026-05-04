@@ -142,6 +142,22 @@ constants and helpers in `telnet/iac.go`.
       stamps `s.AuthLevel` from the chosen character.
 - [x] Per-command argument completer — `Command.Completer` field;
       `help` ships a real one (sample: tab on `help <prefix>`)
+- [x] Broaden argument completers across the command catalog —
+      `internal/cmd/door.go` ships `completeExits` (visible exits
+      from the actor's room, hidden filtered) on `open`/`close`/
+      `lock`/`unlock`/`pick`; `teleport` unions room external IDs +
+      online peer names on slot 0 and room IDs only on slot 1;
+      `get` completes floor item keywords, `drop` completes
+      inventory keywords, `give` does inventory keyword on slot 0
+      then online name on slot 1; `examine` unions room mobs +
+      room items + inventory items; `tell` completes online names
+      with self/higher-auth peers filtered out. Ordinal `2.sword`
+      syntax flows through `splitOrdinalPartial` so the typed
+      ordinal is preserved on each candidate's replacement text.
+      Combat-verb completers and 3-arg "get sword from chest" forms
+      will land alongside their respective features. `reply` takes
+      a free-form message and bells. Channel verbs continue to
+      self-name (no completer needed).
 - [ ] Command cooldowns / lag system (combat balance lever) — add
       `Command.Lag time.Duration` and a `Session.NextReady time.Time`
       gate checked in `Registry.Dispatch`; commands dispatched while
