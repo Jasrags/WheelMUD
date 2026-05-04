@@ -1010,9 +1010,10 @@ will need on top of those tables.
 - [ ] `help <topic>` resolution with prefix matching — exact match
       → keyword match → unique prefix match → ambiguity list, same
       ladder used by the command registry.
-- [ ] `news` / MOTD on login — `motd.md` embedded; `news` shows a
-      paged list of dated entries from `news/*.md`. Tracks per-
-      character `last_news_seen`; login banner notes unread count.
+- [x] `news` / MOTD on login — `motd.md` embedded; `news` shows a
+      list of dated entries from `news/*.md` with unread markers.
+      Tracks per-character `last_news_seen`; login MOTD block notes
+      unread count. Splash banner shown on TCP connect.
 - [ ] In-repo developer docs beyond `CLAUDE.md` — `docs/`
       directory: `architecture.md` (subsystem map), `building.md`
       (running OLC + YAML loader), `protocol.md` (telnet/IAC

@@ -42,7 +42,12 @@ type Create struct {
 	step     createStep
 	username string
 	hash     string
+	motd     MOTDFunc
 }
+
+// SetMOTD propagates the MOTD/news hook from Login through Create →
+// postAuth → CharacterCreate / promoteToGame.
+func (c *Create) SetMOTD(f MOTDFunc) { c.motd = f }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
 // to postAuth after the account is persisted; sessions enforces the
@@ -153,7 +158,7 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, c.characters, c.game)
+	return postAuth(ctx, s, c.characters, c.motd, c.game)
 }
 
 // reservedUsernames are case-insensitively forbidden. "new" routes to

@@ -48,6 +48,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		quest_log_json, dialogue_state_json, equipment_json, inventory_json,
 		channel_settings_json,
 		prompt_template,
+		last_news_seen,
 		auth_level`
 
 // charCoreValues returns the bound-parameter slice for the Core
@@ -114,8 +115,19 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
 		channelSettingsJSON,
 		c.PromptTemplate,
+		newsSeenSeconds(c.LastNewsSeen),
 		c.AuthLevel,
 	}
+}
+
+// newsSeenSeconds maps a LastNewsSeen time to the unix-seconds value
+// stored in characters.last_news_seen. Zero time → 0 (the column
+// default and the "never seen" sentinel).
+func newsSeenSeconds(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // charPlayerScanDest returns pointers in the same order as
@@ -126,6 +138,7 @@ func charPlayerScanDest(c *Character,
 	coinCP, bankCP *int64,
 	fatigueUntil, idleSince, lastLogin *sql.NullTime,
 	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON *string,
+	lastNewsSeenSec *int64,
 ) []any {
 	return []any{
 		&c.Race, &c.Background, classLevelsJSON,
@@ -138,6 +151,7 @@ func charPlayerScanDest(c *Character,
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
 		channelSettingsJSON,
 		&c.PromptTemplate,
+		lastNewsSeenSec,
 		&c.AuthLevel,
 	}
 }

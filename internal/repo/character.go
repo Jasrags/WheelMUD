@@ -72,6 +72,14 @@ type Character struct {
 	// (`{{...}}::red`) which Game.Prompt renders before write.
 	PromptTemplate string
 
+	// LastNewsSeen is the date of the most recent §18 news entry
+	// the character has read. Persisted as unix seconds; the zero
+	// value means "never seen", so every seeded entry shows as
+	// unread on first game-entry. The `news <id>` command bumps
+	// this via CharacterRepo.MarkNewsSeen, which clamps so a stale
+	// entry can never lower the watermark.
+	LastNewsSeen time.Time
+
 	// JSON-encoded catalogs and bag-of-things. Plumbed end-to-end
 	// so the round-trip is verified, but typed and consumed by
 	// later roadmap items (§12 feats/skills, §14 equipment/
@@ -154,6 +162,11 @@ type CharacterRepo interface {
 	// Empty tmpl means "fall back to the server default". Returns
 	// ErrCharacterNotFound when no row matches id.
 	RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error
+	// MarkNewsSeen advances last_news_seen to `when` if it strictly
+	// advances the watermark; older or equal values are silently
+	// ignored so reading an old entry can't unread newer ones.
+	// Returns ErrCharacterNotFound when no row matches id.
+	MarkNewsSeen(ctx context.Context, id int64, when time.Time) error
 }
 
 var (

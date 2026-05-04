@@ -1,0 +1,12 @@
+{{   _       __ __                __  ___ __  __ ___ }}::yellow|bold
+{{  | |     / // /_   ___  ___   / / /  |/  // / / / / __ \}}::yellow|bold
+{{  | | /| / // __ \ / _ \/ _ \ / / / /|_/ // / / / / / / /}}::yellow|bold
+{{  | |/ |/ // / / //  __//  __// / / /  / // /_/ / / /_/ / }}::yellow|bold
+{{  |__/|__//_/ /_/ \___/\___//_/ /_/  /_/ \____(_)____/  }}::yellow|bold
+
+         {{A Wheel of Time MUD}}::cyan|bold — turning toward dawn.
+
+{{The Wheel of Time turns, and Ages come and pass, leaving memories
+that become legend. Legend fades to myth, and even myth is long
+forgotten when the Age that gave it birth comes again.}}::white|italic
+

@@ -30,12 +30,17 @@ var reservedCharacterNames = map[string]bool{
 type CharacterCreate struct {
 	repo  repo.CharacterRepo
 	game  telnet.Mode
+	motd  MOTDFunc
 	shown bool
 }
 
 func NewCharacterCreate(characters repo.CharacterRepo, game telnet.Mode) *CharacterCreate {
 	return &CharacterCreate{repo: characters, game: game}
 }
+
+// SetMOTD wires the MOTD hook fired by promoteToGame after the
+// character is created. nil disables it.
+func (m *CharacterCreate) SetMOTD(f MOTDFunc) { m.motd = f }
 
 func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Choose a character name: "
@@ -68,7 +73,7 @@ func (m *CharacterCreate) Handle(ctx context.Context, s *telnet.Session, line st
 	case err != nil:
 		return s.WriteRaw([]byte("Character creation failed. Try again later.\r\n"))
 	}
-	return promoteToGame(ctx, s, c, m.repo, m.game)
+	return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
 }
 
 // validateCharacterName mirrors validateUsername — same charset and

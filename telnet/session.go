@@ -84,6 +84,13 @@ type Session struct {
 	// SwimFt for underwater). Refresh when an effect changes mode.
 	Speed creature.Speed
 
+	// lastNewsSeen mirrors characters.last_news_seen so the §18
+	// `news` command can render unread markers without a per-render
+	// repo round-trip. Stamped by promoteToGame at game entry and
+	// bumped after a successful MarkNewsSeen. Dispatcher-owned —
+	// read and written only on the dispatch path.
+	lastNewsSeen time.Time
+
 	// crossMu guards the few session fields that are written by one
 	// goroutine and read by another: lastTellFrom (set by senders'
 	// dispatchers, read by this session's reply handler) and
@@ -151,6 +158,16 @@ func (s *Session) Context() context.Context {
 	}
 	return context.Background()
 }
+
+// LastNewsSeen returns the dispatcher-owned mirror of the player's
+// last_news_seen watermark. Zero time means "never seen". Read and
+// written only on the dispatch path; no lock needed.
+func (s *Session) LastNewsSeen() time.Time { return s.lastNewsSeen }
+
+// SetLastNewsSeen updates the dispatcher-owned watermark. Bumped by
+// promoteToGame on game entry and by the `news` command after a
+// successful MarkNewsSeen.
+func (s *Session) SetLastNewsSeen(t time.Time) { s.lastNewsSeen = t }
 
 // SetLastTellFrom records the name of the most recent `tell` sender
 // so a follow-up `reply` can route back. Safe to call from any

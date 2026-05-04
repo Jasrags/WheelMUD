@@ -56,9 +56,12 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	//
 	// args is laid out [non-auth-cols ..., c.AuthLevel]; the CASE
 	// consumes the trailing ? as the ELSE branch. Total placeholder
-	// count remains len(args). NOTE: auth_level MUST stay last in
-	// charPlayerColumns / charPlayerValues / charPlayerScanDest for
-	// this alignment to hold; new columns belong before it.
+	// count remains len(args). NOTE: auth_level MUST stay the very
+	// last element of charPlayerColumns / charPlayerValues /
+	// charPlayerScanDest for this alignment to hold; new columns
+	// belong before it. last_news_seen is currently the immediate
+	// predecessor — adding another column means slotting it
+	// strictly between last_news_seen and auth_level.
 	authPlaceholder := fmt.Sprintf(
 		`CASE WHEN (SELECT COUNT(*) FROM characters)=0 THEN %d ELSE ? END`,
 		AuthLevelAdmin,
@@ -204,6 +207,30 @@ func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) MarkNewsSeen(ctx context.Context, id int64, when time.Time) error {
+	if when.IsZero() {
+		// Defensive: a zero time would store the "never seen" sentinel
+		// and unread every entry on next login. Refuse rather than
+		// regress the watermark.
+		return nil
+	}
+	// max(stored, ?) clamp at the SQL level — stale entries can't
+	// regress the watermark even under racing reads.
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters
+		    SET last_news_seen = MAX(last_news_seen, ?)
+		  WHERE id = ?`,
+		when.Unix(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark news seen: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordChannelSettings(ctx context.Context, id int64, settings map[string]bool) error {
 	js, err := jsonMarshalString(settings)
 	if err != nil {
@@ -230,14 +257,15 @@ var characterSelect = `SELECT id, account_id, name, name_lower, created_at, last
 
 func scanCharacter(s scanner) (Character, error) {
 	var (
-		c          Character
-		lastPlayed sql.NullTime
-		j          characterJSON
-		coinCP     int64
-		bankCP     int64
-		fatigue    sql.NullTime
-		idle       sql.NullTime
-		login      sql.NullTime
+		c            Character
+		lastPlayed   sql.NullTime
+		j            characterJSON
+		coinCP       int64
+		bankCP       int64
+		fatigue      sql.NullTime
+		idle         sql.NullTime
+		login        sql.NullTime
+		newsSeenSecs int64
 	)
 	dest := []any{
 		&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed, &c.CurrentRoomID,
@@ -248,7 +276,8 @@ func scanCharacter(s scanner) (Character, error) {
 		&coinCP, &bankCP,
 		&fatigue, &idle, &login,
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
-		&j.channelSettings)...)
+		&j.channelSettings,
+		&newsSeenSecs)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
@@ -273,6 +302,9 @@ func scanCharacter(s scanner) (Character, error) {
 	}
 	if login.Valid {
 		c.LastLogin = login.Time
+	}
+	if newsSeenSecs > 0 {
+		c.LastNewsSeen = time.Unix(newsSeenSecs, 0).UTC()
 	}
 	if err := j.unmarshalInto(&c); err != nil {
 		return Character{}, err

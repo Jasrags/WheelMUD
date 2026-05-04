@@ -17,12 +17,16 @@ type CharacterSelect struct {
 	chars     []repo.Character
 	repo      repo.CharacterRepo
 	game      telnet.Mode
+	motd      MOTDFunc
 	listShown bool
 }
 
 func NewCharacterSelect(chars []repo.Character, characters repo.CharacterRepo, game telnet.Mode) *CharacterSelect {
 	return &CharacterSelect{chars: chars, repo: characters, game: game}
 }
+
+// SetMOTD wires the MOTD hook fired by promoteToGame on selection.
+func (m *CharacterSelect) SetMOTD(f MOTDFunc) { m.motd = f }
 
 func (m *CharacterSelect) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Pick a character (or 'create' / 'quit'): "
@@ -58,7 +62,9 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 		_ = s.Conn.Close()
 		return telnet.ErrSessionEnded
 	case strings.EqualFold(choice, "create"):
-		return s.ReplaceMode(NewCharacterCreate(m.repo, m.game))
+		create := NewCharacterCreate(m.repo, m.game)
+		create.SetMOTD(m.motd)
+		return s.ReplaceMode(create)
 	}
 
 	// Find the requested character within the *account's* list — a user
@@ -66,7 +72,7 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 	// know its name.
 	for _, c := range m.chars {
 		if strings.EqualFold(c.Name, choice) {
-			return promoteToGame(ctx, s, c, m.repo, m.game)
+			return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
 		}
 	}
 

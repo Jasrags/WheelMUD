@@ -18,6 +18,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
+	"github.com/Jasrags/WheelMUD/internal/news"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/safego"
@@ -54,6 +55,7 @@ type server struct {
 	buckets    *tick.Buckets
 	bus        *eventbus.Bus
 	saves      *persist.Manager
+	news       *news.Catalog
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -131,7 +133,13 @@ func main() {
 	sessions := session.NewRegistry()
 	bus := eventbus.New()
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels, clock)
+	newsCatalog, err := news.Load()
+	if err != nil {
+		slog.Error("Failed to load news catalog", "error", err)
+		os.Exit(1)
+	}
+
+	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels, clock, newsCatalog)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -170,9 +178,14 @@ func main() {
 		buckets:    buckets,
 		bus:        bus,
 		saves:      saves,
+		news:       newsCatalog,
 		closed:     make(chan struct{}),
 		newInitial: func() telnet.Mode {
-			return mode.NewLogin(accounts, characters, sessions, gameMode)
+			login := mode.NewLogin(accounts, characters, sessions, gameMode)
+			login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
+				return newsCatalog.WriteMOTDBlock(s, lastSeen)
+			})
+			return login
 		},
 	}
 
@@ -321,7 +334,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -403,6 +416,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewZoneMap(rooms, exits, zones)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewNews(newsCatalog, characters)); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -419,8 +435,8 @@ func (srv *server) handleConnection(s *telnet.Session) {
 	}()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
 
-	if err := writeBanner(s); err != nil {
-		slog.Debug("Banner write failed", "remote", s.RemoteAddress, "error", err)
+	if err := srv.news.WriteSplash(s); err != nil {
+		slog.Debug("Splash write failed", "remote", s.RemoteAddress, "error", err)
 		return
 	}
 
@@ -439,12 +455,3 @@ func (srv *server) handleConnection(s *telnet.Session) {
 	slog.Info("Client disconnected", "remote", s.RemoteAddress)
 }
 
-func writeBanner(s *telnet.Session) error {
-	if err := s.WriteString("Welcome to the Telnet server!\r\n"); err != nil {
-		return err
-	}
-	if err := s.WriteString("{{Welcome}}::green|bold\r\n"); err != nil {
-		return err
-	}
-	return s.WriteString("{{Underlined Bold}}::underline|bold\r\n")
-}

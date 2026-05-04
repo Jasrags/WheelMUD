@@ -9,6 +9,15 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
+// MOTDFunc is the hook promoteToGame calls right before replacing
+// into game mode. It receives the character's last_news_seen
+// watermark so it can render an unread-count line. nil = skip.
+//
+// Lives on this package as a function type so internal/news (which
+// imports telnet) can satisfy it without internal/mode taking a
+// dependency on internal/news.
+type MOTDFunc func(s *telnet.Session, lastSeen time.Time) error
+
 // postAuth replaces the current mode with the appropriate
 // post-authentication mode for the given account:
 //
@@ -20,7 +29,7 @@ import (
 // AuthLevel. The character list is fetched from the repo, so a DB
 // failure surfaces a generic error and leaves the session in its
 // current mode for the user to retry.
-func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, game telnet.Mode) error {
+func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, game telnet.Mode) error {
 	chars, err := characters.ListByAccount(ctx, s.AccountID)
 	if err != nil {
 		slog.Warn("postAuth: list characters failed", "remote", s.RemoteAddress, "account", s.AccountID, "error", err)
@@ -28,22 +37,28 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	}
 	switch len(chars) {
 	case 0:
-		return s.ReplaceMode(NewCharacterCreate(characters, game))
+		create := NewCharacterCreate(characters, game)
+		create.SetMOTD(motd)
+		return s.ReplaceMode(create)
 	case 1:
-		return promoteToGame(ctx, s, chars[0], characters, game)
+		return promoteToGame(ctx, s, chars[0], characters, motd, game)
 	default:
-		return s.ReplaceMode(NewCharacterSelect(chars, characters, game))
+		sel := NewCharacterSelect(chars, characters, game)
+		sel.SetMOTD(motd)
+		return s.ReplaceMode(sel)
 	}
 }
 
 // promoteToGame stamps the character onto the session, records play
-// time (best-effort), and replaces the mode with game.
-func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, game telnet.Mode) error {
+// time (best-effort), runs the optional MOTD hook, and replaces the
+// mode with game.
+func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, motd MOTDFunc, game telnet.Mode) error {
 	s.CharacterID = c.ID
 	s.CharacterName = c.Name
 	s.CurrentRoomID = c.CurrentRoomID
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
+	s.SetLastNewsSeen(c.LastNewsSeen)
 	// AuthLevel lives on the character. CharacterRepo.Create promotes
 	// the very first character on a fresh deploy to admin atomically,
 	// so this restore picks up that promotion as well as any later
@@ -76,6 +91,11 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	}
 	if err := s.WriteRaw([]byte("Playing as " + c.Name + ".\r\n")); err != nil {
 		return err
+	}
+	if motd != nil {
+		if err := motd(s, c.LastNewsSeen); err != nil {
+			return err
+		}
 	}
 	return s.ReplaceMode(game)
 }

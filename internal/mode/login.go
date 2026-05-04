@@ -50,7 +50,13 @@ type Login struct {
 	step     loginStep
 	username string
 	account  *repo.Account // resolved after step 1; nil when no such user
+	motd     MOTDFunc      // optional MOTD/news hook fired by promoteToGame
 }
+
+// SetMOTD wires an optional MOTD hook that promoteToGame fires on
+// game entry. nil disables it. Threaded through to CharacterCreate /
+// CharacterSelect when the post-auth router fans out.
+func (l *Login) SetMOTD(f MOTDFunc) { l.motd = f }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
 // sessions enforces the single-session-per-account policy: a successful
@@ -111,7 +117,9 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 	if strings.EqualFold(username, "new") {
 		// Hand off to account-create mode. Login is replaced; if create
 		// is canceled, the user reconnects.
-		return s.ReplaceMode(NewCreate(l.accounts, l.characters, l.sessions, l.game))
+		create := NewCreate(l.accounts, l.characters, l.sessions, l.game)
+		create.SetMOTD(l.motd)
+		return s.ReplaceMode(create)
 	}
 
 	// Resolve the account up front so we can check lockout *before*
@@ -204,7 +212,7 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, l.characters, l.game)
+	return postAuth(ctx, s, l.characters, l.motd, l.game)
 }
 
 // fail resets to the username step and writes a uniform failure

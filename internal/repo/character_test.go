@@ -309,6 +309,43 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/mark_news_seen_advances_and_clamps", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Egwene"})
+		if !c.LastNewsSeen.IsZero() {
+			t.Fatalf("fresh character LastNewsSeen = %v, want zero", c.LastNewsSeen)
+		}
+		t1 := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		t2 := time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC)
+		if err := cr.MarkNewsSeen(ctx, c.ID, t1); err != nil {
+			t.Fatalf("MarkNewsSeen t1: %v", err)
+		}
+		if err := cr.MarkNewsSeen(ctx, c.ID, t2); err != nil {
+			t.Fatalf("MarkNewsSeen t2: %v", err)
+		}
+		// Stale write must not regress.
+		if err := cr.MarkNewsSeen(ctx, c.ID, t1); err != nil {
+			t.Fatalf("MarkNewsSeen stale: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Egwene")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if !got.LastNewsSeen.Equal(t2) {
+			t.Fatalf("LastNewsSeen = %v, want %v", got.LastNewsSeen, t2)
+		}
+	})
+
+	t.Run(name+"/mark_news_seen_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.MarkNewsSeen(context.Background(), 9999, time.Now())
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/list_by_account_isolates", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

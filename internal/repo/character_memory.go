@@ -188,3 +188,20 @@ func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, 
 	}
 	return ErrCharacterNotFound
 }
+
+func (r *MemoryCharacterRepo) MarkNewsSeen(_ context.Context, id int64, when time.Time) error {
+	if when.IsZero() {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if when.After(c.LastNewsSeen) {
+				c.LastNewsSeen = when
+			}
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}

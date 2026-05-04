@@ -46,7 +46,7 @@ func TestPostAuth_FloorClampsSubPlayer(t *testing.T) {
 	// Pre-condition: session at AuthGuest before promote.
 	s.AuthLevel = telnet.AuthGuest
 
-	if err := promoteToGame(context.Background(), s, c, cr, game); err != nil {
+	if err := promoteToGame(context.Background(), s, c, cr, nil, game); err != nil {
 		t.Fatalf("promoteToGame: %v", err)
 	}
 	if s.AuthLevel != telnet.AuthPlayer {
