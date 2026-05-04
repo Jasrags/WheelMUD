@@ -32,7 +32,11 @@ func RunSession(s *Session) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.ctx = ctx
+	// Publish the per-session ctx before spawning the dispatcher: the
+	// `go runDispatcher` below establishes the happens-before edge so
+	// the dispatcher's reads of s.Context() observe this Store. The
+	// read loop on this goroutine is naturally ordered after the Store.
+	s.SetContext(ctx)
 
 	dispatcherDone := make(chan struct{})
 	go runDispatcher(ctx, s, dispatcherDone)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
@@ -108,21 +109,33 @@ type Session struct {
 	inbox chan string
 
 	// ctx is the per-session context, canceled when the read loop
-	// returns (EOF / idle / flood). Set once by RunSession and read
-	// via Context() so prompt and helper paths can honor cancellation
-	// without threading ctx through every byte-handler signature.
-	ctx context.Context
+	// returns (EOF / idle / flood). Set once by RunSession via
+	// SetContext and read via Context() so prompt and helper paths
+	// can honor cancellation without threading ctx through every
+	// byte-handler signature. atomic.Pointer guards against the
+	// race that would arise if a future caller read from a goroutine
+	// that doesn't have a happens-before edge to the RunSession write
+	// — per CLAUDE.md, cross-goroutine session fields must not be
+	// touched as plain Go values.
+	ctx atomic.Pointer[context.Context]
+}
+
+// SetContext stores the per-session context. RunSession calls this
+// once during setup; tests that construct Session directly may call
+// it to install a cancelable ctx. Subsequent reads via Context()
+// observe the stored value.
+func (s *Session) SetContext(ctx context.Context) {
+	s.ctx.Store(&ctx)
 }
 
 // Context returns the per-session context. It is canceled when the
-// read loop exits. Returns context.Background() if RunSession hasn't
-// initialized the session yet (test fixtures construct Session
-// directly without going through RunSession).
+// read loop exits. Returns context.Background() if SetContext has
+// not been called (test fixtures that construct Session directly).
 func (s *Session) Context() context.Context {
-	if s.ctx == nil {
-		return context.Background()
+	if p := s.ctx.Load(); p != nil {
+		return *p
 	}
-	return s.ctx
+	return context.Background()
 }
 
 // SetLastTellFrom records the name of the most recent `tell` sender

@@ -76,8 +76,13 @@ func (g *Game) Prompt(parent context.Context, s *telnet.Session) string {
 
 	c, err := g.Characters.FindByName(ctx, s.CharacterName)
 	if err != nil {
-		slog.Warn("prompt: character lookup failed",
-			"character", s.CharacterName, "error", err)
+		// A canceled / timed-out parent ctx is the expected signal on
+		// session teardown — fall back silently rather than warn-spam
+		// once per prompt cycle while the dispatcher drains.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			slog.Warn("prompt: character lookup failed",
+				"character", s.CharacterName, "error", err)
+		}
 		return promptFallback
 	}
 
