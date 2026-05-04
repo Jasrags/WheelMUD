@@ -14,7 +14,27 @@ import (
 // the bracketed substring itself is preserved between escapes, so
 // strings.Contains works without any preprocessing.
 
+// gridPortion isolates the grid section of map output (everything
+// between the header line and the `Legend:` line). The legend now
+// echoes bracketed glyph swatches, which would otherwise collide
+// with grid-content assertions.
+func gridPortion(out string) string {
+	idx := strings.Index(out, "Legend:")
+	if idx < 0 {
+		return out
+	}
+	return out[:idx]
+}
+
 func runMap(t *testing.T, depth string, rooms repo.RoomRepo, exits repo.ExitRepo, currentRoomID int64) string {
+	t.Helper()
+	return runMapWithZones(t, depth, rooms, exits, repo.NewMemoryZoneRepo(), currentRoomID)
+}
+
+// runMapWithZones lets tests pass a populated ZoneRepo so the player
+// `Zone: <Name>` header is exercised. Most tests don't care about the
+// header and reuse runMap, which threads an empty zone repo.
+func runMapWithZones(t *testing.T, depth string, rooms repo.RoomRepo, exits repo.ExitRepo, zones repo.ZoneRepo, currentRoomID int64) string {
 	t.Helper()
 	s, conn := bufSession(t)
 	s.AuthLevel = telnet.AuthPlayer
@@ -24,7 +44,7 @@ func runMap(t *testing.T, depth string, rooms repo.RoomRepo, exits repo.ExitRepo
 		args = append(args, depth)
 	}
 	c := &telnet.Context{Ctx: context.Background(), Session: s, Name: "map", Args: args}
-	if err := NewMap(rooms, exits).Run(c); err != nil {
+	if err := NewMap(rooms, exits, zones).Run(c); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	return conn.String()
@@ -43,7 +63,7 @@ func TestMap_SingleRoomOnlyShowsStar(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
 	exits := repo.NewMemoryExitRepo()
 	rooms.Insert(repo.Room{ID: 1, ExternalID: "solo", Name: "Solo"})
-	out := runMap(t, "", rooms, exits, 1)
+	out := gridPortion(runMap(t, "", rooms, exits, 1))
 	if !strings.Contains(out, "[*]") {
 		t.Fatalf("missing current-room glyph; got %q", out)
 	}
@@ -136,7 +156,7 @@ func TestMap_CycleHandled(t *testing.T) {
 	exits.Insert(repo.Exit{FromRoomID: 3, ToRoomID: 4, Direction: repo.DirSouth})
 	exits.Insert(repo.Exit{FromRoomID: 4, ToRoomID: 1, Direction: repo.DirWest})
 
-	out := runMap(t, "5", rooms, exits, 1)
+	out := gridPortion(runMap(t, "5", rooms, exits, 1))
 	// Should terminate, render exactly one [*] and three [ ] cells.
 	if strings.Count(out, "[*]") != 1 {
 		t.Errorf("expected 1 [*]; got %q", out)
@@ -229,10 +249,73 @@ func TestMap_LegendPresent(t *testing.T) {
 	exits := repo.NewMemoryExitRepo()
 	rooms.Insert(repo.Room{ID: 1, ExternalID: "x", Name: "X"})
 	out := runMap(t, "", rooms, exits, 1)
-	for _, want := range []string{"= you", "= unmapped", "up/down"} {
+	// Sector legend (shared with zonemap).
+	for _, want := range []string{"Legend:", "city", "forest", "field", "swamp"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("legend missing %q; got %q", want, out)
+			t.Errorf("sector legend missing %q; got %q", want, out)
 		}
+	}
+	// Cell-semantics line.
+	for _, want := range []string{"= you", "= unmapped", "up/down/both"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cell-semantics legend missing %q; got %q", want, out)
+		}
+	}
+}
+
+func TestMap_ZoneNameHeader(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	zones := repo.NewMemoryZoneRepo()
+	zones.Insert(repo.Zone{ID: 7, ExternalID: "tr.field", Name: "Emond's Field"})
+	rooms.Insert(repo.Room{ID: 1, ExternalID: "x", Name: "X", ZoneID: 7})
+
+	out := runMapWithZones(t, "", rooms, exits, zones, 1)
+	if !strings.Contains(out, "Zone:") || !strings.Contains(out, "Emond's Field") {
+		t.Errorf("zone header missing display name; got %q", out)
+	}
+	// External id must NOT leak — players see only the display name.
+	if strings.Contains(out, "tr.field") {
+		t.Errorf("zone external id leaked into player map: %q", out)
+	}
+}
+
+func TestMap_ZoneNameHeaderOmittedForLegacyZone(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	rooms.Insert(repo.Room{ID: 1, ExternalID: "x", Name: "X"}) // ZoneID=0
+	out := runMap(t, "", rooms, exits, 1)
+	if strings.Contains(out, "Zone:") {
+		t.Errorf("Zone header should be omitted for ZoneID=0; got %q", out)
+	}
+}
+
+func TestMap_SectorColorsTintCells(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	rooms.Insert(repo.Room{ID: 1, ExternalID: "x", Name: "X", Sector: repo.SectorForest})
+	rooms.Insert(repo.Room{ID: 2, ExternalID: "y", Name: "Y", Sector: repo.SectorField})
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 2, Direction: repo.DirEast})
+	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 1, Direction: repo.DirWest})
+	out := runMap(t, "", rooms, exits, 1)
+	// Forest cells should carry green|bold (as ANSI bold-green); field
+	// cells should carry plain green. Easier to assert on the cfmt
+	// expansion's distinguishing escape: bold is `\x1b[1m`.
+	if !strings.Contains(out, "\x1b[1m") {
+		t.Errorf("expected bold ANSI escape from green|bold seed cell; got %q", out)
+	}
+}
+
+func TestMap_LegacySectorFallsBackToYellow(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	exits := repo.NewMemoryExitRepo()
+	rooms.Insert(repo.Room{ID: 1, ExternalID: "x", Name: "X"}) // Sector=""
+	out := runMap(t, "", rooms, exits, 1)
+	// Yellow ANSI escape (foreground) is `\x1b[33m`. Seed cell is
+	// yellow|bold which contains both `1` and `33` selectors; an
+	// empty-sector cell tinted yellow ensures the fallback fired.
+	if !strings.Contains(out, "\x1b[33") {
+		t.Errorf("expected yellow ANSI escape for empty-sector cell; got %q", out)
 	}
 }
 

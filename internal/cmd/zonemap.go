@@ -131,7 +131,7 @@ func runZoneMap(c *telnet.Context, rooms repo.RoomRepo, exits repo.ExitRepo,
 		defangCfmt(zone.ExternalID), defangCfmt(zone.Name),
 		zone.MinLevel, zone.MaxLevel, defangCfmt(zone.Builder))
 	b.WriteString("\r\n")
-	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}, zoneMapGlyph, colorizeZoneMapRow))
+	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}, zoneMapCellWrap))
 	b.WriteString("\r\n")
 	b.WriteString(zoneMapLegend())
 	b.WriteString(zoneMapFooter(c.Ctx, zone.ID, cells, edges, byID, zoneNames, exits))
@@ -215,135 +215,116 @@ func pickZoneSeed(ctx context.Context, rooms repo.RoomRepo, zoneID int64) (repo.
 	return repo.Room{}, errors.New("zone has no rooms")
 }
 
-// zoneMapGlyph picks the cell glyph for the admin renderer. In-zone
-// rooms get `[X]` where X is the sector glyph; off-zone rooms get
-// `(X)`. Vertical exits, NoMap rooms (when surfaced), and the seed
-// itself fall back to the player-style markers so admins still
-// recognise the existing language.
-func zoneMapGlyph(c *cell, isCurrent bool) string {
+// zoneMapCellWrap picks the cell glyph and cfmt-tagged form for the
+// admin renderer. In-zone rooms get `[X]` where X is the sector
+// glyph; off-zone rooms get `(X)`. Seed and NoMap markers fall back
+// to the player-style `[*]` / `[?]` so admins still recognise the
+// existing language. The wrapped form embeds the cfmt color tag for
+// the cell's sector.
+func zoneMapCellWrap(c *cell, isCurrent bool) (glyph, wrapped string) {
 	if isCurrent {
-		return "[*]"
+		glyph = "[*]"
+		return glyph, "{{" + glyph + "}}::yellow|bold"
 	}
 	if c.unknown {
-		return "[?]"
+		glyph = "[?]"
+		return glyph, "{{" + glyph + "}}::gray"
 	}
-	g := sectorGlyph(c.sector)
+	letter := sectorGlyph(c.sector)
+	style := sectorCfmtStyle(c.sector)
 	if c.offZone {
-		return "(" + g + ")"
+		glyph = "(" + letter + ")"
+	} else {
+		glyph = "[" + letter + "]"
 	}
-	return "[" + g + "]"
+	if style == "" {
+		// Unknown sector — emit the bare glyph without color so a
+		// builder spotting an uncoloured cell knows the palette is
+		// missing an entry. (sectorGlyph returned "?".)
+		return glyph, glyph
+	}
+	return glyph, "{{" + glyph + "}}::" + style
 }
 
-// sectorGlyph maps a sector to a single character. Choices favour
-// readability + first-letter mnemonics; conflicts (forest/field both
-// 'f') are resolved by upper/lower case + colour. The colour table
-// in colorizeZoneMapRow keys off the same characters so this mapping
-// and the colour table must stay in lock-step.
+// sectorGlyph maps a sector to a single character via sectorPalette.
+// Choices favour readability + first-letter mnemonics; conflicts
+// (forest/field both 'f') are resolved by upper/lower case + colour.
 func sectorGlyph(s repo.Sector) string {
-	switch s {
-	case repo.SectorCity:
-		return "C"
-	case repo.SectorForest:
-		return "F"
-	case repo.SectorField:
-		return "f"
-	case repo.SectorHills:
-		return "h"
-	case repo.SectorMountain:
-		return "M"
-	case repo.SectorDesert:
-		return "d"
-	case repo.SectorWater:
-		return "W"
-	case repo.SectorUnderwater:
-		return "U"
-	case repo.SectorAir:
-		return "A"
-	case repo.SectorUnderground:
-		return "u"
-	case repo.SectorBlight:
-		return "B"
-	case repo.SectorWaste:
-		return "w"
-	case repo.SectorStedding:
-		return "S"
-	case repo.SectorSwamp:
-		return "s"
+	for _, p := range sectorPalette {
+		if p.sector == s {
+			return p.glyph
+		}
 	}
 	return "?"
 }
 
-// colorizeZoneMapRow wraps each known cell form with a cfmt colour
-// tag. Two bracket families (`[X]` in-zone, `(X)` off-zone) plus the
-// player markers (`[*]`, `[?]`). Unique 3-rune forms required by the
-// drawGrid invariant — every replacement target appears exactly once
-// in any rendered cell, so ReplaceAll ordering is not load-bearing.
+// sectorPalette is the single source of truth for sector → glyph +
+// cfmt color. Adding a new sector means appending one row here; the
+// glyph mapping (sectorGlyph), the color helper (sectorCfmtStyle),
+// and the shared legend (sectorLegendLine) all read from this table.
 //
-// Adding a new sector requires two updates in lock-step: extend
-// sectorGlyph with the new mnemonic, and add a row to
-// sectorColorTable so the glyph picks up its colour. A glyph that
-// only lands in sectorGlyph (no colorTable row) renders unstyled —
-// flagged on appearance during PR review rather than failing the
-// boot.
-func colorizeZoneMapRow(line string) string {
-	// Player markers retain their player-map colours so admins keep
-	// muscle memory across the two commands. `[?]` is reused from
-	// the player command for NoMap rooms even though zonemap calls
-	// exploreMap with respectNoMap=false; if a future caller flips
-	// the option we still want NoMap cells to render the prior way.
-	line = strings.ReplaceAll(line, "[*]", "{{[*]}}::yellow|bold")
-	line = strings.ReplaceAll(line, "[?]", "{{[?]}}::gray")
-	for _, m := range sectorColorTable {
-		line = strings.ReplaceAll(line, "["+m.glyph+"]", "{{["+m.glyph+"]}}::"+m.color)
-		line = strings.ReplaceAll(line, "("+m.glyph+")", "{{("+m.glyph+")}}::"+m.color)
-	}
-	return line
+// Order is the on-screen legend order; both the player and admin
+// legends emit entries in this sequence so muscle memory carries.
+var sectorPalette = []struct {
+	sector repo.Sector
+	glyph  string
+	color  string
+	label  string
+}{
+	{repo.SectorCity, "C", "white|bold", "city"},
+	{repo.SectorForest, "F", "green|bold", "forest"},
+	{repo.SectorField, "f", "green", "field"},
+	{repo.SectorHills, "h", "yellow", "hills"},
+	{repo.SectorMountain, "M", "gray|bold", "mountain"},
+	{repo.SectorDesert, "d", "yellow|bold", "desert"},
+	{repo.SectorWater, "W", "blue", "water"},
+	{repo.SectorUnderwater, "U", "blue|bold", "underwater"},
+	{repo.SectorAir, "A", "cyan", "air"},
+	{repo.SectorUnderground, "u", "gray", "underground"},
+	{repo.SectorBlight, "B", "red", "blight"},
+	{repo.SectorWaste, "w", "yellow", "waste"},
+	{repo.SectorStedding, "S", "green|bold", "stedding"},
+	{repo.SectorSwamp, "s", "green", "swamp"},
 }
 
-// sectorColorTable maps every supported sector glyph (single char)
-// to its cfmt colour. Order doesn't matter for correctness because
-// the drawGrid invariant guarantees every glyph form is unique.
-var sectorColorTable = []struct {
-	glyph string
-	color string
-}{
-	{"C", "white|bold"},
-	{"F", "green|bold"},
-	{"f", "green"},
-	{"h", "yellow"},
-	{"M", "gray|bold"},
-	{"d", "yellow|bold"},
-	{"W", "blue"},
-	{"U", "blue|bold"},
-	{"A", "cyan"},
-	{"u", "gray"},
-	{"B", "red"},
-	{"w", "yellow"},
-	{"S", "green|bold"},
-	{"s", "green"},
+// sectorCfmtStyle returns the cfmt style suffix (e.g. "green|bold")
+// for the given sector, or "" when the sector is empty / unknown.
+// The player path falls back to yellow on "" so legacy rooms keep
+// their pre-palette appearance.
+func sectorCfmtStyle(s repo.Sector) string {
+	for _, p := range sectorPalette {
+		if p.sector == s {
+			return p.color
+		}
+	}
+	return ""
+}
+
+// sectorLegendLine formats the per-sector palette line shared by the
+// player `map` and admin `zonemap` legends. Format:
+//   `  {{Legend:}}::cyan {{[C]}}::white|bold city · {{[F]}}::... \r\n`
+// One trailing CRLF; callers concatenate further legend lines after.
+func sectorLegendLine() string {
+	var b strings.Builder
+	b.WriteString("  {{Legend:}}::cyan ")
+	for i, p := range sectorPalette {
+		if i > 0 {
+			b.WriteString(" · ")
+		}
+		b.WriteString("{{[")
+		b.WriteString(p.glyph)
+		b.WriteString("]}}::")
+		b.WriteString(p.color)
+		b.WriteString(" ")
+		b.WriteString(p.label)
+	}
+	b.WriteString("\r\n")
+	return b.String()
 }
 
 func zoneMapLegend() string {
 	var b strings.Builder
-	b.WriteString("  {{Legend:}}::cyan ")
-	parts := []string{
-		"{{[C]}}::white|bold city",
-		"{{[F]}}::green|bold forest",
-		"{{[f]}}::green field",
-		"{{[h]}}::yellow hills",
-		"{{[M]}}::gray|bold mountain",
-		"{{[d]}}::yellow|bold desert",
-		"{{[W]}}::blue water",
-		"{{[U]}}::blue|bold underwater",
-		"{{[A]}}::cyan air",
-		"{{[u]}}::gray underground",
-		"{{[B]}}::red blight",
-		"{{[w]}}::yellow waste",
-		"{{[S]}}::green|bold stedding",
-		"{{[s]}}::green swamp",
-	}
-	b.WriteString(strings.Join(parts, " · "))
-	b.WriteString("\r\n")
+	b.WriteString(sectorLegendLine())
 	b.WriteString("  {{[*]}}::yellow|bold = seed · {{( X )}}::gray = off-zone neighbour · " +
 		"{{[?]}}::gray = nomap\r\n")
 	return b.String()

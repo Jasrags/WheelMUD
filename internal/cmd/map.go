@@ -51,10 +51,11 @@ type cell struct {
 	// and does not recurse through it. Player `map` calls leave the
 	// boundary unset, so this is always false on that path.
 	offZone bool
-	// sector is populated by exploreMap on the zonemap path (non-zero
-	// boundaryZoneID) so the renderer can pick a glyph without re-
-	// fetching the room. Empty on the player-map path; the player
-	// renderer ignores it.
+	// sector carries the destination room's sector so the renderer
+	// can tint cells by sector without re-fetching the room. Both
+	// callers (player + zonemap) populate this — the player path
+	// uses it for color, zonemap uses it for both glyph letter and
+	// color.
 	sector repo.Sector
 }
 
@@ -96,8 +97,10 @@ type edge struct {
 // NewMap builds the §10 BFS minimap command. With no args it renders a
 // depth-3 map; `map <n>` clamps to [1, 5]. Auth: AuthPlayer. Hidden
 // exits are skipped (mirrors look). NoMap rooms render `[?]` at the
-// boundary and stop traversal.
-func NewMap(rooms repo.RoomRepo, exits repo.ExitRepo) *telnet.Command {
+// boundary and stop traversal. Cells are tinted by sector via the
+// shared zonemap palette; the zone's display name (not its external
+// id) is printed above the grid when available.
+func NewMap(rooms repo.RoomRepo, exits repo.ExitRepo, zones repo.ZoneRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "map",
 		Help: "Show a small map of the rooms around you (default depth 3, max 5)",
@@ -117,12 +120,12 @@ func NewMap(rooms repo.RoomRepo, exits repo.ExitRepo) *telnet.Command {
 				}
 				depth = n
 			}
-			return renderMap(c.Ctx, c.Session, rooms, exits, depth)
+			return renderMap(c.Ctx, c.Session, rooms, exits, zones, depth)
 		},
 	}
 }
 
-func renderMap(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, depth int) error {
+func renderMap(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, zones repo.ZoneRepo, depth int) error {
 	if s.CurrentRoomID == 0 {
 		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")
 	}
@@ -142,14 +145,42 @@ func renderMap(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exit
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "{{Map (depth %d):}}::cyan|bold\r\n", depth)
-	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}, playerGlyph, colorizeMapRow))
-	// Legend uses unbracketed glyphs to avoid colliding with the
-	// bracketed cell forms (`[*]`, `[?]`, ...) when callers grep the
-	// output for grid contents.
-	b.WriteString("  {{*}}::yellow|bold = you, ")
-	b.WriteString("{{?}}::gray = unmapped, ")
-	b.WriteString("{{^v%}}::yellow = up/down/both\r\n")
+	if name := lookupZoneName(ctx, zones, cur.ZoneID); name != "" {
+		// Zone.Name is operator-authored YAML / DB content; defang
+		// before splicing into a cfmt template so a stray `}}::style`
+		// in a zone name can't close the yellow tag and inject styling.
+		// Same policy as zonemap.go's header.
+		fmt.Fprintf(&b, "{{Zone:}}::cyan|bold {{%s}}::yellow\r\n", defangCfmt(name))
+	}
+	b.WriteString(drawGrid(cells, edges, [2]int{0, 0}, playerCellWrap))
+	b.WriteString(sectorLegendLine())
+	// Cell-semantics line uses the bracketed forms so the player's
+	// muscle-memory glyphs ([*], [?], [^]/[v]/[%]) carry through. The
+	// `[*]` swatch is yellow|bold to match the on-grid seed cell;
+	// `[?]` is gray to match NoMap; vertical-link glyphs render
+	// neutrally at yellow since they're decorations, not sectors.
+	b.WriteString("  {{[*]}}::yellow|bold = you · {{[?]}}::gray = unmapped · " +
+		"{{[^]}}::yellow/{{[v]}}::yellow/{{[%]}}::yellow = up/down/both\r\n")
 	return s.WriteString(b.String())
+}
+
+// lookupZoneName resolves zoneID to the human-readable Zone.Name.
+// Returns "" on ZoneID==0, ErrZoneNotFound, or any other error so the
+// renderMap caller can omit the line silently for legacy rooms. The
+// external id is intentionally NOT surfaced — the player command
+// shows the display name only.
+func lookupZoneName(ctx context.Context, zones repo.ZoneRepo, zoneID int64) string {
+	if zones == nil || zoneID == 0 {
+		return ""
+	}
+	z, err := zones.GetByID(ctx, zoneID)
+	if err != nil {
+		if !errors.Is(err, repo.ErrZoneNotFound) {
+			slog.Debug("map: zone lookup failed", "zone", zoneID, "error", err)
+		}
+		return ""
+	}
+	return z.Name
 }
 
 // exploreMap walks the exit graph from start out to depth steps,
@@ -173,13 +204,7 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 	origin := [2]int{0, 0}
 	queue := []qItem{{start.ID, origin, 0}}
 	visited[start.ID] = origin
-	// Seed cell carries the seed room's sector when zonemap (non-zero
-	// boundaryZoneID) is calling. Player-map calls leave it empty.
-	startSector := repo.Sector("")
-	if opts.boundaryZoneID != 0 {
-		startSector = start.Sector
-	}
-	cells[origin] = &cell{roomID: start.ID, sector: startSector}
+	cells[origin] = &cell{roomID: start.ID, sector: start.Sector}
 
 	for len(queue) > 0 {
 		item := queue[0]
@@ -282,11 +307,7 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 				continue
 			}
 
-			c := &cell{roomID: dest.ID}
-			if opts.boundaryZoneID != 0 {
-				c.sector = dest.Sector
-			}
-			cells[nextCoord] = c
+			cells[nextCoord] = &cell{roomID: dest.ID, sector: dest.Sector}
 			visited[dest.ID] = nextCoord
 			edges = append(edges, edge{item.coord, nextCoord})
 			queue = append(queue, qItem{dest.ID, nextCoord, item.d + 1})
@@ -296,21 +317,23 @@ func exploreMap(ctx context.Context, rooms repo.RoomRepo, exits repo.ExitRepo, s
 }
 
 // drawGrid lays cells onto a fixed-pitch character grid. Each cell is a
-// 3-char glyph chosen by the caller-supplied glyphFor; cells are
+// 3-char glyph chosen by the caller-supplied wrapCell; cells are
 // separated by one connector column horizontally and one connector row
 // vertically. Cell (x, y) lands at column (x-minX)*4 (..+2) and row
 // (y-minY)*2.
 //
-// glyphFor receives the cell and whether it's the current room and
-// returns the 3-rune glyph to place. colorizeRow is applied to each
-// final row before emission — callers wire their own cfmt tag table.
+// wrapCell returns two strings per cell: the bare 3-rune glyph (used
+// for layout / column accounting) and the on-the-wire form (typically
+// the same glyph wrapped in cfmt color tags, expanded by the session
+// writer to ANSI). The bare glyph keeps the rune buffer aligned for
+// connector drawing; the wrapped form is overlaid at row-emit time so
+// cfmt tag bytes don't disturb visual column math.
 //
 // Connectors are drawn from the edges slice — never from grid adjacency
 // — so two rooms that are visually next to each other but lack an exit
 // between them stay disconnected.
 func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int,
-	glyphFor func(c *cell, isCurrent bool) string,
-	colorizeRow func(string) string,
+	wrapCell func(c *cell, isCurrent bool) (glyph, wrapped string),
 ) string {
 	if len(cells) == 0 {
 		return "  (empty)\r\n"
@@ -359,21 +382,32 @@ func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int,
 		return keys[i][0] < keys[j][0]
 	})
 
+	// Per-row, per-column overlay for cfmt-wrapped glyph spans. The
+	// rune buffer above only holds plain ASCII; wrapped strings carry
+	// cfmt tags whose bytes don't cost terminal columns and so cannot
+	// safely live in a rune grid. We record (row, colStart) → wrapped
+	// and substitute at emit time. The overlay struct is file-scoped
+	// so emitRow can take its slice type explicitly.
+	overlays := make(map[int][]overlay, len(rows))
+
 	// Place cell glyphs.
 	for _, k := range keys {
 		info := cells[k]
 		col := (k[0] - minX) * 4
 		row := (k[1] - minY) * 2
-		glyph := glyphFor(info, k == current)
+		glyph, wrapped := wrapCell(info, k == current)
 		// glyph is always a 3-rune ASCII bracketed form; guard the
 		// write so a future multi-byte glyph (or a stray cfmt tag
-		// accidentally placed here instead of in colorizeMapRow)
-		// truncates instead of panicking.
+		// accidentally placed here in the bare glyph) truncates
+		// instead of panicking.
 		for i, r := range glyph {
 			if col+i >= w {
 				break
 			}
 			rows[row][col+i] = r
+		}
+		if wrapped != "" && wrapped != glyph {
+			overlays[row] = append(overlays[row], overlay{col: col, wrapped: wrapped})
 		}
 	}
 
@@ -423,49 +457,82 @@ func drawGrid(cells map[[2]int]*cell, edges []edge, current [2]int,
 	}
 
 	var b strings.Builder
-	for _, r := range rows {
+	for rIdx, r := range rows {
 		b.WriteString("  ")
-		b.WriteString(colorizeRow(string(r)))
+		b.WriteString(emitRow(r, overlays[rIdx]))
 		b.WriteString("\r\n")
 	}
 	return b.String()
 }
 
-// playerGlyph picks the bracketed cell glyph used by the player `map`
-// command. Mirrors the prior inline switch in drawGrid so the player
-// behaviour is preserved exactly: starter is `[*]`, NoMap-blocked
-// destinations are `[?]`, vertical-link decorations are `[^]/[v]/[%]`,
-// and everything else is the empty `[ ]`.
-func playerGlyph(c *cell, isCurrent bool) string {
-	switch {
-	case isCurrent:
-		return "[*]"
-	case c.unknown:
-		return "[?]"
-	case c.hasUp && c.hasDown:
-		return "[%]"
-	case c.hasUp:
-		return "[^]"
-	case c.hasDown:
-		return "[v]"
+// emitRow renders one rune row, substituting each cell overlay's
+// wrapped string in place of its 3-rune span. Overlays are sorted by
+// column ascending; the writer walks the row, splices wrapped forms
+// in, and skips the 3 cell columns each time.
+func emitRow(runes []rune, ov []overlay) string {
+	if len(ov) == 0 {
+		return string(runes)
 	}
-	return "[ ]"
+	sort.Slice(ov, func(i, j int) bool { return ov[i].col < ov[j].col })
+	var b strings.Builder
+	cursor := 0
+	for _, o := range ov {
+		if o.col < cursor {
+			// Two cells overlapping is a layout invariant violation;
+			// skip the second to keep output legible.
+			continue
+		}
+		if o.col > cursor {
+			b.WriteString(string(runes[cursor:o.col]))
+		}
+		b.WriteString(o.wrapped)
+		cursor = o.col + 3
+		if cursor > len(runes) {
+			cursor = len(runes)
+		}
+	}
+	if cursor < len(runes) {
+		b.WriteString(string(runes[cursor:]))
+	}
+	return b.String()
 }
 
-// colorizeMapRow wraps each known cell glyph with cfmt color tags.
-// cfmt expands the tags to ANSI escapes around the literal bracketed
-// text, so visual column alignment is preserved on the wire.
-//
-// Invariant: every glyph form is a unique 3-rune string and no glyph
-// is a substring of another. If a new glyph is added that violates
-// this, ReplaceAll ordering becomes load-bearing and silent
-// miscoloring follows; pick a non-overlapping form instead.
-func colorizeMapRow(line string) string {
-	line = strings.ReplaceAll(line, "[*]", "{{[*]}}::yellow|bold")
-	line = strings.ReplaceAll(line, "[?]", "{{[?]}}::gray")
-	line = strings.ReplaceAll(line, "[%]", "{{[%]}}::yellow")
-	line = strings.ReplaceAll(line, "[^]", "{{[^]}}::yellow")
-	line = strings.ReplaceAll(line, "[v]", "{{[v]}}::yellow")
-	line = strings.ReplaceAll(line, "[ ]", "{{[ ]}}::yellow")
-	return line
+// overlay is the per-cell cfmt-tagged span recorded during glyph
+// placement so emitRow can substitute it for the bare-rune span. Kept
+// at file scope (rather than nested in drawGrid) so emitRow can take
+// its slice type explicitly.
+type overlay struct {
+	col     int
+	wrapped string
+}
+
+// playerCellWrap picks the bracketed cell glyph used by the player
+// `map` command and returns it alongside its cfmt-tagged wire form.
+// Glyph rules (preserved): seed `[*]`, NoMap `[?]`, vertical-link
+// decorations `[^]/[v]/[%]`, plain `[ ]`. Color rules: `[*]` is
+// always yellow|bold, `[?]` is always gray, every other glyph picks
+// up its sector color via sectorCfmtStyle (yellow fallback). Sector
+// glyph **letters** stay admin-only; the player sees only color.
+func playerCellWrap(c *cell, isCurrent bool) (glyph, wrapped string) {
+	switch {
+	case isCurrent:
+		glyph = "[*]"
+		return glyph, "{{" + glyph + "}}::yellow|bold"
+	case c.unknown:
+		glyph = "[?]"
+		return glyph, "{{" + glyph + "}}::gray"
+	case c.hasUp && c.hasDown:
+		glyph = "[%]"
+	case c.hasUp:
+		glyph = "[^]"
+	case c.hasDown:
+		glyph = "[v]"
+	default:
+		glyph = "[ ]"
+	}
+	style := sectorCfmtStyle(c.sector)
+	if style == "" {
+		style = "yellow"
+	}
+	return glyph, "{{" + glyph + "}}::" + style
 }

@@ -380,7 +380,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewMap(rooms, exits)); err != nil {
+	if err := r.Register(cmd.NewMap(rooms, exits, zones)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewWhereAmI(rooms, clock)); err != nil {

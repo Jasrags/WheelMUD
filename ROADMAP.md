@@ -663,9 +663,17 @@ will need on top of those tables.
       does not recurse through them. First-visit-wins for cycles and
       grid conflicts. Migration `0020_room_nomap.sql` adds the flag
       column; `repo.RoomFlags.NoMap` and `world.RoomFlags.NoMap` mirror
-      it. Not yet shipped: dynamic depth from `Session.Width`, door
-      state in connectors, depth-boundary `[?]` hint when a visited
-      cell has unrecursed exits.
+      it. Player cells are tinted by sector via the shared
+      `sectorPalette` (same palette + legend layout as admin
+      `zonemap`); the player legend lists every sector and the
+      `[*]`/`[?]`/`[^]`/`[v]`/`[%]` cell semantics. The current
+      zone's display name (not external id) is printed above the
+      grid via `lookupZoneName`; legacy ZoneID==0 rooms omit the
+      header silently. Sector glyph letters, off-zone `( X )`
+      markers, and flagged-room footers stay admin-only — color is
+      additive. Not yet shipped: dynamic depth from `Session.Width`,
+      door state in connectors, depth-boundary `[?]` hint when a
+      visited cell has unrecursed exits.
 - [~] Trails / `track` command — `mob_trails` ring buffer keyed by
       `(mob_id, room_id, ts)` updated on every move; `track <name>`
       finds the freshest trail entry within the last N minutes and
