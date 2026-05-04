@@ -17,9 +17,9 @@ import (
 // Mob/item inspection is delegated to the `examine` command so each
 // verb has a single concern.
 //
-// The clock parameter drives the §9 day/night cycle. May be nil in
-// tests that don't care about lighting; nil falls back to the legacy
-// `Flags.Dark && LightLevel <= 0` pitch-black gate.
+// clock drives the §9 day/night cycle and must be non-nil. Tests that
+// don't care about lighting can pass a frozen-noon clock built via
+// world.NewClock(675, world.WithNow(...)).
 func NewLook(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) *telnet.Command {
 	return &telnet.Command{
 		Name:    "look",
@@ -64,15 +64,11 @@ func lookKeyword(c *telnet.Context, rooms repo.RoomRepo, noun string, clock *wor
 }
 
 // pitchBlack centralizes the "render nothing" gate so both the no-arg
-// and `look <noun>` paths agree. With a non-nil clock the §9 day/night
-// cycle drives the answer; without one (test fixtures, future internal
-// callers), fall back to the original `Flags.Dark && LightLevel<=0`
-// rule so legacy callers keep observable behavior.
+// and `look <noun>` paths agree. The clock is required — production
+// always wires a real one; tests pass a frozen-noon clock when they
+// don't care about the cycle.
 func pitchBlack(room repo.Room, clock *world.Clock) bool {
-	if clock != nil {
-		return clock.EffectiveLight(room) <= 0
-	}
-	return room.Flags.Dark && room.LightLevel <= 0
+	return clock.EffectiveLight(room) <= 0
 }
 
 // RenderRoom produces the standard "you are here" view for the session's
@@ -84,7 +80,8 @@ func pitchBlack(room repo.Room, clock *world.Clock) bool {
 // pass untrusted input through this path. World text comes from the
 // YAML loader, which is operator-controlled, so it's safe.
 //
-// clock may be nil; see pitchBlack for the fallback rule.
+// clock must be non-nil; tests pass a frozen-noon clock when lighting
+// isn't under test.
 func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) error {
 	if s.CurrentRoomID == 0 {
 		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")

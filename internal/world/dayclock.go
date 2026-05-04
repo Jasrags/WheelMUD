@@ -5,7 +5,6 @@
 package world
 
 import (
-	"sync"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -50,13 +49,20 @@ func (p Phase) String() string {
 // Clock is the day/night clock. baseTicks is the persisted tick count
 // at process start; live ticks are derived from real-time elapsed
 // since `start`. No goroutine; reads are pure.
+//
+// Concurrency: every field is set exactly once inside NewClock and
+// never mutated afterward. The Clock pointer is stored on the server
+// struct and threaded through buildRegistry before any goroutine that
+// reads it is spawned (the listener spawns connection handlers after
+// `clock` is wired). That construction-then-publish ordering is the
+// happens-before edge readers rely on; no mutex is needed for the
+// concurrent reads on Ticks / Phase / EffectiveLight.
 type Clock struct {
 	baseTicks    int64
 	start        time.Time
 	tickInterval time.Duration
 	dayDuration  time.Duration
 	now          func() time.Time
-	mu           sync.Mutex // guards baseTicks updates (none today, future-proof)
 }
 
 // Option tunes a Clock at construction. Production uses defaults;

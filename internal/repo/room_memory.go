@@ -25,9 +25,17 @@ func NewMemoryRoomRepo() *MemoryRoomRepo {
 // Insert adds a room directly without ExternalID validation. Test
 // fixtures use this; production code (the YAML loader) goes through
 // Create. ExtraDescs keys are normalized so the case-insensitive
-// look <noun> contract matches whichever entry path produced the row.
+// look <noun> contract matches whichever entry path produced the row;
+// LightLevel defaults to DefaultLightLevel when zero (mirroring the
+// YAML loader) so a fixture that doesn't set it doesn't accidentally
+// render pitch-black under the §9 day/night cycle. Pass `Flags.Dark`
+// or set `LightLevel: -1` (clamped to 0 by the renderer) to opt into
+// a deliberately unlit room.
 func (r *MemoryRoomRepo) Insert(room Room) Room {
 	room.ExtraDescs = normalizeExtraDescs(room.ExtraDescs)
+	if room.LightLevel == 0 && !room.Flags.Dark {
+		room.LightLevel = DefaultLightLevel
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.insertLocked(room)
@@ -40,6 +48,10 @@ func (r *MemoryRoomRepo) Create(_ context.Context, room Room) (Room, error) {
 	if room.Sector == "" {
 		room.Sector = SectorCity
 	}
+	// Note: LightLevel defaulting deliberately lives only in Insert
+	// (test-fixture path). Create preserves caller intent — the YAML
+	// loader applies the default upstream, so a Create caller passing
+	// 0 means 0, and a contract test pins that.
 	room.ExtraDescs = normalizeExtraDescs(room.ExtraDescs)
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -15,13 +15,7 @@ func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, 
 	t.Helper()
 	rooms, exits, items, mobs := seedWorld(t)
 	chars := repo.NewMemoryCharacterRepo()
-	return cmdNewTeleport(rooms, exits, items, mobs, chars, sessions), chars, rooms, exits, items, mobs
-}
-
-// thin wrapper so the test reads naturally even though NewTeleport
-// already takes the same shape.
-func cmdNewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, chars repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
-	return NewTeleport(rooms, exits, items, mobs, chars, sessions, nil)
+	return NewTeleport(rooms, exits, items, mobs, chars, sessions, noonClock(t)), chars, rooms, exits, items, mobs
 }
 
 func TestTeleport_SelfByExternalID(t *testing.T) {

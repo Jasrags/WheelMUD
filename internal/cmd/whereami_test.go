@@ -20,7 +20,7 @@ func TestWhereAmI_RendersAllFields(t *testing.T) {
 		CoordX: 5, CoordY: -2, CoordZ: 0,
 		ExtraDescs: map[string]string{"fountain": "marble basin"},
 	})
-	cmd := NewWhereAmI(rooms, nil)
+	cmd := NewWhereAmI(rooms, noonClock(t))
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
@@ -71,7 +71,7 @@ func TestWhereAmI_LightLineShowsCycleAdjustedValue(t *testing.T) {
 
 func TestWhereAmI_NowhereSession(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
-	cmd := NewWhereAmI(rooms, nil)
+	cmd := NewWhereAmI(rooms, noonClock(t))
 	s, conn := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 

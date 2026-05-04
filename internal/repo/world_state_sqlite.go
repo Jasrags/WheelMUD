@@ -25,8 +25,12 @@ func (r *SQLiteWorldStateRepo) GetTicks(ctx context.Context) (int64, error) {
 }
 
 func (r *SQLiteWorldStateRepo) SetTicks(ctx context.Context, ticks int64) error {
+	// Upsert rather than UPDATE so the saver is idempotent even if the
+	// seed row never landed (failed migration, truncated test fixture).
+	// SQLite's INSERT OR REPLACE replaces by primary key (id=1), and
+	// the CHECK constraint in migration 0024 keeps id pinned to 1.
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE world_state SET ticks = ? WHERE id = 1`,
+		`INSERT OR REPLACE INTO world_state (id, ticks) VALUES (1, ?)`,
 		ticks,
 	)
 	if err != nil {

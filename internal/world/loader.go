@@ -316,6 +316,18 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 	} else if r.Flags.Dark {
 		light = 0
 	}
+	// Day/night gate (§9): an outdoor room with light=0 and no Dark
+	// flag will always render pitch black under the cycle. Defaults
+	// (light unset → 100; Dark → 0) avoid this; warn the builder when
+	// they've authored an explicit 0 outdoors so the surprise is
+	// visible at load time.
+	if light == 0 && !r.Flags.Dark && !r.Flags.Indoors {
+		isSheltered := sector == string(repo.SectorUnderground) || sector == string(repo.SectorUnderwater)
+		if !isSheltered {
+			slog.Warn("world: outdoor room with light_level=0 and no dark flag; will render pitch black",
+				"room_external_id", r.ID, "sector", sector)
+		}
+	}
 	var x, y, z int
 	if r.Coords != nil {
 		x, y, z = r.Coords.X, r.Coords.Y, r.Coords.Z

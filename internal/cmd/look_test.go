@@ -83,6 +83,16 @@ func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	return s, c
 }
 
+// noonClock returns a frozen-noon Clock for tests that need to pass a
+// non-nil *world.Clock but don't care about the day/night cycle. ticks
+// is pinned to 675 (mid-day quarter) so EffectiveLight returns the
+// stored baseline for outdoor rooms.
+func noonClock(t *testing.T) *world.Clock {
+	t.Helper()
+	frozen := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	return world.NewClock(675, world.WithNow(func() time.Time { return frozen }))
+}
+
 func seedWorld(t *testing.T) (*repo.MemoryRoomRepo, *repo.MemoryExitRepo, *repo.MemoryItemRepo, *repo.MemoryMobInstanceRepo) {
 	t.Helper()
 	rooms := repo.NewMemoryRoomRepo()
@@ -108,7 +118,7 @@ func TestLook_RendersRoomWithExitsItemsAndMobs(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 
@@ -139,7 +149,7 @@ func TestLook_OmitsEmptySubsections(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 7
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -167,7 +177,7 @@ func TestLook_MissingRoomMessage(t *testing.T) {
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 999
 
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -189,7 +199,7 @@ func TestLook_DarkRoomHidesContents(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 5
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -218,7 +228,7 @@ func TestLook_HidesHiddenExitsAndAnnotatesDoors(t *testing.T) {
 
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	got := conn.String()
@@ -245,7 +255,7 @@ func TestLook_KeywordHitRendersExtraDesc(t *testing.T) {
 	items := repo.NewMemoryItemRepo()
 	mobs := repo.NewMemoryMobInstanceRepo()
 
-	look := NewLook(rooms, exits, items, mobs, nil)
+	look := NewLook(rooms, exits, items, mobs, noonClock(t))
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 	s.AuthLevel = telnet.AuthPlayer
@@ -266,7 +276,7 @@ func TestLook_KeywordMissFallsThrough(t *testing.T) {
 	items := repo.NewMemoryItemRepo()
 	mobs := repo.NewMemoryMobInstanceRepo()
 
-	look := NewLook(rooms, exits, items, mobs, nil)
+	look := NewLook(rooms, exits, items, mobs, noonClock(t))
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
 	s.AuthLevel = telnet.AuthPlayer
@@ -287,7 +297,7 @@ func TestLook_EmitsANSIEscapes(t *testing.T) {
 	rooms, exits, items, mobs := seedWorld(t)
 	s, conn := bufSession(t)
 	s.CurrentRoomID = 1
-	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, nil); err != nil {
+	if err := RenderRoom(context.Background(), s, rooms, exits, items, mobs, noonClock(t)); err != nil {
 		t.Fatalf("RenderRoom: %v", err)
 	}
 	if !strings.Contains(conn.String(), "\x1b[") {
