@@ -65,6 +65,13 @@ type Character struct {
 	PlayedSeconds int64
 	LastLogin     time.Time
 
+	// PromptTemplate overrides the server default prompt template
+	// (cmd/server/main.go::defaultPromptTemplate). Empty means "use
+	// the server default". The template grammar is internal/prompt's
+	// (`%h/%H/%r/%g/%%/...`) and may include cfmt color tags
+	// (`{{...}}::red`) which Game.Prompt renders before write.
+	PromptTemplate string
+
 	// JSON-encoded catalogs and bag-of-things. Plumbed end-to-end
 	// so the round-trip is verified, but typed and consumed by
 	// later roadmap items (§12 feats/skills, §14 equipment/
@@ -143,6 +150,10 @@ type CharacterRepo interface {
 	// RecordCoin persists carried + bank wealth after a transfer or
 	// shop transaction.
 	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error
+	// RecordPromptTemplate persists the per-character prompt override.
+	// Empty tmpl means "fall back to the server default". Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error
 }
 
 var (

@@ -80,12 +80,17 @@ constants and helpers in `telnet/iac.go`.
       Requires the byte-level keypress dispatch (already partially
       built for line-edit), plus a `WriteParaged` helper that
       checks `len(lines) > Session.Height-1` before pushing.
-- [ ] Prompt templating (HP/MP/room placeholders) — `%h/%H` (cur/max
-      HP), `%m/%M`, `%v/%V` (move), `%r` (room name), `%g` (gold),
-      `%t` (target). `Mode.Prompt(*Session) string` already exists;
-      add a `prompt.Render(template, *Character)` that's invoked
-      from `Game.Prompt`. Deferred until the character/world model
-      lands so there are real values to interpolate.
+- [x] Prompt templating (HP/MP/room placeholders) — `internal/prompt`
+      renders `%h/%H` (HP), `%r` (room), `%g` (gold), `%%` literal,
+      with `%m/%M`/`%v/%V`/`%t` reserved for mana, move, and combat
+      target once those systems land. `Game.Prompt` invokes it once
+      per dispatch with `FindByName`-fetched character + optional
+      `RoomRepo.FindByID` (only when `%r` is in the template). Server
+      default: `"<%h/%H hp> "`. cfmt color tags (`{{...}}::red`) are
+      rendered before write; interpolated `%r`/`%g` values are
+      defanged to prevent style injection. Per-character override via
+      the `prompt set/clear/show` command (migration 0023 added the
+      `characters.prompt_template` column).
 - [ ] Width-aware wrap & cursor accounting (CJK fullwidth, combining
       marks) — `WrapText` and `extendBuffer` count runes, not display
       cells. Adopt `golang.org/x/text/width` (or vendor a small east-

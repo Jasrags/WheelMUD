@@ -1,10 +1,188 @@
 package mode
 
 import (
+	"context"
+	"strings"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
+
+func TestGamePromptRendersHP(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	c, err := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Rand",
+		Core:      creature.Core{HPCurrent: 7, HPMax: 10},
+		Coin:      currency.MustNew(0, 0, 0, 0),
+	})
+	if err != nil {
+		t.Fatalf("seed character: %v", err)
+	}
+
+	g := NewGame(telnet.NewRegistry(), chars, nil, "<%h/%H hp> ")
+	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
+
+	if got, want := g.Prompt(s), "<7/10 hp> "; got != want {
+		t.Fatalf("Prompt = %q, want %q", got, want)
+	}
+}
+
+func TestGamePromptFallbacks(t *testing.T) {
+	cases := []struct {
+		name string
+		g    *Game
+		s    *telnet.Session
+	}{
+		{
+			name: "empty_template",
+			g:    NewGame(telnet.NewRegistry(), nil, nil, ""),
+			s:    &telnet.Session{CharacterName: "Rand"},
+		},
+		{
+			name: "no_character_name",
+			g:    NewGame(telnet.NewRegistry(), repo.NewMemoryCharacterRepo(), nil, "<%h/%H>"),
+			s:    &telnet.Session{},
+		},
+		{
+			name: "lookup_miss",
+			g:    NewGame(telnet.NewRegistry(), repo.NewMemoryCharacterRepo(), nil, "<%h>"),
+			s:    &telnet.Session{CharacterName: "Ghost"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.g.Prompt(tc.s); got != "> " {
+				t.Fatalf("Prompt = %q, want fallback %q", got, "> ")
+			}
+		})
+	}
+}
+
+func TestGamePromptRendersGold(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	c, err := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Thom",
+		Core:      creature.Core{HPCurrent: 4, HPMax: 4},
+		Coin:      currency.MustNew(5, 0, 2, 0),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	g := NewGame(telnet.NewRegistry(), chars, nil, "%h/%H %g")
+	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
+
+	got := g.Prompt(s)
+	want := c.Coin.Short()
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected coin %q in prompt; got %q", want, got)
+	}
+}
+
+func TestGamePromptCfmtColor(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	c, err := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Lan",
+		Core:      creature.Core{HPCurrent: 7, HPMax: 10},
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	g := NewGame(telnet.NewRegistry(), chars, nil, "{{%h}}::red/%H ")
+	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
+
+	got := g.Prompt(s)
+	// cfmt emits a real ANSI escape for the colorized run.
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected ANSI escape from cfmt; got %q", got)
+	}
+	// HP value still interpolates inside the colored span.
+	if !strings.Contains(got, "7") || !strings.Contains(got, "/10") {
+		t.Fatalf("HP missing from rendered prompt: %q", got)
+	}
+}
+
+func TestGamePromptDefangsRoomName(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	rooms := repo.NewMemoryRoomRepo()
+	// Malicious room name: a `}}::red` would close any cfmt span the
+	// player opened in their template and recolor the rest. Defang
+	// must neutralize it before cfmt rendering.
+	rooms.Insert(repo.Room{ID: 9, ExternalID: "trap", Name: "Trap}}::red"})
+	c, _ := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Moiraine",
+		Core:      creature.Core{HPCurrent: 5, HPMax: 5},
+	})
+
+	g := NewGame(telnet.NewRegistry(), chars, rooms, "%r %h/%H")
+	s := &telnet.Session{
+		CharacterID:   c.ID,
+		CharacterName: c.Name,
+		CurrentRoomID: 9,
+	}
+
+	got := g.Prompt(s)
+	// `}}` must have been broken; verify the cfmt close sequence is gone.
+	if strings.Contains(got, "}}::red") {
+		t.Fatalf("undefanged cfmt syntax leaked from room name: %q", got)
+	}
+	// HP still renders.
+	if !strings.Contains(got, "5/5") {
+		t.Fatalf("HP missing: %q", got)
+	}
+}
+
+func TestGamePromptCharacterTemplateOverride(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	c, _ := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Perrin",
+		Core:      creature.Core{HPCurrent: 8, HPMax: 12},
+	})
+	if err := chars.RecordPromptTemplate(context.Background(), c.ID, "(%h)"); err != nil {
+		t.Fatalf("RecordPromptTemplate: %v", err)
+	}
+
+	// Server default would render <%h/%H hp> — the override should win.
+	g := NewGame(telnet.NewRegistry(), chars, nil, "<%h/%H hp> ")
+	s := &telnet.Session{CharacterID: c.ID, CharacterName: c.Name}
+
+	if got, want := g.Prompt(s), "(8)"; got != want {
+		t.Fatalf("Prompt = %q, want %q (per-character override)", got, want)
+	}
+}
+
+func TestGamePromptRoomLookup(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 42, ExternalID: "glade", Name: "Vast Glade"})
+	c, err := chars.Create(context.Background(), repo.Character{
+		AccountID: 1,
+		Name:      "Egwene",
+		Core:      creature.Core{HPCurrent: 5, HPMax: 5},
+	})
+	if err != nil {
+		t.Fatalf("seed character: %v", err)
+	}
+
+	g := NewGame(telnet.NewRegistry(), chars, rooms, "[%r] %h/%H> ")
+	s := &telnet.Session{
+		CharacterID:   c.ID,
+		CharacterName: c.Name,
+		CurrentRoomID: 42,
+	}
+	if got, want := g.Prompt(s), "[Vast Glade] 5/5> "; got != want {
+		t.Fatalf("Prompt = %q, want %q", got, want)
+	}
+}
 
 func TestGameCompleteVerb(t *testing.T) {
 	r := telnet.NewRegistry()
@@ -12,7 +190,7 @@ func TestGameCompleteVerb(t *testing.T) {
 	mustReg(t, r, &telnet.Command{Name: "list", Help: "list things", Run: noopRun})
 	mustReg(t, r, &telnet.Command{Name: "quit", Help: "leave", Run: noopRun})
 
-	g := NewGame(r)
+	g := NewGame(r, nil, nil, "")
 	s := &telnet.Session{AuthLevel: telnet.AuthGuest}
 
 	cands := g.Complete(s, "l")
@@ -30,7 +208,7 @@ func TestGameCompleteVerbAuthFiltered(t *testing.T) {
 	mustReg(t, r, &telnet.Command{Name: "look", Help: "look", Run: noopRun})
 	mustReg(t, r, &telnet.Command{Name: "loot", Help: "loot", Auth: telnet.AuthAdmin, Run: noopRun})
 
-	g := NewGame(r)
+	g := NewGame(r, nil, nil, "")
 	guest := &telnet.Session{AuthLevel: telnet.AuthGuest}
 
 	names := candidateNames(g.Complete(guest, "lo"))
@@ -56,7 +234,7 @@ func TestGameCompleteArgsDelegates(t *testing.T) {
 		},
 	})
 
-	g := NewGame(r)
+	g := NewGame(r, nil, nil, "")
 	s := &telnet.Session{AuthLevel: telnet.AuthGuest}
 
 	cands := g.Complete(s, "say hel")
@@ -68,7 +246,7 @@ func TestGameCompleteArgsDelegates(t *testing.T) {
 func TestGameCompleteArgsNoCompleter(t *testing.T) {
 	r := telnet.NewRegistry()
 	mustReg(t, r, &telnet.Command{Name: "quit", Run: noopRun})
-	g := NewGame(r)
+	g := NewGame(r, nil, nil, "")
 	s := &telnet.Session{AuthLevel: telnet.AuthGuest}
 
 	if cands := g.Complete(s, "quit "); cands != nil {
@@ -87,7 +265,7 @@ func TestGameCompleteArgsAuthGated(t *testing.T) {
 		},
 	})
 
-	g := NewGame(r)
+	g := NewGame(r, nil, nil, "")
 	guest := &telnet.Session{AuthLevel: telnet.AuthGuest}
 
 	if cands := g.Complete(guest, "secret f"); cands != nil {

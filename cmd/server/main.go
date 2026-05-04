@@ -16,6 +16,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -27,9 +28,10 @@ import (
 )
 
 const (
-	defaultListenAddr    = ":2323"
-	defaultDBDSN         = "wheelmud.db"
-	shutdownDrainTimeout = 10 * time.Second
+	defaultListenAddr     = ":2323"
+	defaultDBDSN          = "wheelmud.db"
+	shutdownDrainTimeout  = 10 * time.Second
+	defaultPromptTemplate = "<%h/%H hp> "
 )
 
 // server bundles the long-lived dependencies a connection needs. New
@@ -87,6 +89,7 @@ func main() {
 	exits := repo.NewSQLiteExitRepo(conn)
 	items := repo.NewSQLiteItemRepo(conn)
 	mobs := repo.NewSQLiteMobInstanceRepo(conn)
+	mobTemplates := repo.NewSQLiteMobTemplateRepo(conn)
 	zones := repo.NewSQLiteZoneRepo(conn)
 	channelRepo := repo.NewSQLiteChannelRepo(conn)
 	channels, err := channelRepo.List(context.Background())
@@ -120,7 +123,10 @@ func main() {
 		saves.FlushAll(ctx)
 	})
 
-	gameMode := mode.NewGame(registry)
+	wanderer := mob.NewWanderHandler(mobs, rooms, exits, mobTemplates, sessions)
+	buckets.Wander.Subscribe(wanderer.Tick)
+
+	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
 	srv := &server{
 		accounts:   accounts,
 		characters: characters,
@@ -308,6 +314,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewAlias(), cmd.NewUnalias()); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewPrompt(characters, defaultPromptTemplate)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewHelp(r)); err != nil {
 		return nil, err
 	}
@@ -344,6 +353,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewWhereAmI(rooms)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewTrack(mobs, rooms, exits)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewZones(zones, rooms)); err != nil {

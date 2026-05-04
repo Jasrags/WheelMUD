@@ -276,6 +276,39 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_prompt_template_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Mat"})
+		if c.PromptTemplate != "" {
+			t.Fatalf("fresh character PromptTemplate = %q, want empty", c.PromptTemplate)
+		}
+		want := "<{{red}}%h::red/%H> "
+		if err := cr.RecordPromptTemplate(ctx, c.ID, want); err != nil {
+			t.Fatalf("RecordPromptTemplate: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Mat")
+		if got.PromptTemplate != want {
+			t.Fatalf("PromptTemplate after set = %q, want %q", got.PromptTemplate, want)
+		}
+		if err := cr.RecordPromptTemplate(ctx, c.ID, ""); err != nil {
+			t.Fatalf("RecordPromptTemplate clear: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Mat")
+		if got.PromptTemplate != "" {
+			t.Fatalf("PromptTemplate after clear = %q, want empty", got.PromptTemplate)
+		}
+	})
+
+	t.Run(name+"/record_prompt_template_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordPromptTemplate(context.Background(), 9999, "x")
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/list_by_account_isolates", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

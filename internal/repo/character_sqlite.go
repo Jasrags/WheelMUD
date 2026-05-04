@@ -56,7 +56,9 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	//
 	// args is laid out [non-auth-cols ..., c.AuthLevel]; the CASE
 	// consumes the trailing ? as the ELSE branch. Total placeholder
-	// count remains len(args).
+	// count remains len(args). NOTE: auth_level MUST stay last in
+	// charPlayerColumns / charPlayerValues / charPlayerScanDest for
+	// this alignment to hold; new columns belong before it.
 	authPlaceholder := fmt.Sprintf(
 		`CASE WHEN (SELECT COUNT(*) FROM characters)=0 THEN %d ELSE ? END`,
 		AuthLevelAdmin,
@@ -181,6 +183,20 @@ func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, ba
 	)
 	if err != nil {
 		return fmt.Errorf("record coin: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET prompt_template = ? WHERE id = ?`,
+		tmpl, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record prompt template: %w", err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return ErrCharacterNotFound

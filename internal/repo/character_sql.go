@@ -47,6 +47,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		bound_room_id, played_seconds, last_login,
 		quest_log_json, dialogue_state_json, equipment_json, inventory_json,
 		channel_settings_json,
+		prompt_template,
 		auth_level`
 
 // charCoreValues returns the bound-parameter slice for the Core
@@ -112,6 +113,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		c.BoundRoomID, c.PlayedSeconds, nullTime(c.LastLogin),
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
 		channelSettingsJSON,
+		c.PromptTemplate,
 		c.AuthLevel,
 	}
 }
@@ -135,6 +137,7 @@ func charPlayerScanDest(c *Character,
 		&c.BoundRoomID, &c.PlayedSeconds, lastLogin,
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
 		channelSettingsJSON,
+		&c.PromptTemplate,
 		&c.AuthLevel,
 	}
 }
