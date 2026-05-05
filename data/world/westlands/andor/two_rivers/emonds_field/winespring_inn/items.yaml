@@ -33,3 +33,61 @@
   weight: 3.0
   value: 1sp
   quality: normal
+
+# Test fixture: a real container with non-zero capacity, sat in
+# guest_b alongside a few stowable items. Lets an operator drive
+# `put`, `look in`, and `get-from` end-to-end without admin spawn.
+- id: tr.guestb_chest
+  room: tr.emonds_field.winespring_inn.guest_b
+  name: a cedar chest
+  short: a cedar chest at the foot of the bed, lid latched but unlocked
+  type: container
+  weight: 18.0
+  value: 4sp
+  quality: normal
+  stats:
+    capacity_lbs: 40.0
+    capacity_cuft: 2.0
+    weight_mult: 1.0
+
+- id: tr.guestb_apple
+  room: tr.emonds_field.winespring_inn.guest_b
+  name: a red apple
+  short: a small, road-bruised red apple has been left on the washstand
+  type: food
+  weight: 0.5
+  value: 1cp
+  quality: normal
+
+- id: tr.guestb_quill
+  room: tr.emonds_field.winespring_inn.guest_b
+  name: a goose-quill pen
+  short: a goose-quill pen, nib stained black, lies beside the basin
+  type: trash
+  weight: 0.1
+  value: 2cp
+  quality: normal
+
+- id: tr.guestb_token
+  room: tr.emonds_field.winespring_inn.guest_b
+  name: a copper merchant's token
+  short: a copper merchant's token stamped with the seal of Baerlon
+  type: trade_good
+  weight: 0.1
+  value: 5cp
+  quality: normal
+
+# Test fixture: a real light source in the kitchen. Pair with the
+# pitch-black cellar one floor down (sector=underground, light_level=0)
+# to drive the lighting pipeline once it lands.
+- id: tr.kitchen_torch
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: a pitch-pine torch
+  short: a pitch-pine torch leans unlit in an iron sconce by the trapdoor
+  type: light
+  weight: 1.0
+  value: 1cp
+  quality: normal
+  stats:
+    radius_ft: 20
+    fuel_ticks: 60

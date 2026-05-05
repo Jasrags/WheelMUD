@@ -1220,3 +1220,27 @@ Items already tracked elsewhere — included here so the roadmap points at them:
   - **Unblocks:** zonemap coord-direct layout v2, distance-based
     spell range / track / line-of-sight heuristics, possible
     weather/lighting gradients keyed off coords.
+- **Seed test fixtures for container + light flows — pending.** The
+  starter zone (Two Rivers / Emond's Field) currently exercises
+  `look` / `get` / `drop` / `give` reasonably well, but two newer
+  systems have no in-world fixtures to drive an interactive test:
+  - **Container `put` / `get-from`** (landed in 56dc597). Existing
+    `type: container` rows in `data/world/.../emonds_field/**/items.yaml`
+    (tankard, pitcher, dipper) carry no `stats:` block, so capacity
+    is zero and nothing can actually be stowed. Need at least one
+    seeded container with non-zero `capacity_lbs` / `capacity_cuft`,
+    plus 2–3 small seed items (food / trash / trade good) authored
+    in the same room so an operator can `put bread chest`,
+    `look in chest`, `get bread from chest` end-to-end.
+  - **Dark rooms + carried light source.** `ItemTypeLight` +
+    `LightStats{RadiusFt, FuelTicks}` exist in code, and rooms have
+    `LightLevel` (migration 0012), but no seeded item declares
+    `type: light` and no starter room is dark enough to require
+    one. Need a `type: light` torch (or lantern) in a starter room
+    plus a low-light room (cellar / barn loft / mill basement) so
+    the lighting pipeline has something to gate on once it lands.
+  - **Where:** likely the Winespring Inn common room (cheap to add
+    a chest with a few stowables) and a new dark sub-room under
+    the inn or smithy. Touches `data/world/...` only — no schema
+    or loader changes needed; container capacity is already a
+    `stats:` field the loader accepts.

@@ -40,13 +40,33 @@
     A great range, iron-black and glowing red along its bottom, takes
     up the eastern wall; a long deal table runs through the middle of
     the room, scrubbed pale by years of work. The clatter of pots and
-    the hiss of fat in a pan fill the air.
+    the hiss of fat in a pan fill the air. A scarred wooden trapdoor
+    set into the floor near the range opens on the cellar stair below.
   exits:
     w: tr.emonds_field.winespring_inn.common
+    d: tr.emonds_field.winespring_inn.cellar
   flags:
     indoors: true
     peaceful: true
   sector: city
+
+- id: tr.emonds_field.winespring_inn.cellar
+  name: The Inn Cellar
+  short: A pitch-black stone cellar smelling of damp earth.
+  long: |
+    The cellar is a low, vaulted room of fieldstone walls and a packed
+    earth floor. Without a light there is nothing to see — only the
+    cool press of the dark, the sound of slow water somewhere, and the
+    faint reek of cabbage and old beer. Shapes that might be barrels
+    crowd the walls. The trapdoor and a faint square of light from the
+    kitchen lie above.
+  exits:
+    u: tr.emonds_field.winespring_inn.kitchen
+  flags:
+    indoors: true
+    peaceful: true
+  sector: underground
+  light_level: 0
 
 - id: tr.emonds_field.winespring_inn.hall
   name: The Private Hall
