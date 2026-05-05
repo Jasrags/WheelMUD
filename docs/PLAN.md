@@ -46,9 +46,16 @@ Cheap, low-risk, makes every later phase faster to test.
    `goto`, `transfer`, `summon`, `wizinvis`, `shutdown`, `reboot`
    (and `shutdown:cancel`). Synchronous write so `shutdown` flushes
    the row before drain begins. Read-side viewer verb deferred.
-6. **Macro / multi-command lines (`;` separator)** (§4). Tokenizer-side
+6. ~~**Macro / multi-command lines (`;` separator)** (§4). Tokenizer-side
    split with bounded recursion depth so `;` inside `say` text doesn't
-   recurse.
+   recurse.~~ Landed 2026-05-04. `telnet.SplitOnSemicolon` mirrors
+   `Tokenize`'s quote/escape rules; `Registry.Dispatch` splits the
+   input line into segments and runs each through `dispatchOne`
+   (alias-expand → lookup → auth → tokenize → run). Unbalanced quotes
+   surface the existing "Unbalanced quote" response. Cap of 16
+   segments per line with a "(too many commands; truncated)" notice;
+   alias-expansion-introduces-`;` is bounded at depth 3. First Run
+   error is returned but later segments still run.
 
 After A: meaningfully nicer to live in for ops and builders.
 

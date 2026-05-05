@@ -210,6 +210,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - `Registry.Dispatch` enforces `Command.Auth` against `Session.AuthLevel`.
   Privilege-denied lookups return the same `Unknown command` text as a
   missing verb so the prompt can't enumerate privileged commands.
+- `Registry.Dispatch` is segment-aware: a top-level `;` outside quotes
+  splits the input into multiple commands run in order via
+  `dispatchOne`. `telnet.SplitOnSemicolon` mirrors `Tokenize`'s
+  quote/escape rules, so commands consuming `c.Raw` (e.g. `say`,
+  `tell`, `shout`) get the same `Raw` they would have without
+  chaining — `say "hello; world"` stays one command. Lookup errors
+  and Run errors don't abort the chain; the first Run error is
+  returned. Hard cap `maxSegmentsPerLine = 16`; alias expansions that
+  themselves introduce `;` are bounded at `maxAliasDepth = 3`.
 - Logging uses `slog`; level is set in `main.go` from `LOG_LEVEL`.
 - Spawn long-lived goroutines via `safego.Go("name", fn)` so panics
   surface as warnings instead of taking down the process.

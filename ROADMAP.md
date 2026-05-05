@@ -164,11 +164,13 @@ constants and helpers in `telnet/iac.go`.
       lagged queue (bounded, drop on overflow with a "you're too busy"
       message). Combat skills set lag on success; movement uses the
       sector cost from §9.
-- [ ] Macro / multi-command lines (`;` separator) — split the raw
-      input on unquoted `;` in `Tokenize`, dispatch each segment in
-      order, abort the chain on the first error or when the session's
-      mode changes. Cap chain length (e.g. 10) to defang `kill;kill;…`
-      spam.
+- [x] Macro / multi-command lines (`;` separator) —
+      `telnet.SplitOnSemicolon` (quote/escape-aware) splits the raw
+      line; `Registry.Dispatch` dispatches each segment in order via
+      `dispatchOne` (alias-expand + lookup + auth + tokenize + run).
+      Continues past lookup errors and Run errors (first Run error is
+      returned). Cap of 16 segments per line with a truncation notice;
+      alias-expansion-introduces-`;` is depth-bounded.
 - [ ] User-defined aliases stored on the character — promote the
       in-memory `AliasTable` from §3 to a `character_aliases` table
       (`character_id`, `name`, `expansion`, unique on `(character_id,

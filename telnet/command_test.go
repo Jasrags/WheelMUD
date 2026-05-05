@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -398,6 +399,174 @@ func TestRegistry_Dispatch_Ambiguous(t *testing.T) {
 	}
 	if !strings.Contains(out, "look") || !strings.Contains(out, "loot") {
 		t.Fatalf("expected candidate names in output, got %q", out)
+	}
+}
+
+func TestRegistry_Dispatch_SemicolonChain(t *testing.T) {
+	type call struct {
+		name string
+		raw  string
+	}
+	var got []call
+	r := NewRegistry()
+	record := func(c *Context) error {
+		got = append(got, call{name: c.Name, raw: c.Raw})
+		return nil
+	}
+	_ = r.Register(
+		cmd("look", record),
+		cmd("north", record, withAliases("n")),
+		cmd("say", record, withMinArgs(1), withHelp("say <msg>")),
+	)
+	s, peer := newPipeSession(t)
+
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, "look ; n ; say hi there"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+
+	want := []call{
+		{name: "look", raw: ""},
+		{name: "north", raw: ""},
+		{name: "say", raw: "hi there"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("calls = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("call[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestRegistry_Dispatch_SemicolonInQuotedArg(t *testing.T) {
+	var capturedRaw string
+	r := NewRegistry()
+	_ = r.Register(cmd("say", func(c *Context) error {
+		capturedRaw = c.Raw
+		return nil
+	}, withMinArgs(1), withHelp("say <msg>")))
+	s, peer := newPipeSession(t)
+
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, `say "hello; world"`); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+
+	if capturedRaw != `"hello; world"` {
+		t.Fatalf("Raw = %q, want %q", capturedRaw, `"hello; world"`)
+	}
+}
+
+func TestRegistry_Dispatch_SemicolonContinuesAfterUnknownVerb(t *testing.T) {
+	var ranSecond bool
+	r := NewRegistry()
+	_ = r.Register(cmd("look", func(_ *Context) error { ranSecond = true; return nil }))
+	s, peer := newPipeSession(t)
+
+	var wg sync.WaitGroup
+	out := drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, "fnord ; look"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+	wg.Wait()
+
+	if !strings.Contains(out.String(), "Unknown command") {
+		t.Fatalf("expected 'Unknown command' in output, got %q", out.String())
+	}
+	if !ranSecond {
+		t.Fatal("second segment did not run after unknown-verb segment")
+	}
+}
+
+func TestRegistry_Dispatch_SemicolonRunErrorPropagatedFirst(t *testing.T) {
+	wantErr := errors.New("boom")
+	var ranSecond bool
+	r := NewRegistry()
+	_ = r.Register(
+		cmd("first", func(_ *Context) error { return wantErr }),
+		cmd("second", func(_ *Context) error { ranSecond = true; return nil }),
+	)
+	s, peer := newPipeSession(t)
+
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	err := r.Dispatch(context.Background(), s, "first ; second")
+	_ = peer.Close()
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if !ranSecond {
+		t.Fatal("second segment must run even after first returned an error")
+	}
+}
+
+func TestRegistry_Dispatch_SemicolonTruncated(t *testing.T) {
+	var count int
+	r := NewRegistry()
+	_ = r.Register(cmd("ping", func(_ *Context) error { count++; return nil }))
+	s, peer := newPipeSession(t)
+
+	var wg sync.WaitGroup
+	out := drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	parts := make([]string, 20)
+	for i := range parts {
+		parts[i] = "ping"
+	}
+	line := strings.Join(parts, " ; ")
+	if err := r.Dispatch(context.Background(), s, line); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+	wg.Wait()
+
+	if count != maxSegmentsPerLine {
+		t.Fatalf("ran %d times, want %d", count, maxSegmentsPerLine)
+	}
+	if !strings.Contains(out.String(), "too many commands") {
+		t.Fatalf("expected truncation notice in %q", out.String())
+	}
+}
+
+func TestRegistry_Dispatch_AliasExpandsToChain(t *testing.T) {
+	type call struct{ name string }
+	var got []call
+	r := NewRegistry()
+	record := func(c *Context) error { got = append(got, call{c.Name}); return nil }
+	_ = r.Register(cmd("look", record), cmd("smile", record))
+
+	s, peer := newPipeSession(t)
+	s.Aliases = NewAliasTable()
+	s.Aliases.Set("m", "look; smile")
+
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, "m"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+
+	if len(got) != 2 || got[0].name != "look" || got[1].name != "smile" {
+		t.Fatalf("calls = %+v, want [look smile]", got)
 	}
 }
 

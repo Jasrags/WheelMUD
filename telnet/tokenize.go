@@ -85,6 +85,72 @@ func Tokenize(s string) ([]string, error) {
 	return out, nil
 }
 
+// SplitOnSemicolon splits s on top-level `;` separators, respecting the
+// same quote/escape rules as Tokenize: a `;` inside double or single
+// quotes (or escaped with `\;` outside quotes) does not split. Each
+// returned segment is trimmed of surrounding whitespace; empty segments
+// are dropped (so `;;`, leading/trailing `;`, and runs of `;` are
+// no-ops). Returns ErrUnbalancedQuote when a quoted region is not
+// closed by end of input.
+//
+// Common case (no `;` at top level) returns a single-element slice
+// containing s as-is.
+func SplitOnSemicolon(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var (
+		out   []string
+		cur   strings.Builder
+		quote byte // 0, '"', or '\''
+	)
+	flush := func() {
+		seg := strings.TrimSpace(cur.String())
+		if seg != "" {
+			out = append(out, seg)
+		}
+		cur.Reset()
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote == 0 {
+			if c == ';' {
+				flush()
+				continue
+			}
+			if c == '"' || c == '\'' {
+				quote = c
+				cur.WriteByte(c)
+				continue
+			}
+			if c == '\\' && i+1 < len(s) {
+				cur.WriteByte(c)
+				cur.WriteByte(s[i+1])
+				i++
+				continue
+			}
+			cur.WriteByte(c)
+			continue
+		}
+		// Inside quotes: copy verbatim. Tokenize will re-parse later;
+		// our job is just to find segment boundaries.
+		cur.WriteByte(c)
+		if c == quote {
+			quote = 0
+			continue
+		}
+		if quote == '"' && c == '\\' && i+1 < len(s) {
+			cur.WriteByte(s[i+1])
+			i++
+		}
+	}
+	if quote != 0 {
+		return nil, ErrUnbalancedQuote
+	}
+	flush()
+	return out, nil
+}
+
 // CompletionPartial returns the trailing partial token at the end of buf
 // for tab completion, along with whether the buffer currently sits inside
 // an open quote. The partial includes the opening quote byte when

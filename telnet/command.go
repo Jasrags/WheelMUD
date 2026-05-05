@@ -204,24 +204,102 @@ func (r *Registry) All() []*Command {
 	return out
 }
 
+// maxSegmentsPerLine caps the number of `;`-separated commands a single
+// input line may produce. Beyond this, extra segments are dropped after
+// a one-line truncation notice; prevents a runaway alias or pasted
+// payload from consuming the dispatcher with one keystroke.
+const maxSegmentsPerLine = 16
+
+// maxAliasDepth bounds re-splitting after alias expansion. expandAlias
+// itself is one-shot per call, so depth only grows when an alias's
+// expansion contains `;` AND one of those segments matches another
+// alias whose expansion also contains `;`. Three levels is plenty for
+// nested macros without unbounded fan-out.
+const maxAliasDepth = 3
+
 // Dispatch parses line, resolves the verb, and runs the matching command.
-// Errors from lookup are translated into user-facing messages and are not
-// returned. Errors from Command.Run are returned to the caller. ctx is
-// surfaced on the per-dispatch Context so commands can observe session
-// cancellation while doing blocking work.
+// A line containing top-level `;` (outside quotes) is split into
+// segments and each segment is dispatched independently in order.
+// Errors from lookup are translated into user-facing messages and are
+// not returned. Errors from Command.Run propagate; when chaining, the
+// first non-nil Run error is returned but later segments still run.
+// ctx is surfaced on the per-dispatch Context so commands can observe
+// session cancellation while doing blocking work.
 func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
 	}
-	// Stamp activity at dispatch entry so `who` idle time and any
-	// future AFK timer reflect the moment the player typed, not the
-	// moment the command finished.
+	// Stamp activity once per input line, at entry, so `who` idle time
+	// reflects the moment the player typed regardless of how long the
+	// chain takes to run.
 	s.StampInput(time.Now().UTC())
-	// User-level aliases are resolved once before lookup so a chained
-	// alias-of-alias can't recurse. expandAlias is a no-op when no
-	// matching alias exists or when the session has no table.
-	line = expandAlias(s.Aliases, line)
+
+	segments, err := SplitOnSemicolon(line)
+	if err != nil {
+		if errors.Is(err, ErrUnbalancedQuote) {
+			return s.WriteRaw([]byte("Unbalanced quote\r\n"))
+		}
+		return s.WriteRaw([]byte("Command error\r\n"))
+	}
+	truncated := false
+	if len(segments) > maxSegmentsPerLine {
+		segments = segments[:maxSegmentsPerLine]
+		truncated = true
+	}
+
+	var firstErr error
+	for _, seg := range segments {
+		if e := r.dispatchOne(ctx, s, seg, 0); e != nil && firstErr == nil {
+			firstErr = e
+		}
+	}
+	if truncated {
+		if e := s.WriteRaw([]byte("(too many commands; truncated)\r\n")); e != nil && firstErr == nil {
+			firstErr = e
+		}
+	}
+	return firstErr
+}
+
+// dispatchOne runs a single already-split segment. depth tracks alias
+// expansions that themselves contained `;` so the splitter doesn't
+// recurse without bound. expandAlias is one-shot per call, so the only
+// recursion source is alias-expansion-introduces-`;`.
+func (r *Registry) dispatchOne(ctx context.Context, s *Session, line string, depth int) error {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	// User-level aliases are resolved once per segment. expandAlias
+	// itself is closed against alias-of-alias loops; we only re-split
+	// when an alias expansion introduces a top-level `;`, and bound
+	// that re-split with depth.
+	expanded := expandAlias(s.Aliases, line)
+	if expanded != line && depth < maxAliasDepth {
+		segs, err := SplitOnSemicolon(expanded)
+		if err != nil {
+			if errors.Is(err, ErrUnbalancedQuote) {
+				return s.WriteRaw([]byte("Unbalanced quote\r\n"))
+			}
+			return s.WriteRaw([]byte("Command error\r\n"))
+		}
+		if len(segs) > 1 {
+			var firstErr error
+			for _, seg := range segs {
+				if e := r.dispatchOne(ctx, s, seg, depth+1); e != nil && firstErr == nil {
+					firstErr = e
+				}
+			}
+			return firstErr
+		}
+		// Single segment from expansion — fall through with the
+		// expanded form so we don't re-expand and risk a loop.
+		line = expanded
+	} else {
+		line = expanded
+	}
+
 	verb, rest := splitVerb(line)
 	cmd, err := r.Lookup(verb)
 	if err != nil {
