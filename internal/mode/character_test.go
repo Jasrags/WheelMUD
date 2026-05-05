@@ -316,8 +316,11 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	f.feed("midlander")
 	f.feed("armsman")
 	f.feed("set str 14")
-	f.feed("done") // abilities → identity
-	f.feed("done") // identity → review (defaults accepted)
+	f.feed("done")   // abilities → identity
+	f.feed("done")   // identity → feat (defaults accepted)
+	f.feed("pick 1") // first background-restricted feat
+	f.feed("done")   // feat → skills
+	f.feed("done")   // skills → review (forfeit unspent points)
 	f.feed("yes")
 
 	if f.session.CurrentMode() != f.game {
@@ -504,7 +507,10 @@ func TestCharacterCreate_Multi_ReviewRejectNonYes(t *testing.T) {
 	f.feed("midlander")
 	f.feed("armsman")
 	f.feed("done") // abilities → identity
-	f.feed("done") // identity → review
+	f.feed("done") // identity → feat
+	f.feed("pick 1")
+	f.feed("done")  // feat → skills
+	f.feed("done")  // skills → review
 	f.feed("maybe") // anything other than yes/y/back/cancel
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -528,7 +534,10 @@ func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
 	f.feed("midlander")
 	f.feed("armsman")
 	f.feed("done") // abilities → identity
-	f.feed("done") // identity → review
+	f.feed("done") // identity → feat
+	f.feed("pick 1")
+	f.feed("done") // feat → skills
+	f.feed("done") // skills → review
 	f.feed("yes")
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -682,9 +691,16 @@ func TestCharacterCreate_Multi_IdentityVerbs(t *testing.T) {
 		t.Fatalf("expected age hint: %q", f.captured.String())
 	}
 
-	// done advances to review and the review block surfaces identity.
+	// done advances to feat (next mandatory step). Walk forward to
+	// review so we can assert the review block reflects identity.
 	f.captured.Reset()
 	f.feed("done")
+	if mc.step != chargenStepFeat {
+		t.Fatalf("step = %d, want chargenStepFeat after identity done", mc.step)
+	}
+	f.feed("pick 1")
+	f.feed("done") // feat → skills
+	f.feed("done") // skills → review
 	if mc.step != chargenStepReview {
 		t.Fatalf("step = %d, want chargenStepReview", mc.step)
 	}
@@ -719,6 +735,199 @@ func TestCharacterCreate_Multi_IdentityRollDeterministic(t *testing.T) {
 	for _, h := range []int16{h1, h2} {
 		if h < 120 || h > 220 {
 			t.Fatalf("human height %d cm out of plausible range", h)
+		}
+	}
+}
+
+func TestCharacterCreate_Multi_FeatSubstep(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("done") // abilities → identity
+	f.feed("done") // identity → feat
+	if mc.step != chargenStepFeat {
+		t.Fatalf("step = %d, want chargenStepFeat", mc.step)
+	}
+
+	// done with no pick is rejected when options exist.
+	f.captured.Reset()
+	f.feed("done")
+	if mc.step != chargenStepFeat {
+		t.Fatalf("done without pick advanced: step=%d", mc.step)
+	}
+	if !strings.Contains(f.captured.String(), "Pick a feat") {
+		t.Fatalf("expected pick-first hint: %q", f.captured.String())
+	}
+
+	// info renders the description but doesn't commit.
+	f.captured.Reset()
+	f.feed("info bullheaded")
+	if !strings.Contains(f.captured.String(), "Bullheaded") {
+		t.Fatalf("info missing entry: %q", f.captured.String())
+	}
+	if mc.draft.SelectedFeatID != "" {
+		t.Fatalf("info committed selection: %q", mc.draft.SelectedFeatID)
+	}
+
+	// pick by id.
+	f.feed("pick bullheaded")
+	if mc.draft.SelectedFeatID != "bullheaded" {
+		t.Fatalf("SelectedFeatID = %q", mc.draft.SelectedFeatID)
+	}
+
+	// Bare id is also accepted.
+	f.feed("luck_of_heroes")
+	if mc.draft.SelectedFeatID != "luck_of_heroes" {
+		t.Fatalf("bare-id pick failed: %q", mc.draft.SelectedFeatID)
+	}
+
+	f.feed("done")
+	if mc.step != chargenStepSkills {
+		t.Fatalf("step = %d, want chargenStepSkills", mc.step)
+	}
+}
+
+func TestCharacterCreate_Multi_SkillsSubstep(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	// Int 14 → +2 mod, armsman skill_points=2 → (2+2)*4 = 16 budget.
+	f.feed("set int 14")
+	f.feed("done")   // abilities → identity
+	f.feed("done")   // identity → feat
+	f.feed("pick 1") // any
+	f.feed("done")   // feat → skills
+
+	if mc.step != chargenStepSkills {
+		t.Fatalf("step = %d, want chargenStepSkills", mc.step)
+	}
+	if mc.draft.SkillBudget != 16 {
+		t.Fatalf("SkillBudget = %d, want 16", mc.draft.SkillBudget)
+	}
+
+	// Out of range rejected.
+	f.captured.Reset()
+	f.feed("rank 1 5")
+	if !strings.Contains(f.captured.String(), "0..4") {
+		t.Fatalf("expected range hint: %q", f.captured.String())
+	}
+
+	// Spend exactly to budget.
+	skills := mc.allowedSkillIDs()
+	if len(skills) < 4 {
+		t.Fatalf("expected ≥4 allowed skills, got %d", len(skills))
+	}
+	f.feed("rank 1 4")
+	f.feed("rank 2 4")
+	f.feed("rank 3 4")
+	f.feed("rank 4 4")
+	if mc.skillsSpent() != 16 {
+		t.Fatalf("skillsSpent = %d, want 16", mc.skillsSpent())
+	}
+
+	// One more rank pushes over budget — must be refused, prior state
+	// preserved.
+	prev := mc.draft.SkillRanks[skills[0]]
+	f.captured.Reset()
+	f.feed("rank 5 1")
+	if !strings.Contains(f.captured.String(), "Not enough points") {
+		t.Fatalf("expected over-budget hint: %q", f.captured.String())
+	}
+	if mc.draft.SkillRanks[skills[0]] != prev {
+		t.Fatalf("prior rank corrupted on over-budget rejection")
+	}
+
+	// reset clears the map.
+	f.feed("reset")
+	if mc.skillsSpent() != 0 {
+		t.Fatalf("reset did not clear: %d", mc.skillsSpent())
+	}
+
+	// Setting to 0 keeps the map sparse.
+	f.feed("rank 1 2")
+	f.feed("rank 1 0")
+	if _, ok := mc.draft.SkillRanks[skills[0]]; ok {
+		t.Fatalf("zero rank still present in map")
+	}
+
+	f.feed("done")
+	if mc.step != chargenStepReview {
+		t.Fatalf("step = %d, want chargenStepReview", mc.step)
+	}
+}
+
+func TestCharacterCreate_Multi_FeatsAndSkillsPersisted(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("done") // abilities → identity
+	f.feed("done") // identity → feat
+	f.feed("pick bullheaded")
+	f.feed("done") // feat → skills
+	f.feed("rank 1 2")
+	f.feed("done") // skills → review
+	f.feed("yes")
+
+	got, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if len(got.Feats) == 0 {
+		t.Fatalf("no feats persisted")
+	}
+	// Picked feat + 4 midlander bonus feats = at least 4 ids
+	// (deduped: bullheaded is in both, so exactly 4).
+	if len(got.Feats) < 4 {
+		t.Fatalf("Feats = %v, want at least 4 (bonus + pick)", got.Feats)
+	}
+	if catalogIDInt32("bullheaded") == 0 {
+		t.Fatal("hash should not collide with zero")
+	}
+	found := false
+	for _, id := range got.Feats {
+		if id == catalogIDInt32("bullheaded") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("bullheaded not in Feats: %v", got.Feats)
+	}
+	if len(got.Skills) != 1 {
+		t.Fatalf("Skills size = %d, want 1", len(got.Skills))
+	}
+	for _, sr := range got.Skills {
+		if sr.Ranks != 2 || !sr.IsClassSkill {
+			t.Fatalf("SkillRanks = %+v, want Ranks=2 IsClassSkill=true", sr)
+		}
+	}
+}
+
+func TestFirstLevelSkillBudget(t *testing.T) {
+	cases := []struct {
+		classPoints, intMod, want int
+	}{
+		{2, 2, 16}, // armsman + Int 14
+		{2, 0, 8},  // armsman + Int 10
+		{2, -2, 4}, // armsman + Int 6 → min 1/lvl floor → 4
+		{8, 2, 40}, // noble + Int 14
+		{0, -3, 4}, // pathological → floor
+	}
+	for _, c := range cases {
+		if got := firstLevelSkillBudget(c.classPoints, c.intMod); got != c.want {
+			t.Errorf("firstLevelSkillBudget(%d, %d) = %d, want %d",
+				c.classPoints, c.intMod, got, c.want)
 		}
 	}
 }

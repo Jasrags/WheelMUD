@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,8 @@ const (
 	chargenStepClass
 	chargenStepAbilities
 	chargenStepIdentity
+	chargenStepFeat
+	chargenStepSkills
 	chargenStepReview
 	chargenStepDone
 )
@@ -112,6 +115,18 @@ type chargenDraft struct {
 	HeightCm    int16
 	WeightKg    int16
 	IdentitySet bool
+
+	// First-level feat (#15). bg.BonusFeats are auto-merged at commit
+	// time and don't live in the draft.
+	SelectedFeatID string
+
+	// First-level skill ranks (#15). Keys are catalog skill ids; values
+	// are ranks in [0..classSkillRankCapL1]. SkillBudget caps the sum
+	// of ranks. SkillsInit guards the on-entry initialization so that
+	// re-entering via `back` from review preserves prior allocations.
+	SkillRanks  map[string]int8
+	SkillBudget int8
+	SkillsInit  bool
 }
 
 // CharacterCreate prompts for a new character. With a chargen catalog
@@ -182,6 +197,10 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 		return "Abilities (set <abil> <n> | reset | done) [back/cancel]: "
 	case chargenStepIdentity:
 		return "Identity (gender/age/handed/align/roll | done) [back/cancel]: "
+	case chargenStepFeat:
+		return "Feat (pick <id|#> | info <id|#> | done) [back/cancel]: "
+	case chargenStepSkills:
+		return "Skills (rank <id|#> <n> | reset | done) [back/cancel]: "
 	case chargenStepReview:
 		return "Confirm? (yes / back / cancel): "
 	}
@@ -264,6 +283,10 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applyAbilities(s, trimmed)
 	case chargenStepIdentity:
 		return m.applyIdentity(s, trimmed)
+	case chargenStepFeat:
+		return m.applyFeat(s, trimmed)
+	case chargenStepSkills:
+		return m.applySkills(s, trimmed)
 	case chargenStepReview:
 		return m.applyReview(ctx, s, trimmed)
 	}
@@ -652,6 +675,32 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 		fmt.Fprintf(&b, "  Handed:     %s\r\n", handLabel(m.draft.Handedness))
 		fmt.Fprintf(&b, "  Alignment:  %s\r\n", postureLabel(m.draft.Alignment))
 	}
+	if bg != nil {
+		feats := append([]string{}, bg.BonusFeats...)
+		if m.draft.SelectedFeatID != "" {
+			feats = append(feats, m.draft.SelectedFeatID)
+		}
+		if len(feats) > 0 {
+			fmt.Fprintf(&b, "  Feats:      %s\r\n",
+				strings.Join(featNames(m.catalog, feats), ", "))
+		}
+	}
+	if len(m.draft.SkillRanks) > 0 {
+		ids := make([]string, 0, len(m.draft.SkillRanks))
+		for id := range m.draft.SkillRanks {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		parts := make([]string, 0, len(ids))
+		for _, id := range ids {
+			name := id
+			if sk, ok := m.catalog.Skill(id); ok {
+				name = sk.Name
+			}
+			parts = append(parts, fmt.Sprintf("%s %d", name, m.draft.SkillRanks[id]))
+		}
+		fmt.Fprintf(&b, "  Skills:     %s\r\n", strings.Join(parts, ", "))
+	}
 	return s.WriteRaw([]byte(b.String()))
 }
 
@@ -703,6 +752,8 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		WeightKg:    m.draft.WeightKg,
 		Age:         m.draft.Age,
 		Handedness:  m.draft.Handedness,
+		Feats:       m.buildFeatIDs(),
+		Skills:      m.buildSkills(),
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):

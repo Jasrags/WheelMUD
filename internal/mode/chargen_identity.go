@@ -241,8 +241,9 @@ func (m *CharacterCreate) applyIdentity(s *telnet.Session, input string) error {
 	case "show":
 		return m.writeIdentityMenu(s)
 	case "done", "next":
-		m.step = chargenStepReview
-		return m.writeReview(s)
+		m.step = chargenStepFeat
+		m.initFeatStepIfNeeded()
+		return m.writeFeatMenu(s)
 	case "roll":
 		m.rerollHeightWeight()
 		return m.writeIdentityMenu(s)

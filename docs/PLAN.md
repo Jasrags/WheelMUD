@@ -215,17 +215,44 @@ characteristics,feats,equipment,the-one-power}.md`.
     using the in-world span/league/stone display layer.
 15. **First-level feats, skills, weaves, starting equipment**
     (§ref `feats.md` / `classes.md` Table 3-1 / `equipment.md` /
-    `the-one-power.md`). Drive Table 3-1 to allocate the 1st-level
-    feat slot and the (4 + Int mod) × 4 class-skill ranks; merge in
-    background bonus feats / skills. For Initiate / Wilder, branch
-    into channeler chargen: Source by gender, affinities (one or
-    two of the five Powers), and starting weaves from the level-0
-    list, writing `Channeling` on the character. Spawn the chosen
-    background's equipment-option bundle into the new character's
-    inventory and auto-equip the free outfit (Outfit slot already
-    handled by Phase B). Persists via the existing
-    `CharacterRepo.Create` — chargen builds the full `Character`
-    aggregate before the single insert.
+    `the-one-power.md`). **SLICE 1 LANDED 2026-05-05.** New
+    `chargenStepFeat` + `chargenStepSkills` substeps slot in
+    between identity and review:
+    - **Feat:** menu of `catalog.FeatsForBackground(bg)` plus the
+      auto-merged `bg.BonusFeats`. Verbs: `pick <id|#>`, bare
+      `<id|#>`, `info <id|#>`, `done`. `done` requires a pick
+      when the background offers options; bg with no restricted
+      feats accepts `done` immediately so the player still gets
+      the auto-merged bonus set.
+    - **Skills:** budget = `max(1, class.SkillPoints + IntMod) × 4`
+      with the d20 1-point/level floor. Allowed skills are
+      class skills ∪ background skills (deduped). Per-skill cap
+      4 ranks (level+3 at level 1). Verbs: `rank <id|#> <n>`,
+      `reset`, `done`. Over-budget assignments are refused
+      without overwriting prior state. Unspent points are
+      forfeit (V1 — Phase E level-up will let players bank).
+    - String catalog ids are stably hashed to int32 via FNV-32a
+      (`catalogIDInt32`) so the existing
+      `Character.Feats []int32` / `Character.Skills
+      map[int32]SkillRanks` columns round-trip without a new
+      enum table. Every persisted skill is flagged
+      `IsClassSkill=true` since V1 only allows class+bg picks.
+    - Persists via `CharacterRepo.Create` — the existing
+      `feats_json` / `skills_json` columns already handle the
+      round trip, no migration needed.
+    **Stubbed for follow-ups** (see
+    `chargen_features_followups.md`):
+    - Channeler branch (Source by gender, 1-2 affinities,
+      level-0 weaves filtered by affinity) — blocked on a
+      `channeling_json` column on `characters` since
+      `Character.Channeling` isn't currently persisted.
+    - Starting-equipment bundle spawning + auto-equip of the
+      free outfit — blocked on aligning the chargen YAML
+      `items: [...]` labels with world `external_id`s; most of
+      the chargen item ids (`tent`, `cadinsor`, `mail_shirt`,
+      `noble_outfit`, …) don't yet exist in `data/world/`.
+    - Cross-class skill picks (half-rate, double cost) — defer
+      until level-up needs the same plumbing in §12.
 
 After C: a freshly-created character is mechanically *complete* —
 abilities, class, race, background, feats, skills, gear, and (for
