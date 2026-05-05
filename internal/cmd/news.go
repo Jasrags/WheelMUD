@@ -61,7 +61,7 @@ func writeNewsList(s *telnet.Session, catalog *news.Catalog) error {
 		fmt.Fprintf(&b, "  %s %2d. %s  -  %s\r\n", marker, i+1, e.ID, e.Title)
 	}
 	b.WriteString("Type {{news <id>}}::yellow or {{news <n>}}::yellow to read one.\r\n")
-	return s.WriteString(b.String())
+	return s.WritePagedWrapped(b.String())
 }
 
 func writeNewsEntry(c *telnet.Context, catalog *news.Catalog, characters repo.CharacterRepo, arg string) error {
@@ -70,7 +70,7 @@ func writeNewsEntry(c *telnet.Context, catalog *news.Catalog, characters repo.Ch
 		return c.Session.WriteString("{{No such news entry.}}::yellow\r\n")
 	}
 	body := strings.TrimRight(entry.Body, "\r\n") + "\r\n"
-	if err := c.Session.WriteWrapped(body); err != nil {
+	if err := c.Session.WritePagedWrapped(body); err != nil {
 		return err
 	}
 	// Watermark bump (best-effort): MarkNewsSeen clamps so a stale

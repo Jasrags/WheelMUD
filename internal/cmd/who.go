@@ -43,7 +43,7 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 			}
 			sort.Strings(rows)
 			header := fmt.Sprintf("%d player(s) online:\r\n", len(rows))
-			return c.Session.WriteRaw([]byte(header + strings.Join(rows, "\r\n") + "\r\n"))
+			return c.Session.WritePaged([]byte(header + strings.Join(rows, "\r\n") + "\r\n"))
 		},
 	}
 }

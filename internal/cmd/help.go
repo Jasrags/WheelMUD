@@ -163,7 +163,7 @@ func writeIndex(s *telnet.Session, cmds []*telnet.Command, topics []*help.Topic)
 			b.WriteString("\r\n")
 		}
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return s.WritePaged([]byte(b.String()))
 }
 
 func writeDetail(s *telnet.Session, c *telnet.Command) error {
@@ -186,7 +186,7 @@ func writeDetail(s *telnet.Session, c *telnet.Command) error {
 		b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 		b.WriteString("\r\n")
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return s.WritePaged([]byte(b.String()))
 }
 
 func writeTopic(s *telnet.Session, t *help.Topic) error {
@@ -198,7 +198,7 @@ func writeTopic(s *telnet.Session, t *help.Topic) error {
 	if !strings.HasSuffix(b.String(), "\r\n") {
 		b.WriteString("\r\n")
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return s.WritePaged([]byte(b.String()))
 }
 
 func writeAmbiguous(s *telnet.Session, query string, cmds []*telnet.Command, topics []*help.Topic) error {
@@ -234,5 +234,5 @@ func writeAmbiguous(s *telnet.Session, query string, cmds []*telnet.Command, top
 			b.WriteString("\r\n")
 		}
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return s.WritePaged([]byte(b.String()))
 }

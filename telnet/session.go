@@ -308,6 +308,48 @@ func (s *Session) WriteWrapped(text string) error {
 	return s.WriteRaw([]byte(wrapped))
 }
 
+// WritePaged writes body, pushing a pager mode when body would
+// overflow Session.Height. Body is taken verbatim — callers are
+// responsible for cfmt rendering / wrapping. Pass already-rendered
+// bytes (most callers come from a strings.Builder).
+//
+// Pagination is skipped when:
+//   - Height is non-positive (NAWS never negotiated and default
+//     cleared, or a test set Height=0 to opt out), or
+//   - the body fits in Height-1 lines (one line reserved for the
+//     `--More--` prompt).
+//
+// In both fall-through cases, the body is emitted with a single
+// WriteRaw and no mode is pushed.
+func (s *Session) WritePaged(body []byte) error {
+	if s.Height <= 0 {
+		return s.WriteRaw(body)
+	}
+	lines := splitCRLFLines(body)
+	if len(lines) < s.Height {
+		return s.WriteRaw(body)
+	}
+	return s.PushMode(newPagerMode(lines, s.Height))
+}
+
+// WritePagedWrapped is the cfmt+reflow companion to WritePaged. It
+// renders cfmt tags, reflows to Session.Width, normalizes line
+// endings to CRLF, and then hands the result to WritePaged. Mirrors
+// WriteWrapped's preprocessing so callers can swap one for the
+// other.
+func (s *Session) WritePagedWrapped(text string) error {
+	if s.Width <= 0 {
+		// No width to wrap to — fall back to the cfmt-only path so
+		// the caller still gets pagination.
+		rendered := cfmt.Sprint(text)
+		return s.WritePaged([]byte(rendered))
+	}
+	rendered := cfmt.Sprint(text)
+	wrapped := WrapText(rendered, s.Width)
+	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
+	return s.WritePaged([]byte(wrapped))
+}
+
 // WriteRaw writes the bytes verbatim, with no template rendering.
 func (s *Session) WriteRaw(b []byte) error {
 	s.writeMu.Lock()
