@@ -272,6 +272,12 @@ type ItemRepo interface {
 	// ListExternalIDs returns every item's external_id, sorted. Tab
 	// completion only — pagination is a future concern.
 	ListExternalIDs(ctx context.Context) ([]string, error)
+	// Delete removes the row identified by id. Used by the §14 sell
+	// verb to destroy items the shopkeeper has bought from the player
+	// (V1 doesn't restock the shop from sales). Returns
+	// ErrItemNotFound if no row matches. Caller must clear any
+	// dangling references (inventory_json, equipment slots) first.
+	Delete(ctx context.Context, id int64) error
 }
 
 // ErrItemNotFound is returned by GetByID when no row matches the id.

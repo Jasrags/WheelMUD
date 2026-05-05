@@ -88,7 +88,14 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `owner_character_id`, `inventory` annotates them as
   `(worn)`/`(wielded)`/`(offhand)`, and `drop`/`give`/`put` call
   `autoUnequipIfHeld` so leaving inventory never strands a slot
-  pointer), the BFS
+  pointer), the §14 shop verbs (`list`/`buy`/`sell`/`value` —
+  resolve a shopkeeper from `mobs.ListInRoom` + `shops.GetByMobTemplateID`,
+  apply `sell_markup` / `buy_markdown` against `Item.Value`,
+  honour `FlagTradeGood` for full-price sells and `FlagNoSell` /
+  `BuyTypes` for refusals; `buy` clones the YAML-seeded item
+  template via `ItemRepo.Create` with a fresh unique
+  `external_id`, `sell` `Delete`s the item — V1 doesn't restock
+  the shop from sales), the BFS
   minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
   the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
   `track`, `time`, `news`, and the admin tools (`whereami`, `zones`,
@@ -113,7 +120,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0029. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0030. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -143,15 +150,25 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   (room ⊕ owner ⊕ parent). 0029 added the `admin_audit` table —
   append-only forensic log for privileged-verb invocations,
   populated by `internal/audit.Record` from every admin verb's
-  success path.
+  success path. 0030 added `shops` + `shop_stock` for the §14
+  shopkeeper subsystem — `shops` is keyed 1:1 to a mob_template
+  (UNIQUE on `mob_template_id`), `shop_stock` is per-line
+  `(shop_id, item_external_id)` with `qty` / `qty_max` /
+  `last_restock_ts`. Sentinel `qty == -1 && qty_max == -1` is
+  infinite stock.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
-  DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
-  The on-disk tree is hierarchical (continent → nation → region →
-  settlement → building); see `data/world/README.md` for the full
-  zone.yaml schema (id, name, builder, level_range, reset_interval_s,
-  reset_mode, climate, ambient) and the room-id / currency-string /
-  typed-item-stats conventions builders need to know.
+  DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
+  shops). The on-disk tree is hierarchical (continent → nation →
+  region → settlement → building); see `data/world/README.md` for
+  the full zone.yaml schema (id, name, builder, level_range,
+  reset_interval_s, reset_mode, climate, ambient), the optional
+  `shop:` mob sub-block (§14), and the room-id / currency-string /
+  typed-item-stats conventions builders need to know. Also hosts
+  the `Restocker` (refills sub-max `shop_stock` lines older than
+  `restock_interval_s`, wired to `tick.Buckets.AreaReset` —
+  5min default cadence) and the `Clock.HourOfDay()` helper backing
+  the shop hour gate.
 
 - **`internal/session/`** — process-level registry that enforces
   single-session-per-account: `Bind` returns the displaced session;
@@ -295,13 +312,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
 alias table, every repo (memory + sqlite, including ZoneRepo,
-MobTemplateRepo, mob_trails, news), the world loader (zone metadata,
-room.zone_id linkage, item taxonomy, container fixtures, dark-room
-fixtures), the session registry, the eventbus, the tick scheduler,
-the persist manager, and the concrete commands (look / move / say /
-tell / reply / shout / yell / channel / teleport / alias / prompt /
-examine / door verbs / inventory verbs / put / equipment verbs / spawn / map / zonemap
-/ coords / track / time / news / whereami / zones).
+MobTemplateRepo, mob_trails, news, ShopRepo), the world loader (zone
+metadata, room.zone_id linkage, item taxonomy, container fixtures,
+dark-room fixtures, shop round-trip + invalid-stock-item rejection),
+the session registry, the eventbus, the tick scheduler, the persist
+manager, the world Restocker, and the concrete commands (look / move /
+say / tell / reply / shout / yell / channel / teleport / alias /
+prompt / examine / door verbs / inventory verbs / put / equipment verbs /
+shop verbs (list/buy/sell/value) / spawn / map / zonemap / coords /
+track / time / news / whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.

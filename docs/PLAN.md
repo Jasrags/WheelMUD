@@ -85,9 +85,18 @@ item flow. Both build on the inventory/container work just landed.
    two-handed weapons (no `FlagTwoHanded` yet), Cloak / Backpack /
    WornMisc / BeltPouches slot disambiguation, wear requirements
    (Str / class / level), auto-swap on full slot.
-8. **Shops** (§14). Shopkeeper mob subtype, `list` / `buy` / `sell` /
-   `value`. Half-price sell rule (the existing `trade_good` flag is
-   already exempt in code).
+8. ~~**Shops** (§14). Shopkeeper mob subtype, `list` / `buy` / `sell` /
+   `value`.~~ **LANDED 2026-05-05.** Migration 0030 added `shops` +
+   `shop_stock`. `internal/repo/shop.go` + memory/sqlite backends.
+   `internal/cmd/shop.go` ships `list` / `buy` / `sell` / `value`
+   verbs (Auth=Player). World loader parses an optional `shop:` block
+   on mob YAML entries — see `data/world/README.md`. Restocker
+   subscribes to `tick.Buckets.AreaReset` (5min default) and refills
+   any sub-max stock line older than `restock_interval_s`. Half-price
+   rule honored via the existing `FlagTradeGood`. V1 follow-ups: shop
+   ledger / stats, weight cap on shopkeeper, skill-based haggling,
+   sold-back items go into shop stock instead of being deleted,
+   shopkeeper movement (V1 keepers must be sentinels).
 9. **Banks / vaults** (§14). Banker NPC subtype, `balance` / `deposit`
    / `withdraw`. Reuses `currency.Amount` — no new money model.
 

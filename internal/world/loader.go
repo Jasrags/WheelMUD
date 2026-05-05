@@ -482,6 +482,7 @@ func encodeItemStatsJSON(s repo.ItemStats) (string, error) {
 func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]int64) error {
 	templates := repo.NewSQLiteMobTemplateRepo(tx)
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
+	shops := repo.NewSQLiteShopRepo(tx)
 
 	for _, m := range mobs {
 		roomID := roomIDs[m.Room]
@@ -519,6 +520,58 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 		if _, err := instances.Create(ctx, spawn); err != nil {
 			return fmt.Errorf("spawn mob instance %q: %w", m.ID, err)
 		}
+		if m.Shop != nil {
+			if err := insertShop(ctx, shops, created.ID, m); err != nil {
+				return fmt.Errorf("insert shop for mob %q: %w", m.ID, err)
+			}
+		}
 	}
 	return nil
 }
+
+// insertShop materializes one `shop:` YAML block into a shops row plus
+// its shop_stock lines. Defaults: SellMarkup=1.0, BuyMarkdown=0.5,
+// RestockIntervalS=3600, hours unset → always-open. Validation has
+// already cleared types and item refs.
+func insertShop(ctx context.Context, shops repo.ShopRepo, mobTemplateID int64, m Mob) error {
+	cfg := repo.Shop{
+		MobTemplateID:    mobTemplateID,
+		SellMarkup:       1.0,
+		BuyMarkdown:      0.5,
+		RestockIntervalS: 3600,
+	}
+	for _, t := range m.Shop.BuyTypes {
+		cfg.BuyTypes = append(cfg.BuyTypes, repo.ItemType(t))
+	}
+	if v := m.Shop.SellMarkup; v != nil {
+		cfg.SellMarkup = *v
+	}
+	if v := m.Shop.BuyMarkdown; v != nil {
+		cfg.BuyMarkdown = *v
+	}
+	if v := m.Shop.OpenHour; v != nil {
+		cfg.OpenHour = *v
+	}
+	if v := m.Shop.CloseHour; v != nil {
+		cfg.CloseHour = *v
+	}
+	if v := m.Shop.RestockIntervalS; v != nil {
+		cfg.RestockIntervalS = *v
+	}
+	created, err := shops.Create(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	for _, line := range m.Shop.Stock {
+		if err := shops.UpsertStock(ctx, repo.ShopStockRow{
+			ShopID:         created.ID,
+			ItemExternalID: line.Item,
+			Qty:            line.Qty,
+			QtyMax:         line.QtyMax,
+		}); err != nil {
+			return fmt.Errorf("stock %q: %w", line.Item, err)
+		}
+	}
+	return nil
+}
+

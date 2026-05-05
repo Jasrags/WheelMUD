@@ -16,3 +16,7 @@ var (
 	ErrChannelingNotFound  = errors.New("repo: channeling record not found")
 	ErrInvalidOwnerKind    = errors.New("repo: channeling owner_kind must be 1 (character), 2 (template), or 3 (instance)")
 )
+
+// Note: ErrShopNotFound and ErrOutOfStock are declared in shop.go
+// next to the ShopRepo interface, matching the per-aggregate
+// convention used elsewhere (ErrItemNotFound is in item.go, etc.).

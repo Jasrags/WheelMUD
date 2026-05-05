@@ -672,3 +672,126 @@ func TestLoadAndSync_ValidationFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadAndSync_ShopRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"inn/zone.yaml":  &fstest.MapFile{Data: []byte("id: inn\nname: Inn\n")},
+		"inn/rooms.yaml": &fstest.MapFile{Data: []byte("- id: inn.common\n  starter: true\n  name: Common Room\n  long: A warm hearth.\n")},
+		"inn/items.yaml": &fstest.MapFile{Data: []byte(`
+- id: inn.ale
+  room: inn.common
+  name: a mug of ale
+  type: consumable
+  value: "5cp"
+- id: inn.bread
+  room: inn.common
+  name: a loaf of bread
+  type: food
+  value: "2cp"
+`)},
+		"inn/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: inn.bran
+  room: inn.common
+  name: Bran al'Vere
+  short: the round-faced innkeeper
+  shop:
+    buy_types: [food, consumable, trade_good]
+    sell_markup: 1.0
+    buy_markdown: 0.5
+    open_hour: 6
+    close_hour: 22
+    restock_interval_s: 300
+    stock:
+      - item: inn.ale
+        qty: 12
+        qty_max: 12
+      - item: inn.bread
+        qty: -1
+        qty_max: -1
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	templates := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := templates.GetByExternalID(ctx, "inn.bran")
+	if err != nil {
+		t.Fatalf("template lookup: %v", err)
+	}
+
+	shops := repo.NewSQLiteShopRepo(conn)
+	shop, err := shops.GetByMobTemplateID(ctx, tpl.ID)
+	if err != nil {
+		t.Fatalf("shop lookup: %v", err)
+	}
+	if shop.SellMarkup != 1.0 || shop.BuyMarkdown != 0.5 ||
+		shop.OpenHour != 6 || shop.CloseHour != 22 ||
+		shop.RestockIntervalS != 300 {
+		t.Fatalf("shop scalars wrong: %+v", shop)
+	}
+	wantTypes := map[repo.ItemType]bool{repo.ItemTypeFood: true, repo.ItemTypeConsumable: true, repo.ItemTypeTradeGood: true}
+	if len(shop.BuyTypes) != 3 {
+		t.Fatalf("buy_types len = %d", len(shop.BuyTypes))
+	}
+	for _, bt := range shop.BuyTypes {
+		if !wantTypes[bt] {
+			t.Fatalf("unexpected buy type %q", bt)
+		}
+	}
+
+	stock, err := shops.ListStock(ctx, shop.ID)
+	if err != nil {
+		t.Fatalf("ListStock: %v", err)
+	}
+	if len(stock) != 2 {
+		t.Fatalf("got %d stock rows, want 2", len(stock))
+	}
+	// Sorted by external_id: ale first, bread second.
+	if stock[0].ItemExternalID != "inn.ale" || stock[0].Qty != 12 || stock[0].QtyMax != 12 {
+		t.Fatalf("ale row wrong: %+v", stock[0])
+	}
+	if stock[1].ItemExternalID != "inn.bread" || stock[1].Qty != -1 || stock[1].QtyMax != -1 {
+		t.Fatalf("bread row (infinite) wrong: %+v", stock[1])
+	}
+}
+
+func TestLoadAndSync_ShopRejectsUnknownItem(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.bran
+  room: z.r
+  name: Bran
+  shop:
+    buy_types: [food]
+    stock:
+      - item: z.ghost
+        qty: 1
+        qty_max: 1
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on unknown stock item")
+	}
+	if !strings.Contains(err.Error(), "z.ghost") {
+		t.Fatalf("err = %q, want it to mention z.ghost", err)
+	}
+}

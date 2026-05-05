@@ -37,8 +37,17 @@ func commPair(t *testing.T) (sessions *session.Registry, alice, bob *telnet.Sess
 	return sessions, a, b, aConn, bConn
 }
 
+// runCmd mirrors telnet.Registry.Dispatch from the perspective of
+// individual command tests. Convention: callers pass `raw` as the
+// post-verb argument string only (NOT the full line with verb), so
+// `runCmd(t, NewGoto(...), s, "Player")` is equivalent to a real
+// session typing `goto Player`. Args is tokenized from raw; Context.Raw
+// matches what the production dispatcher sets — the post-verb
+// remainder. A leading verb in `raw` would be tokenized as the first
+// arg, which is almost never what tests want.
 func runCmd(t *testing.T, c *telnet.Command, s *telnet.Session, raw string) {
 	t.Helper()
+	raw = strings.TrimSpace(raw)
 	args, err := telnet.Tokenize(raw)
 	if err != nil {
 		t.Fatalf("Tokenize: %v", err)
@@ -48,7 +57,7 @@ func runCmd(t *testing.T, c *telnet.Command, s *telnet.Session, raw string) {
 		Session: s,
 		Name:    c.Name,
 		Args:    args,
-		Raw:     strings.TrimSpace(raw),
+		Raw:     raw,
 	}
 	if err := c.Run(ctx); err != nil {
 		t.Fatalf("%s.Run: %v", c.Name, err)

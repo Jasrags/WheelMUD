@@ -2,6 +2,23 @@
   room: tr.emonds_field.winespring_inn.common
   name: Bran al'Vere
   short: the round-faced mayor of Emond's Field stands behind the bar, drying a tankard
+  shop:
+    buy_types: [food, consumable, trade_good]
+    sell_markup: 1.0
+    buy_markdown: 0.5
+    open_hour: 6
+    close_hour: 23
+    restock_interval_s: 600
+    stock:
+      - item: tr.inn_ale
+        qty: 12
+        qty_max: 12
+      - item: tr.inn_cider
+        qty: 8
+        qty_max: 8
+      - item: tr.kitchen_loaf
+        qty: -1
+        qty_max: -1
 
 - id: tr.marin_alvere
   room: tr.emonds_field.winespring_inn.kitchen

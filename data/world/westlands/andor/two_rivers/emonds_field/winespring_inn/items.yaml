@@ -16,6 +16,34 @@
   value: 4cp
   quality: normal
 
+# Shop stock templates — Bran's `shop:` block (mobs.yaml) refers to
+# these by external_id. They sit on the bar as the visible
+# representatives of his on-hand stock; `buy` materializes a fresh
+# copy in the buyer's inventory.
+- id: tr.inn_ale
+  room: tr.emonds_field.winespring_inn.common
+  name: a mug of brown ale
+  short: a foaming mug of brown ale stands on a polished tray
+  type: consumable
+  weight: 1.0
+  value: 5cp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id: 0
+
+- id: tr.inn_cider
+  room: tr.emonds_field.winespring_inn.common
+  name: a cup of mulled cider
+  short: a cup of mulled cider rests beside the bar's spice rack
+  type: consumable
+  weight: 1.0
+  value: 4cp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id: 0
+
 - id: tr.kitchen_loaf
   room: tr.emonds_field.winespring_inn.kitchen
   name: a loaf of dark bread

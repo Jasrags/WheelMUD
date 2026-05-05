@@ -192,6 +192,20 @@ func (r *MemoryItemRepo) ListExternalIDs(_ context.Context) ([]string, error) {
 	return out, nil
 }
 
+func (r *MemoryItemRepo) Delete(_ context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, it := range r.items {
+		if it.ID != id {
+			continue
+		}
+		delete(r.byExt, it.ExternalID)
+		r.items = append(r.items[:i], r.items[i+1:]...)
+		return nil
+	}
+	return ErrItemNotFound
+}
+
 func (r *MemoryItemRepo) GetByID(_ context.Context, id int64) (Item, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

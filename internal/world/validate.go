@@ -26,7 +26,7 @@ func validate(w *World) error {
 	if err := validateItems(w.Items, w.Rooms); err != nil {
 		return err
 	}
-	if err := validateMobs(w.Mobs, w.Rooms); err != nil {
+	if err := validateMobs(w.Mobs, w.Rooms, w.Items); err != nil {
 		return err
 	}
 	return nil
@@ -252,8 +252,12 @@ func validateItems(items []Item, rooms []Room) error {
 	return nil
 }
 
-func validateMobs(mobs []Mob, rooms []Room) error {
+func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 	known := roomSet(rooms)
+	itemIDs := make(map[string]bool, len(items))
+	for _, it := range items {
+		itemIDs[it.ID] = true
+	}
 	seen := make(map[string]Mob, len(mobs))
 	for _, m := range mobs {
 		if !validExternalID(m.ID) {
@@ -273,6 +277,55 @@ func validateMobs(mobs []Mob, rooms []Room) error {
 		if !known[m.Room] {
 			return fmt.Errorf("%s:%d: mob %q references unknown room %q",
 				m.SourceFile, m.Line, m.ID, m.Room)
+		}
+		if m.Shop != nil {
+			if err := validateShop(m, itemIDs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateShop checks the optional `shop:` block: every BuyTypes entry
+// is a known ItemType, hours are 0..23, and every stock line points at
+// an item template defined elsewhere in the world. Stock qty/qty_max
+// must agree on the infinite sentinel (both -1 or both >= 0).
+func validateShop(m Mob, itemIDs map[string]bool) error {
+	for _, raw := range m.Shop.BuyTypes {
+		if !repo.ItemType(raw).IsValid() {
+			return fmt.Errorf("%s:%d: mob %q shop.buy_types contains unknown item type %q",
+				m.SourceFile, m.Line, m.ID, raw)
+		}
+	}
+	if h := m.Shop.OpenHour; h != nil && (*h < 0 || *h > 23) {
+		return fmt.Errorf("%s:%d: mob %q shop.open_hour %d out of range [0,23]",
+			m.SourceFile, m.Line, m.ID, *h)
+	}
+	if h := m.Shop.CloseHour; h != nil && (*h < 0 || *h > 23) {
+		return fmt.Errorf("%s:%d: mob %q shop.close_hour %d out of range [0,23]",
+			m.SourceFile, m.Line, m.ID, *h)
+	}
+	for _, line := range m.Shop.Stock {
+		if line.Item == "" {
+			return fmt.Errorf("%s:%d: mob %q shop.stock entry missing `item`",
+				m.SourceFile, m.Line, m.ID)
+		}
+		if !itemIDs[line.Item] {
+			return fmt.Errorf("%s:%d: mob %q shop.stock references unknown item %q",
+				m.SourceFile, m.Line, m.ID, line.Item)
+		}
+		if (line.Qty < 0) != (line.QtyMax < 0) {
+			return fmt.Errorf("%s:%d: mob %q shop.stock %q: qty=%d and qty_max=%d disagree on infinite sentinel (both must be < 0 or both >= 0)",
+				m.SourceFile, m.Line, m.ID, line.Item, line.Qty, line.QtyMax)
+		}
+		if line.QtyMax == 0 {
+			return fmt.Errorf("%s:%d: mob %q shop.stock %q: qty_max=0 means no stock and no restock — use qty=-1 qty_max=-1 for infinite, or qty_max>=1 for a real cap",
+				m.SourceFile, m.Line, m.ID, line.Item)
+		}
+		if line.QtyMax >= 0 && line.Qty > line.QtyMax {
+			return fmt.Errorf("%s:%d: mob %q shop.stock %q: qty=%d exceeds qty_max=%d",
+				m.SourceFile, m.Line, m.ID, line.Item, line.Qty, line.QtyMax)
 		}
 	}
 	return nil

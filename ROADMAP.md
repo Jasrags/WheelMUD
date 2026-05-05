@@ -949,7 +949,7 @@ will need on top of those tables.
       first slot the item permits; `wear <item> <slot>` forces.
       Two-handed weapons consume `wield` + `hold`. Apply affects
       on equip, strip on remove, persist on logout.
-- [ ] Shops (buy, sell, list, value) — shopkeeper mob subtype with
+- [x] Shops (buy, sell, list, value) — shopkeeper mob subtype with
       `shop` config (`buy_types []ItemType`, `sell_markup`,
       `buy_markdown`, `open_hour`/`close_hour`, `inventory []ItemID`
       with restock interval). `list` shows wares + price; `value

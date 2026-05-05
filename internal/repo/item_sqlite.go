@@ -400,6 +400,23 @@ func (r *SQLiteItemRepo) ListExternalIDs(ctx context.Context) ([]string, error) 
 	return out, rows.Err()
 }
 
+// Delete removes the row identified by id. Returns ErrItemNotFound if
+// no row matches. Used by the §14 sell verb.
+func (r *SQLiteItemRepo) Delete(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM items WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete item: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows_affected delete item: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
 // scanItemRow reads one row from a SELECT itemSelectCols result and
 // builds a fully decoded Item, including the polymorphic stats blob.
 // Centralized so the column list and decode contract live in one

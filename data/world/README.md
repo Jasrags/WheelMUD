@@ -141,6 +141,48 @@ The v1 loader spawns each YAML mob as a one-of-a-kind template plus a
 single instance into the named room. Stat blocks (HP, Defense, etc.)
 get safe defaults — full template authoring lands later.
 
+#### Shopkeeper sub-block
+
+A mob entry may carry an optional `shop:` block to mark the mob as a
+§14 shopkeeper. The loader inserts a `shops` row keyed to the mob
+template plus one `shop_stock` row per `stock` line.
+
+```yaml
+- id: tr.bran_alvere
+  room: tr.emonds_field.winespring_inn.common
+  name: Bran al'Vere
+  short: the round-faced mayor of Emond's Field stands behind the bar
+  shop:
+    buy_types: [food, consumable, trade_good]   # ItemTypes the shop will buy back
+    sell_markup: 1.0          # buy price = item.value * sell_markup (default 1.0)
+    buy_markdown: 0.5         # sell price = item.value * buy_markdown for non-trade_goods (default 0.5)
+    open_hour: 6              # 0..23. open_hour == close_hour means always open
+    close_hour: 23            # close < open wraps midnight (e.g. 22→4 covers a tavern's late hours)
+    restock_interval_s: 600   # per-line refill cadence (default 3600)
+    stock:
+      - item: tr.inn_ale      # external_id of an item template defined elsewhere
+        qty: 12
+        qty_max: 12
+      - item: tr.kitchen_loaf
+        qty: -1               # qty=-1 + qty_max=-1 → infinite stock (staple goods)
+        qty_max: -1
+```
+
+Notes:
+
+- Stock items must be defined as ordinary `items.yaml` entries
+  somewhere in the world (placing them on the shopkeeper's room
+  floor doubles as a visible "this is on the menu" cue). `buy`
+  materializes a fresh copy in the buyer's inventory cloned from
+  the template.
+- `FlagTradeGood` items always sell back at full Value (the WoT
+  trade-good rule); the half-price rule only applies to other types.
+- `FlagNoSell` items are refused at sell-time regardless of
+  `buy_types`.
+- Items not in the shop's `buy_types` whitelist are refused at sell.
+- Stock with `qty_max < 0` is infinite — the restocker leaves it
+  alone, and `buy` doesn't decrement it.
+
 ## Conventions
 
 ### Room ID naming

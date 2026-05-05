@@ -200,8 +200,35 @@ type Mob struct {
 	// are clamped at the repo layer.
 	WanderChance *float64 `yaml:"wander_chance,omitempty"`
 
+	// Shop, if present, marks this mob as a shopkeeper (§14). The
+	// loader inserts the matching `shops` row keyed to the
+	// mob_template the mob spawns from. Stock lines materialize as
+	// `shop_stock` rows referencing existing item templates by
+	// external_id. Sentinels: qty=-1 + qty_max=-1 → infinite stock.
+	Shop *Shop `yaml:"shop,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
+}
+
+// Shop is the optional `shop:` sub-block on a mob YAML entry.
+// Defaults are filled in by the loader: SellMarkup=1.0,
+// BuyMarkdown=0.5, RestockIntervalS=3600, OpenHour==CloseHour=>24h.
+type Shop struct {
+	BuyTypes         []string    `yaml:"buy_types"`
+	SellMarkup       *float64    `yaml:"sell_markup,omitempty"`
+	BuyMarkdown      *float64    `yaml:"buy_markdown,omitempty"`
+	OpenHour         *int        `yaml:"open_hour,omitempty"`
+	CloseHour        *int        `yaml:"close_hour,omitempty"`
+	RestockIntervalS *int        `yaml:"restock_interval_s,omitempty"`
+	Stock            []ShopStock `yaml:"stock"`
+}
+
+// ShopStock is one inventory line under a shop block.
+type ShopStock struct {
+	Item   string `yaml:"item"`            // item external_id
+	Qty    int    `yaml:"qty"`             // -1 = infinite
+	QtyMax int    `yaml:"qty_max"`         // -1 = no restock cap
 }
 
 // World is the parsed-and-validated set of every zone the loader saw.

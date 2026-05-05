@@ -116,6 +116,23 @@ func (c *Clock) TicksPerDay() int64 { return c.ticksPerDay() }
 // "ticks until dusk" as a human-readable real-time delta.
 func (c *Clock) TickInterval() time.Duration { return c.tickInterval }
 
+// HourOfDay returns the current in-game hour in [0, 23]. Used by the
+// shop hour-gate (§14): a shopkeeper with OpenHour=6, CloseHour=22
+// only trades during that wall-hour window. Computed from
+// (ticks % ticksPerDay) scaled to 24 hours so it tracks the same
+// dawn/day/dusk/night quarters Phase() uses.
+func (c *Clock) HourOfDay() int {
+	tpd := c.ticksPerDay()
+	if tpd <= 0 {
+		return 12
+	}
+	p := c.Ticks() % tpd
+	if p < 0 {
+		p += tpd
+	}
+	return int((p * 24) / tpd)
+}
+
 // Phase returns the current day-phase bucket.
 func (c *Clock) Phase() Phase {
 	tpd := c.ticksPerDay()
