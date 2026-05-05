@@ -95,7 +95,12 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `BuyTypes` for refusals; `buy` clones the YAML-seeded item
   template via `ItemRepo.Create` with a fresh unique
   `external_id`, `sell` `Delete`s the item — V1 doesn't restock
-  the shop from sales), the BFS
+  the shop from sales), the §14 banker verbs
+  (`balance`/`deposit`/`withdraw` — resolve a banker from
+  `mobs.ListInRoom` + `bankers.GetByMobTemplateID`, gate on
+  `Banker.IsOpenAt(clock.HourOfDay())`, move coin via
+  `CharacterRepo.RecordCoin(coin, bank)`; deposit/withdraw audit
+  on success — refusals do not), the BFS
   minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
   the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
   `track`, `time`, `news`, and the admin tools (`whereami`, `zones`,
@@ -155,16 +160,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   (UNIQUE on `mob_template_id`), `shop_stock` is per-line
   `(shop_id, item_external_id)` with `qty` / `qty_max` /
   `last_restock_ts`. Sentinel `qty == -1 && qty_max == -1` is
-  infinite stock.
+  infinite stock. 0031 added `bankers` for the §14 banker subsystem
+  — keyed 1:1 to a mob_template (UNIQUE on `mob_template_id`),
+  carrying operating hours only. V1 has no fees, no min-deposit,
+  and no item vault; coin moves between `characters.coin` and
+  `characters.bank_balance` via `CharacterRepo.RecordCoin`.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
-  shops). The on-disk tree is hierarchical (continent → nation →
+  shops/bankers). The on-disk tree is hierarchical (continent → nation →
   region → settlement → building); see `data/world/README.md` for
   the full zone.yaml schema (id, name, builder, level_range,
   reset_interval_s, reset_mode, climate, ambient), the optional
-  `shop:` mob sub-block (§14), and the room-id / currency-string /
-  typed-item-stats conventions builders need to know. Also hosts
+  `shop:` and `banker:` mob sub-blocks (§14), and the room-id /
+  currency-string / typed-item-stats conventions builders need to
+  know. Also hosts
   the `Restocker` (refills sub-max `shop_stock` lines older than
   `restock_interval_s`, wired to `tick.Buckets.AreaReset` —
   5min default cadence) and the `Clock.HourOfDay()` helper backing
@@ -312,15 +322,17 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
 alias table, every repo (memory + sqlite, including ZoneRepo,
-MobTemplateRepo, mob_trails, news, ShopRepo), the world loader (zone
-metadata, room.zone_id linkage, item taxonomy, container fixtures,
-dark-room fixtures, shop round-trip + invalid-stock-item rejection),
-the session registry, the eventbus, the tick scheduler, the persist
-manager, the world Restocker, and the concrete commands (look / move /
-say / tell / reply / shout / yell / channel / teleport / alias /
-prompt / examine / door verbs / inventory verbs / put / equipment verbs /
-shop verbs (list/buy/sell/value) / spawn / map / zonemap / coords /
-track / time / news / whereami / zones).
+MobTemplateRepo, mob_trails, news, ShopRepo, BankerRepo), the world
+loader (zone metadata, room.zone_id linkage, item taxonomy, container
+fixtures, dark-room fixtures, shop round-trip + invalid-stock-item
+rejection, banker round-trip + bad-hour rejection), the session
+registry, the eventbus, the tick scheduler, the persist manager, the
+world Restocker, and the concrete commands (look / move / say / tell /
+reply / shout / yell / channel / teleport / alias / prompt / examine /
+door verbs / inventory verbs / put / equipment verbs /
+shop verbs (list/buy/sell/value) /
+banker verbs (balance/deposit/withdraw) /
+spawn / map / zonemap / coords / track / time / news / whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.

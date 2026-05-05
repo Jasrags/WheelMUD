@@ -764,6 +764,77 @@ func TestLoadAndSync_ShopRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_BankerRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"city/zone.yaml":  &fstest.MapFile{Data: []byte("id: city\nname: City\n")},
+		"city/rooms.yaml": &fstest.MapFile{Data: []byte("- id: city.bank\n  starter: true\n  name: Bank\n  long: A vault.\n")},
+		"city/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: city.banker
+  room: city.bank
+  name: Jain the Moneylender
+  short: a well-dressed moneylender
+  banker:
+    open_hour: 8
+    close_hour: 18
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	templates := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := templates.GetByExternalID(ctx, "city.banker")
+	if err != nil {
+		t.Fatalf("template lookup: %v", err)
+	}
+
+	bankers := repo.NewSQLiteBankerRepo(conn)
+	b, err := bankers.GetByMobTemplateID(ctx, tpl.ID)
+	if err != nil {
+		t.Fatalf("banker lookup: %v", err)
+	}
+	if b.OpenHour != 8 || b.CloseHour != 18 {
+		t.Fatalf("banker hours wrong: %+v", b)
+	}
+}
+
+func TestLoadAndSync_BankerRejectsBadHour(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.banker
+  room: z.r
+  name: Bad Banker
+  banker:
+    open_hour: 25
+    close_hour: 9
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on out-of-range open_hour")
+	}
+	if !strings.Contains(err.Error(), "open_hour") {
+		t.Fatalf("err = %q, want it to mention open_hour", err)
+	}
+}
+
 func TestLoadAndSync_ShopRejectsUnknownItem(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

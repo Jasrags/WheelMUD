@@ -97,8 +97,11 @@ item flow. Both build on the inventory/container work just landed.
    ledger / stats, weight cap on shopkeeper, skill-based haggling,
    sold-back items go into shop stock instead of being deleted,
    shopkeeper movement (V1 keepers must be sentinels).
-9. **Banks / vaults** (§14). Banker NPC subtype, `balance` / `deposit`
-   / `withdraw`. Reuses `currency.Amount` — no new money model.
+9. ~~**Banks / vaults** (§14). Banker NPC subtype, `balance` / `deposit`
+   / `withdraw`. Reuses `currency.Amount` — no new money model.~~ **Done
+   2026-05-05** — migration 0031, optional `banker:` YAML block on a
+   mob, `internal/cmd/banker.go` verbs, audit on success. Inter-player
+   `transfer` and item vaults deferred (see `banker_followups.md`).
 
 After B: characters can outfit themselves and circulate currency.
 

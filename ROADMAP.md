@@ -955,10 +955,13 @@ will need on top of those tables.
       with restock interval). `list` shows wares + price; `value
       <item>` previews sell price; refuses items the shop can't
       buy. Stock restocks via the `areaReset` bucket.
-- [ ] Banks / vaults — bank-NPC subtype: `balance`, `deposit
-      <n>`, `withdraw <n>`, `transfer <name> <n>`. Stored on
-      character row. Optional vault for items with per-tier slot
-      limits — separate `bank_items` table.
+- [x] Banks / vaults (V1: balance / deposit / withdraw) — banker
+      mob subtype with optional `banker:` YAML block carrying
+      operating hours. Coin moves between `characters.coin` and
+      `characters.bank_balance` via `RecordCoin`; deposit/withdraw
+      audit on success. `transfer <name> <n>` (player-to-player
+      wires) and item vaults are deferred to V2 — see
+      `banker_followups.md`.
 - [ ] Crafting recipes (later) — `recipes` table (id, name,
       skill_id, min_skill, ingredients []{ItemID, qty},
       result_item_id, result_qty, station_required). `craft

@@ -183,6 +183,33 @@ Notes:
 - Stock with `qty_max < 0` is infinite — the restocker leaves it
   alone, and `buy` doesn't decrement it.
 
+A mob entry may also carry an optional `banker:` block to mark the
+mob as a §14 banker. The loader inserts a `bankers` row keyed to the
+mob template. V1 carries operating hours only — no fees, no
+min-deposit, no item vault. Coin moves between the character's purse
+and `characters.bank_balance` via the `balance` / `deposit` /
+`withdraw` verbs.
+
+```yaml
+- id: tr.padan_fain
+  room: tr.emonds_field.winespring_inn.common
+  name: Padan Fain
+  short: a sharp-eyed peddler tallies coin in a small leatherbound ledger
+  banker:
+    open_hour: 8     # optional, 0..23; default 0
+    close_hour: 20   # optional, 0..23; default 0
+```
+
+Banker hours follow the same rules as shop hours:
+
+- Both endpoints are integers in `[0, 23]`. There is no `24` —
+  midnight is `0`.
+- `open_hour == close_hour` is the **always-open sentinel**. The
+  default `0/0` therefore means "24 hours". If you want a banker
+  open from 8am to midnight, write `open_hour: 8, close_hour: 0`.
+- Otherwise the banker is open for `[open_hour, close_hour)`. A
+  wrap (e.g. `open: 22, close: 4`) covers a late-night window.
+
 ## Conventions
 
 ### Room ID naming

@@ -483,6 +483,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 	templates := repo.NewSQLiteMobTemplateRepo(tx)
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
 	shops := repo.NewSQLiteShopRepo(tx)
+	bankers := repo.NewSQLiteBankerRepo(tx)
 
 	for _, m := range mobs {
 		roomID := roomIDs[m.Room]
@@ -525,6 +526,28 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 				return fmt.Errorf("insert shop for mob %q: %w", m.ID, err)
 			}
 		}
+		if m.Banker != nil {
+			if err := insertBanker(ctx, bankers, created.ID, m); err != nil {
+				return fmt.Errorf("insert banker for mob %q: %w", m.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// insertBanker materializes one `banker:` YAML block into a bankers
+// row. Defaults: hours unset → always-open (OpenHour == CloseHour ==
+// 0 is the always-open sentinel, same convention as shops).
+func insertBanker(ctx context.Context, bankers repo.BankerRepo, mobTemplateID int64, m Mob) error {
+	cfg := repo.Banker{MobTemplateID: mobTemplateID}
+	if v := m.Banker.OpenHour; v != nil {
+		cfg.OpenHour = *v
+	}
+	if v := m.Banker.CloseHour; v != nil {
+		cfg.CloseHour = *v
+	}
+	if _, err := bankers.Create(ctx, cfg); err != nil {
+		return err
 	}
 	return nil
 }

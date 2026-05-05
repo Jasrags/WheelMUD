@@ -24,3 +24,11 @@
   room: tr.emonds_field.winespring_inn.kitchen
   name: Marin al'Vere
   short: a brisk, broad-shouldered woman pares vegetables at the deal table
+
+- id: tr.padan_fain
+  room: tr.emonds_field.winespring_inn.common
+  name: Padan Fain
+  short: a sharp-eyed peddler tallies coin in a small leatherbound ledger
+  banker:
+    open_hour: 8
+    close_hour: 20

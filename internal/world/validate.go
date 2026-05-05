@@ -283,6 +283,26 @@ func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 				return err
 			}
 		}
+		if m.Banker != nil {
+			if err := validateBanker(m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateBanker checks the optional `banker:` block: hours are 0..23.
+// The runtime treats OpenHour == CloseHour as the always-open sentinel
+// (default 0/0 → 24h banker). Same range as shops for consistency.
+func validateBanker(m Mob) error {
+	if h := m.Banker.OpenHour; h != nil && (*h < 0 || *h > 23) {
+		return fmt.Errorf("%s:%d: mob %q banker.open_hour %d out of range [0,23]",
+			m.SourceFile, m.Line, m.ID, *h)
+	}
+	if h := m.Banker.CloseHour; h != nil && (*h < 0 || *h > 23) {
+		return fmt.Errorf("%s:%d: mob %q banker.close_hour %d out of range [0,23]",
+			m.SourceFile, m.Line, m.ID, *h)
 	}
 	return nil
 }

@@ -207,6 +207,12 @@ type Mob struct {
 	// external_id. Sentinels: qty=-1 + qty_max=-1 → infinite stock.
 	Shop *Shop `yaml:"shop,omitempty"`
 
+	// Banker, if present, marks this mob as a banker (§14). The
+	// loader inserts the matching `bankers` row keyed to the
+	// mob_template. V1 carries operating hours only — no fees, no
+	// min-deposit, no item vault.
+	Banker *Banker `yaml:"banker,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 }
@@ -229,6 +235,13 @@ type ShopStock struct {
 	Item   string `yaml:"item"`            // item external_id
 	Qty    int    `yaml:"qty"`             // -1 = infinite
 	QtyMax int    `yaml:"qty_max"`         // -1 = no restock cap
+}
+
+// Banker is the optional `banker:` sub-block on a mob YAML entry.
+// Defaults are filled in by the loader: OpenHour==CloseHour=>24h.
+type Banker struct {
+	OpenHour  *int `yaml:"open_hour,omitempty"`
+	CloseHour *int `yaml:"close_hour,omitempty"`
 }
 
 // World is the parsed-and-validated set of every zone the loader saw.
