@@ -12,8 +12,13 @@ chat channels. A YAML world loader (`internal/world/`) seeds the DB from
 `data/world/` on first boot.
 
 `ROADMAP.md` at the repo root tracks what's done vs. pending across the major
-MUD subsystems and is the source of truth for "what's next." Token-lean
-architecture maps for AI context live in `docs/CODEMAPS/`.
+MUD subsystems and is the source of truth for "what's done."
+`docs/PLAN.md` is the source of truth for "what's next" — it sequences the
+roadmap into ordered phases (A: quick wins, B: equipment/economy, C: combat,
+D: progression, E: NPCs/quests, F: OLC, G/H/I: comms/network/ops). When
+ROADMAP and PLAN disagree about *status*, ROADMAP wins; about *order*, PLAN
+wins. Re-derive PLAN from ROADMAP whenever a phase finishes or scope shifts.
+Token-lean architecture maps for AI context live in `docs/CODEMAPS/`.
 
 ## Common commands
 

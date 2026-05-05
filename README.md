@@ -81,6 +81,7 @@ docs/reference/     game-system reference docs (abilities, classes, ...)
 
 - [`CLAUDE.md`](CLAUDE.md) — guidance for Claude Code agents
 - [`ROADMAP.md`](ROADMAP.md) — feature punch list + status
+- [`docs/PLAN.md`](docs/PLAN.md) — sequenced plan of attack across roadmap phases
 - [`docs/CODEMAPS/`](docs/CODEMAPS/) — architecture, command catalog, data model, dependencies, telnet protocol
 - [`docs/reference/`](docs/reference/) — game-system rules ported from the WoT RPG
 - [`data/world/README.md`](data/world/README.md) — zone YAML schema, room ID conventions, currency format, item taxonomy
