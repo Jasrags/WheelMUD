@@ -212,11 +212,17 @@ func (m *CharacterCreate) OnEnter(s *telnet.Session) error {
 		return nil
 	}
 	m.shown = true
-	header := "\r\nCreate a character.\r\n"
-	if m.catalog != nil {
-		header += "Type 'back' to revisit the previous step or 'cancel' to abort.\r\n"
+	if err := s.WriteString("\r\n{{Create a character.}}::cyan|bold\r\n"); err != nil {
+		return err
 	}
-	return s.WriteRaw([]byte(header))
+	if m.catalog != nil {
+		if err := s.WriteString(
+			"Type {{back}}::yellow to revisit the previous step or {{cancel}}::yellow to abort.\r\n",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *CharacterCreate) OnExit(_ *telnet.Session) error { return nil }
@@ -234,7 +240,7 @@ func (m *CharacterCreate) Handle(ctx context.Context, s *telnet.Session, line st
 func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, line string) error {
 	name := strings.TrimSpace(line)
 	if err := validateCharacterName(name); err != nil {
-		return s.WriteRaw([]byte(err.Error() + "\r\n"))
+		return writeError(s, err.Error())
 	}
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID: s.AccountID,
@@ -243,9 +249,9 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):
-		return s.WriteRaw([]byte("Character name already taken. Choose another.\r\n"))
+		return writeError(s, "Character name already taken. Choose another.")
 	case err != nil:
-		return s.WriteRaw([]byte("Character creation failed. Try again later.\r\n"))
+		return writeError(s, "Character creation failed. Try again later.")
 	}
 	return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
 }
@@ -261,10 +267,11 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 	case "cancel":
 		m.draft = chargenDraft{}
 		m.step = chargenStepName
-		return s.WriteRaw([]byte("Cancelled. Restarting character creation.\r\n"))
+		return s.WriteString(
+			"{{Cancelled. Restarting character creation.}}::yellow\r\n")
 	case "back":
 		if m.step == chargenStepName {
-			return s.WriteRaw([]byte("Already at the first step.\r\n"))
+			return writeError(s, "Already at the first step.")
 		}
 		m.step--
 		return nil
@@ -295,7 +302,7 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 
 func (m *CharacterCreate) applyName(s *telnet.Session, input string) error {
 	if err := validateCharacterName(input); err != nil {
-		return s.WriteRaw([]byte(err.Error() + "\r\n"))
+		return writeError(s, err.Error())
 	}
 	m.draft.Name = input
 	m.step = chargenStepRace
@@ -307,7 +314,7 @@ func (m *CharacterCreate) applyRace(s *telnet.Session, input string) error {
 	switch race {
 	case "human", "ogier":
 	default:
-		return s.WriteRaw([]byte("Race must be 'human' or 'ogier'.\r\n"))
+		return writeError(s, "Race must be 'human' or 'ogier'.")
 	}
 	m.draft.Race = race
 	m.step = chargenStepBackground
@@ -320,16 +327,24 @@ func (m *CharacterCreate) writeBackgroundMenu(s *telnet.Session) error {
 		// Catalog mis-seeded for this race; back the user up so they
 		// don't end up stuck.
 		m.step = chargenStepRace
-		return s.WriteRaw([]byte("No backgrounds available for that race; pick another race.\r\n"))
+		return writeError(s,
+			"No backgrounds available for that race; pick another race.")
+	}
+	if err := writeStepHeader(s, chargenStepBackground); err != nil {
+		return err
 	}
 	var b strings.Builder
-	b.WriteString("Backgrounds:\r\n")
+	b.WriteString("{{Backgrounds:}}::yellow|bold\r\n")
 	for i, bg := range bgs {
-		fmt.Fprintf(&b, "  %2d. %-16s %-22s %s\r\n",
-			i+1, bg.ID, bg.Name, backgroundSummary(bg))
+		fmt.Fprintf(&b,
+			"  {{%2d.}}::gray {{%-16s}}::yellow|bold %-22s %s\r\n",
+			i+1,
+			defangChargenField(bg.ID),
+			defangChargenField(bg.Name),
+			defangChargenField(backgroundSummary(bg)))
 	}
-	b.WriteString("Type 'info <id|#>' for full details.\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	b.WriteString("Type {{info <id|#>}}::yellow for full details.\r\n")
+	return s.WriteString(b.String())
 }
 
 // backgroundSummary renders the one-line menu hint for a background:
@@ -346,13 +361,14 @@ func (m *CharacterCreate) applyBackground(s *telnet.Session, input string) error
 	if rest, ok := stripInfoVerb(input); ok {
 		idx := pickFromList(rest, len(bgs), func(i int) string { return bgs[i].ID })
 		if idx < 0 {
-			return s.WriteRaw([]byte("Unknown background. Type the id or list number.\r\n"))
+			return writeError(s, "Unknown background. Type the id or list number.")
 		}
 		return m.writeBackgroundInfo(s, bgs[idx])
 	}
 	bg := pickFromList(input, len(bgs), func(i int) string { return bgs[i].ID })
 	if bg < 0 {
-		return s.WriteRaw([]byte("Unknown background. Type the id or list number, or 'info <id|#>'.\r\n"))
+		return writeError(s,
+			"Unknown background. Type the id or list number, or 'info <id|#>'.")
 	}
 	m.draft.BackgroundID = bgs[bg].ID
 	m.step = chargenStepClass
@@ -364,42 +380,83 @@ func (m *CharacterCreate) applyBackground(s *telnet.Session, input string) error
 // equipment-option bundles. The player can then pick by id/number, or
 // 'info' another option, or 'back' / 'cancel'.
 func (m *CharacterCreate) writeBackgroundInfo(s *telnet.Session, bg *chargen.Background) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s (%s)\r\n", bg.Name, bg.ID)
-	fmt.Fprintf(&b, "  Home language:    %s\r\n", bg.HomeLanguage)
+	if err := s.WriteString(fmt.Sprintf(
+		"{{%s (%s)}}::cyan|bold\r\n",
+		defangChargenField(bg.Name), defangChargenField(bg.ID),
+	)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Home language", bg.HomeLanguage); err != nil {
+		return err
+	}
 	if len(bg.BonusLanguages) > 0 {
-		fmt.Fprintf(&b, "  Bonus languages:  %s\r\n", strings.Join(bg.BonusLanguages, ", "))
+		if err := writeFieldRow(s, "Bonus languages",
+			strings.Join(bg.BonusLanguages, ", ")); err != nil {
+			return err
+		}
 	}
 	if len(bg.BonusFeats) > 0 {
-		fmt.Fprintf(&b, "  Bonus feats:      %s\r\n", strings.Join(bg.BonusFeats, ", "))
+		if err := writeFieldRow(s, "Bonus feats",
+			strings.Join(bg.BonusFeats, ", ")); err != nil {
+			return err
+		}
 	}
 	if len(bg.BackgroundSkills) > 0 {
-		fmt.Fprintf(&b, "  Background skills:%s\r\n", " "+strings.Join(bg.BackgroundSkills, ", "))
+		if err := writeFieldRow(s, "Background skills",
+			strings.Join(bg.BackgroundSkills, ", ")); err != nil {
+			return err
+		}
 	}
 	if bg.RequiredSkill != "" {
-		fmt.Fprintf(&b, "  Required skill:   %s\r\n", bg.RequiredSkill)
+		if err := writeFieldRow(s, "Required skill", bg.RequiredSkill); err != nil {
+			return err
+		}
 	}
 	if bg.SkillRestriction != "" {
-		fmt.Fprintf(&b, "  Skill restriction:%s\r\n", " "+bg.SkillRestriction)
+		if err := writeFieldRow(s, "Skill restriction", bg.SkillRestriction); err != nil {
+			return err
+		}
 	}
 	if bg.WeaponRestriction != "" {
-		fmt.Fprintf(&b, "  Weapon restriction:%s\r\n", " "+bg.WeaponRestriction)
+		if err := writeFieldRow(s, "Weapon restriction", bg.WeaponRestriction); err != nil {
+			return err
+		}
 	}
 	if bg.HeightModIn != 0 {
-		fmt.Fprintf(&b, "  Height mod:       %+d in\r\n", bg.HeightModIn)
+		if err := writeFieldRow(s, "Height mod",
+			fmt.Sprintf("%+d in", bg.HeightModIn)); err != nil {
+			return err
+		}
 	}
 	if len(bg.EquipmentOptions) > 0 {
-		b.WriteString("  Equipment options:\r\n")
+		if err := s.WriteString(
+			"  {{Equipment options:}}::yellow|bold\r\n"); err != nil {
+			return err
+		}
+		var b strings.Builder
 		for i, eo := range bg.EquipmentOptions {
-			fmt.Fprintf(&b, "    %d. %s\r\n", i+1, eo.Label)
+			fmt.Fprintf(&b, "    {{%d.}}::gray %s\r\n",
+				i+1, defangChargenField(eo.Label))
+		}
+		if err := s.WriteString(b.String()); err != nil {
+			return err
 		}
 	}
 	if bg.Description != "" {
-		b.WriteString("\r\n")
-		b.WriteString(strings.TrimRight(bg.Description, "\n"))
-		b.WriteString("\r\n")
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
+		// Description is builder-authored prose: pass through cfmt +
+		// width-aware wrap. NOT defanged — builders may intentionally
+		// colour the prose, mirroring look.go's LongDesc handling.
+		if err := s.WriteWrapped(strings.TrimRight(bg.Description, "\n")); err != nil {
+			return err
+		}
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return writeRule(s)
 }
 
 // stripInfoVerb returns the trailing argument when input begins with
@@ -424,16 +481,24 @@ func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
 	cls := m.catalog.ClassesForRace(m.draft.Race)
 	if len(cls) == 0 {
 		m.step = chargenStepBackground
-		return s.WriteRaw([]byte("No classes available for that race; revise your background.\r\n"))
+		return writeError(s,
+			"No classes available for that race; revise your background.")
+	}
+	if err := writeStepHeader(s, chargenStepClass); err != nil {
+		return err
 	}
 	var b strings.Builder
-	b.WriteString("Classes:\r\n")
+	b.WriteString("{{Classes:}}::yellow|bold\r\n")
 	for i, cl := range cls {
-		fmt.Fprintf(&b, "  %2d. %-16s %-18s %s\r\n",
-			i+1, cl.ID, cl.Name, classSummary(cl))
+		fmt.Fprintf(&b,
+			"  {{%2d.}}::gray {{%-16s}}::yellow|bold %-18s %s\r\n",
+			i+1,
+			defangChargenField(cl.ID),
+			defangChargenField(cl.Name),
+			defangChargenField(classSummary(cl)))
 	}
-	b.WriteString("Type 'info <id|#>' for full details.\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	b.WriteString("Type {{info <id|#>}}::yellow for full details.\r\n")
+	return s.WriteString(b.String())
 }
 
 // classSummary renders the one-line menu hint: hit die, BAB
@@ -451,13 +516,14 @@ func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
 	if rest, ok := stripInfoVerb(input); ok {
 		idx := pickFromList(rest, len(cls), func(i int) string { return cls[i].ID })
 		if idx < 0 {
-			return s.WriteRaw([]byte("Unknown class. Type the id or list number.\r\n"))
+			return writeError(s, "Unknown class. Type the id or list number.")
 		}
 		return m.writeClassInfo(s, cls[idx])
 	}
 	idx := pickFromList(input, len(cls), func(i int) string { return cls[i].ID })
 	if idx < 0 {
-		return s.WriteRaw([]byte("Unknown class. Type the id or list number, or 'info <id|#>'.\r\n"))
+		return writeError(s,
+			"Unknown class. Type the id or list number, or 'info <id|#>'.")
 	}
 	m.draft.ClassID = cls[idx].ID
 	m.step = chargenStepAbilities
@@ -469,28 +535,64 @@ func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
 // per-level skill points, key abilities, channeler source, class
 // skills, and the narrative blurb.
 func (m *CharacterCreate) writeClassInfo(s *telnet.Session, cl *chargen.Class) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s (%s)\r\n", cl.Name, cl.ID)
-	fmt.Fprintf(&b, "  Hit die:        d%d\r\n", cl.HitDie)
-	fmt.Fprintf(&b, "  BAB:            %s\r\n", cl.BAB)
-	fmt.Fprintf(&b, "  Saves:          fort=%s ref=%s will=%s\r\n",
-		cl.SaveFort, cl.SaveRef, cl.SaveWill)
-	fmt.Fprintf(&b, "  Skill points:   %d/lvl (×4 at 1st)\r\n", cl.SkillPoints)
+	if err := s.WriteString(fmt.Sprintf(
+		"{{%s (%s)}}::cyan|bold\r\n",
+		defangChargenField(cl.Name), defangChargenField(cl.ID),
+	)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Hit die", fmt.Sprintf("d%d", cl.HitDie)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "BAB", string(cl.BAB)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Saves", fmt.Sprintf(
+		"fort=%s ref=%s will=%s", cl.SaveFort, cl.SaveRef, cl.SaveWill,
+	)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Skill points",
+		fmt.Sprintf("%d/lvl (×4 at 1st)", cl.SkillPoints)); err != nil {
+		return err
+	}
 	if len(cl.KeyAbilities) > 0 {
-		fmt.Fprintf(&b, "  Key abilities:  %s\r\n", strings.Join(cl.KeyAbilities, ", "))
+		if err := writeFieldRow(s, "Key abilities",
+			strings.Join(cl.KeyAbilities, ", ")); err != nil {
+			return err
+		}
 	}
 	if cl.Channeler {
-		fmt.Fprintf(&b, "  Channeler:      yes (source: %s)\r\n", cl.ChannelSource)
+		// Channeler accent: cyan-bold draws the eye to the most
+		// distinctive class trait without claiming saidin/saidar
+		// blue/white that are reserved for in-world weave colouring
+		// (see skills/mud/ui-expert/references/theme-and-cfmt-vocabulary.md).
+		if err := s.WriteString(fmt.Sprintf(
+			"  {{%-*s}}::yellow|bold {{yes}}::cyan|bold (source: %s) — channeler\r\n",
+			chargenLabelGutter, "Channeler:",
+			defangChargenField(cl.ChannelSource),
+		)); err != nil {
+			return err
+		}
 	}
 	if len(cl.ClassSkills) > 0 {
-		fmt.Fprintf(&b, "  Class skills:   %s\r\n", strings.Join(cl.ClassSkills, ", "))
+		if err := writeFieldRow(s, "Class skills",
+			strings.Join(cl.ClassSkills, ", ")); err != nil {
+			return err
+		}
 	}
 	if cl.Description != "" {
-		b.WriteString("\r\n")
-		b.WriteString(strings.TrimRight(cl.Description, "\n"))
-		b.WriteString("\r\n")
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
+		if err := s.WriteWrapped(strings.TrimRight(cl.Description, "\n")); err != nil {
+			return err
+		}
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
 	}
-	return s.WriteRaw([]byte(b.String()))
+	return writeRule(s)
 }
 
 // initAbilitiesIfNeeded primes every slot to the point-buy floor on
@@ -525,21 +627,37 @@ func (m *CharacterCreate) pointBuySpent() int {
 }
 
 func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
+	if err := writeStepHeader(s, chargenStepAbilities); err != nil {
+		return err
+	}
 	spent := m.pointBuySpent()
+	remaining := pointBuyBudget - spent
 	var b strings.Builder
-	b.WriteString("Point-buy ability scores:\r\n")
+	b.WriteString("{{Point-buy ability scores:}}::yellow|bold\r\n")
 	for i, key := range abilityKeys {
 		score := int(m.draft.Abilities[i])
 		mod := abilityModifier(score)
-		fmt.Fprintf(&b, "  %s %2d (mod %+d, cost %d)\r\n",
+		fmt.Fprintf(&b,
+			"  {{%s}}::yellow|bold {{%2d}}::yellow (mod %+d, cost %d)\r\n",
 			strings.ToUpper(key), score, mod, pointBuyCost(score))
 	}
-	fmt.Fprintf(&b, "  budget %d / spent %d / remaining %d\r\n",
-		pointBuyBudget, spent, pointBuyBudget-spent)
-	b.WriteString("  set <abil> <n>   change one score (8..18)\r\n")
-	b.WriteString("  reset            send all scores back to 8\r\n")
-	b.WriteString("  done             accept and continue\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	// Remaining-points colour rule: green ≥1, yellow at 0, red <0.
+	// The current code rejects on assignment, so the red branch only
+	// renders on re-entry from `back` — keep it defensively.
+	remTag := "green|bold"
+	switch {
+	case remaining < 0:
+		remTag = "red|bold"
+	case remaining == 0:
+		remTag = "yellow|bold"
+	}
+	fmt.Fprintf(&b,
+		"  Budget {{%d}}::yellow|bold · Spent {{%d}}::yellow · Remaining {{%d}}::%s\r\n",
+		pointBuyBudget, spent, remaining, remTag)
+	b.WriteString("  {{set}}::yellow <abil> <n>   change one score (8..18)\r\n")
+	b.WriteString("  {{reset}}::yellow            send all scores back to 8\r\n")
+	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	return s.WriteString(b.String())
 }
 
 // abilityModifier mirrors creature.AbilityModifier (floor((s-10)/2))
@@ -574,7 +692,7 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 		return m.writeAbilitiesMenu(s)
 	case "done", "next":
 		if m.pointBuySpent() > pointBuyBudget {
-			return s.WriteRaw([]byte("You're over budget; reduce a score or 'reset'.\r\n"))
+			return writeError(s, "You're over budget; reduce a score or 'reset'.")
 		}
 		m.step = chargenStepIdentity
 		m.initIdentityIfNeeded()
@@ -589,18 +707,19 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 	case len(fields) == 2:
 		abil, scoreStr = verb, fields[1]
 	default:
-		return s.WriteRaw([]byte("Usage: set <abil> <n>  |  reset  |  done\r\n"))
+		return writeError(s, "Usage: set <abil> <n>  |  reset  |  done")
 	}
 
 	idx := abilityIndex(abil)
 	if idx < 0 {
-		return s.WriteRaw([]byte("Ability must be one of str, dex, con, int, wis, cha.\r\n"))
+		return writeError(s,
+			"Ability must be one of str, dex, con, int, wis, cha.")
 	}
 	score, err := strconv.Atoi(scoreStr)
 	if err != nil || score < pointBuyMinScore || score > pointBuyMaxScore {
-		return s.WriteRaw([]byte(fmt.Sprintf(
-			"Score must be an integer in [%d..%d].\r\n",
-			pointBuyMinScore, pointBuyMaxScore)))
+		return writeError(s, fmt.Sprintf(
+			"Score must be an integer in [%d..%d].",
+			pointBuyMinScore, pointBuyMaxScore))
 	}
 
 	// Try the assignment; reject if it would push us over budget.
@@ -608,10 +727,10 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 	m.draft.Abilities[idx] = int8(score)
 	if m.pointBuySpent() > pointBuyBudget {
 		m.draft.Abilities[idx] = prev
-		return s.WriteRaw([]byte(fmt.Sprintf(
-			"Not enough points (would cost %d, %d remaining).\r\n",
+		return writeError(s, fmt.Sprintf(
+			"Not enough points (would cost %d, %d remaining).",
 			pointBuyCost(score)-pointBuyCost(int(prev)),
-			pointBuyBudget-m.pointBuySpent())))
+			pointBuyBudget-m.pointBuySpent()))
 	}
 	return m.writeAbilitiesMenu(s)
 }
@@ -649,31 +768,76 @@ func abilityIndex(token string) int {
 func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 	bg, _ := m.catalog.Background(m.draft.BackgroundID)
 	cl, _ := m.catalog.Class(m.draft.ClassID)
-	var b strings.Builder
-	b.WriteString("Review:\r\n")
-	fmt.Fprintf(&b, "  Name:       %s\r\n", m.draft.Name)
-	fmt.Fprintf(&b, "  Race:       %s\r\n", m.draft.Race)
+	if err := writeStepHeader(s, chargenStepReview); err != nil {
+		return err
+	}
+
+	// Identity group ───────────────────────────────────────────────
+	if err := s.WriteString("\r\n{{Identity}}::cyan|bold\r\n"); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Name", m.draft.Name); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Race", m.draft.Race); err != nil {
+		return err
+	}
+	if m.draft.IdentitySet {
+		if err := writeFieldRow(s, "Gender", genderLabel(m.draft.Gender)); err != nil {
+			return err
+		}
+		if err := writeFieldRow(s, "Age", fmt.Sprintf("%d", m.draft.Age)); err != nil {
+			return err
+		}
+		if err := writeFieldRow(s, "Height", renderHeight(m.draft.HeightCm)); err != nil {
+			return err
+		}
+		if err := writeFieldRow(s, "Weight", renderWeight(m.draft.WeightKg)); err != nil {
+			return err
+		}
+		if err := writeFieldRow(s, "Handed", handLabel(m.draft.Handedness)); err != nil {
+			return err
+		}
+		if err := writeFieldRow(s, "Alignment", postureLabel(m.draft.Alignment)); err != nil {
+			return err
+		}
+	}
+
+	// Build group ──────────────────────────────────────────────────
+	if err := s.WriteString("\r\n{{Build}}::cyan|bold\r\n"); err != nil {
+		return err
+	}
 	if bg != nil {
-		fmt.Fprintf(&b, "  Background: %s (%s)\r\n", bg.Name, bg.ID)
+		if err := writeFieldRow(s, "Background",
+			fmt.Sprintf("%s (%s)", bg.Name, bg.ID)); err != nil {
+			return err
+		}
 	}
 	if cl != nil {
-		fmt.Fprintf(&b, "  Class:      %s (%s)\r\n", cl.Name, cl.ID)
+		if err := writeFieldRow(s, "Class",
+			fmt.Sprintf("%s (%s)", cl.Name, cl.ID)); err != nil {
+			return err
+		}
 	}
-	b.WriteString("  Abilities:  ")
+	var ab strings.Builder
 	for i, key := range abilityKeys {
 		if i > 0 {
-			b.WriteString(" ")
+			ab.WriteString("  ")
 		}
-		fmt.Fprintf(&b, "%s %d", strings.ToUpper(key), m.draft.Abilities[i])
+		fmt.Fprintf(&ab, "%s %d", strings.ToUpper(key), m.draft.Abilities[i])
 	}
-	b.WriteString("\r\n")
-	if m.draft.IdentitySet {
-		fmt.Fprintf(&b, "  Gender:     %s\r\n", genderLabel(m.draft.Gender))
-		fmt.Fprintf(&b, "  Age:        %d\r\n", m.draft.Age)
-		fmt.Fprintf(&b, "  Height:     %s\r\n", renderHeight(m.draft.HeightCm))
-		fmt.Fprintf(&b, "  Weight:     %s\r\n", renderWeight(m.draft.WeightKg))
-		fmt.Fprintf(&b, "  Handed:     %s\r\n", handLabel(m.draft.Handedness))
-		fmt.Fprintf(&b, "  Alignment:  %s\r\n", postureLabel(m.draft.Alignment))
+	if err := writeFieldRow(s, "Abilities", ab.String()); err != nil {
+		return err
+	}
+
+	// Loadout group ────────────────────────────────────────────────
+	loadoutOpen := false
+	openLoadout := func() error {
+		if loadoutOpen {
+			return nil
+		}
+		loadoutOpen = true
+		return s.WriteString("\r\n{{Loadout}}::cyan|bold\r\n")
 	}
 	if bg != nil {
 		feats := append([]string{}, bg.BonusFeats...)
@@ -681,11 +845,19 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 			feats = append(feats, m.draft.SelectedFeatID)
 		}
 		if len(feats) > 0 {
-			fmt.Fprintf(&b, "  Feats:      %s\r\n",
-				strings.Join(featNames(m.catalog, feats), ", "))
+			if err := openLoadout(); err != nil {
+				return err
+			}
+			if err := writeFieldRow(s, "Feats",
+				strings.Join(featNames(m.catalog, feats), ", ")); err != nil {
+				return err
+			}
 		}
 	}
 	if len(m.draft.SkillRanks) > 0 {
+		if err := openLoadout(); err != nil {
+			return err
+		}
 		ids := make([]string, 0, len(m.draft.SkillRanks))
 		for id := range m.draft.SkillRanks {
 			ids = append(ids, id)
@@ -699,14 +871,24 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 			}
 			parts = append(parts, fmt.Sprintf("%s %d", name, m.draft.SkillRanks[id]))
 		}
-		fmt.Fprintf(&b, "  Skills:     %s\r\n", strings.Join(parts, ", "))
+		if err := writeFieldRow(s, "Skills", strings.Join(parts, ", ")); err != nil {
+			return err
+		}
 	}
-	return s.WriteRaw([]byte(b.String()))
+
+	if err := writeRule(s); err != nil {
+		return err
+	}
+	return s.WriteString(
+		"  Type {{yes}}::green|bold to confirm, " +
+			"{{back}}::yellow to revise, " +
+			"{{cancel}}::red to abort.\r\n")
 }
 
 func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, input string) error {
 	if !strings.EqualFold(input, "yes") && !strings.EqualFold(input, "y") {
-		return s.WriteRaw([]byte("Type 'yes' to confirm, 'back' to revise, or 'cancel' to abort.\r\n"))
+		return writeError(s,
+			"Type 'yes' to confirm, 'back' to revise, or 'cancel' to abort.")
 	}
 
 	// Identity must be stamped before commit — otherwise GenderNone /
@@ -727,7 +909,7 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		// these up. Defensive reset rather than panic.
 		m.draft = chargenDraft{}
 		m.step = chargenStepName
-		return s.WriteRaw([]byte("Internal catalog error; please start over.\r\n"))
+		return writeError(s, "Internal catalog error; please start over.")
 	}
 
 	race := creature.RaceHuman
@@ -761,9 +943,9 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		// every other selection — they only need to retype the name.
 		m.step = chargenStepName
 		m.draft.Name = ""
-		return s.WriteRaw([]byte("Character name already taken. Choose another.\r\n"))
+		return writeError(s, "Character name already taken. Choose another.")
 	case err != nil:
-		return s.WriteRaw([]byte("Character creation failed. Try again later.\r\n"))
+		return writeError(s, "Character creation failed. Try again later.")
 	}
 
 	m.step = chargenStepDone

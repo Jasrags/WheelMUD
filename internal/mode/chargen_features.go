@@ -108,35 +108,45 @@ func (m *CharacterCreate) initFeatStepIfNeeded() {
 func (m *CharacterCreate) writeFeatMenu(s *telnet.Session) error {
 	bg, _ := m.catalog.Background(m.draft.BackgroundID)
 	if bg == nil {
-		return s.WriteRaw([]byte("Internal catalog error; background missing.\r\n"))
+		return writeError(s, "Internal catalog error; background missing.")
+	}
+	if err := writeStepHeader(s, chargenStepFeat); err != nil {
+		return err
 	}
 	feats := m.catalog.FeatsForBackground(bg.ID)
 	var b strings.Builder
-	b.WriteString("First-level feat:\r\n")
+	b.WriteString("{{First-level feat:}}::yellow|bold\r\n")
 	if len(bg.BonusFeats) > 0 {
-		fmt.Fprintf(&b, "  Bonus feats (auto): %s\r\n",
-			strings.Join(featNames(m.catalog, bg.BonusFeats), ", "))
+		fmt.Fprintf(&b,
+			"  {{Bonus feats (auto):}}::yellow|bold %s\r\n",
+			defangChargenField(strings.Join(
+				featNames(m.catalog, bg.BonusFeats), ", ")))
 	}
 	if len(feats) == 0 {
-		b.WriteString("  (no background-restricted feats — type 'done')\r\n")
+		b.WriteString(
+			"  {{(no background-restricted feats — type 'done')}}::gray\r\n")
 	} else {
-		b.WriteString("  Choices:\r\n")
+		b.WriteString("  {{Choices:}}::yellow|bold\r\n")
 		for i, f := range feats {
-			marker := " "
 			if f.ID == m.draft.SelectedFeatID {
-				marker = "*"
+				fmt.Fprintf(&b,
+					"  {{*}}::green|bold {{%2d.}}::gray {{%-22s}}::yellow|bold %s\r\n",
+					i+1, defangChargenField(f.ID), defangChargenField(f.Name))
+			} else {
+				fmt.Fprintf(&b,
+					"    {{%2d.}}::gray {{%-22s}}::yellow|bold %s\r\n",
+					i+1, defangChargenField(f.ID), defangChargenField(f.Name))
 			}
-			fmt.Fprintf(&b, "  %s %2d. %-22s %s\r\n",
-				marker, i+1, f.ID, f.Name)
 		}
 	}
 	if m.draft.SelectedFeatID != "" {
-		fmt.Fprintf(&b, "  Selected: %s\r\n", m.draft.SelectedFeatID)
+		fmt.Fprintf(&b, "  {{Selected:}}::green|bold {{%s}}::green\r\n",
+			defangChargenField(m.draft.SelectedFeatID))
 	}
-	b.WriteString("  pick <id|#>      choose your 1st-level feat\r\n")
-	b.WriteString("  info <id|#>      show feat description\r\n")
-	b.WriteString("  done             accept and continue\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	b.WriteString("  {{pick <id|#>}}::yellow      choose your 1st-level feat\r\n")
+	b.WriteString("  {{info <id|#>}}::yellow      show feat description\r\n")
+	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	return s.WriteString(b.String())
 }
 
 // featNames maps a slice of feat ids to display names via the catalog,
@@ -162,7 +172,7 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 	}
 	bg, _ := m.catalog.Background(m.draft.BackgroundID)
 	if bg == nil {
-		return s.WriteRaw([]byte("Internal catalog error; background missing.\r\n"))
+		return writeError(s, "Internal catalog error; background missing.")
 	}
 	feats := m.catalog.FeatsForBackground(bg.ID)
 	verb := strings.ToLower(fields[0])
@@ -175,7 +185,7 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 		// Empty pick is OK if the background offers no feats — the
 		// player still gets bg.BonusFeats.
 		if m.draft.SelectedFeatID == "" && len(feats) > 0 {
-			return s.WriteRaw([]byte("Pick a feat first, or 'pick <id|#>'.\r\n"))
+			return writeError(s, "Pick a feat first, or 'pick <id|#>'.")
 		}
 		m.step = chargenStepSkills
 		m.initSkillsStepIfNeeded()
@@ -183,13 +193,13 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 	case "info":
 		idx := pickFromList(rest, len(feats), func(i int) string { return feats[i].ID })
 		if idx < 0 {
-			return s.WriteRaw([]byte("Unknown feat. Type the id or list number.\r\n"))
+			return writeError(s, "Unknown feat. Type the id or list number.")
 		}
 		return m.writeFeatInfo(s, feats[idx])
 	case "pick":
 		idx := pickFromList(rest, len(feats), func(i int) string { return feats[i].ID })
 		if idx < 0 {
-			return s.WriteRaw([]byte("Unknown feat. Type the id or list number.\r\n"))
+			return writeError(s, "Unknown feat. Type the id or list number.")
 		}
 		m.draft.SelectedFeatID = feats[idx].ID
 		return m.writeFeatMenu(s)
@@ -200,17 +210,25 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 		m.draft.SelectedFeatID = feats[idx].ID
 		return m.writeFeatMenu(s)
 	}
-	return s.WriteRaw([]byte("Usage: pick <id|#> | info <id|#> | done\r\n"))
+	return writeError(s, "Usage: pick <id|#> | info <id|#> | done")
 }
 
 func (m *CharacterCreate) writeFeatInfo(s *telnet.Session, f *chargen.Feat) error {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s (%s)\r\n", f.Name, f.ID)
-	if f.Description != "" {
-		b.WriteString(strings.TrimRight(f.Description, "\n"))
-		b.WriteString("\r\n")
+	if err := s.WriteString(fmt.Sprintf(
+		"{{%s (%s)}}::cyan|bold\r\n",
+		defangChargenField(f.Name), defangChargenField(f.ID),
+	)); err != nil {
+		return err
 	}
-	return s.WriteRaw([]byte(b.String()))
+	if f.Description != "" {
+		if err := s.WriteWrapped(strings.TrimRight(f.Description, "\n")); err != nil {
+			return err
+		}
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
+	}
+	return writeRule(s)
 }
 
 // initSkillsStepIfNeeded stamps the budget and zero-rank map on first
@@ -240,9 +258,13 @@ func (m *CharacterCreate) skillsSpent() int {
 }
 
 func (m *CharacterCreate) writeSkillsMenu(s *telnet.Session) error {
+	if err := writeStepHeader(s, chargenStepSkills); err != nil {
+		return err
+	}
 	skills := m.allowedSkillIDs()
 	var b strings.Builder
-	b.WriteString("Skill ranks (class + background skills, cap 4 each):\r\n")
+	b.WriteString(
+		"{{Skill ranks}}::yellow|bold (class + background skills, cap 4 each):\r\n")
 	for i, id := range skills {
 		sk, _ := m.catalog.Skill(id)
 		name := id
@@ -251,16 +273,35 @@ func (m *CharacterCreate) writeSkillsMenu(s *telnet.Session) error {
 			name = sk.Name
 			ability = sk.Ability
 		}
-		fmt.Fprintf(&b, "  %2d. %-22s %-3s ranks=%d\r\n",
-			i+1, name, ability, m.draft.SkillRanks[id])
+		ranks := m.draft.SkillRanks[id]
+		// Highlight skills that have a non-zero rank so the eye can
+		// scan allocations at a glance.
+		if ranks > 0 {
+			fmt.Fprintf(&b,
+				"  {{%2d.}}::gray {{%-22s}}::yellow|bold {{%-3s}}::gray ranks={{%d}}::green|bold\r\n",
+				i+1, defangChargenField(name), defangChargenField(ability), ranks)
+		} else {
+			fmt.Fprintf(&b,
+				"  {{%2d.}}::gray {{%-22s}}::yellow {{%-3s}}::gray ranks=%d\r\n",
+				i+1, defangChargenField(name), defangChargenField(ability), ranks)
+		}
 	}
 	spent := m.skillsSpent()
-	fmt.Fprintf(&b, "  budget %d / spent %d / remaining %d\r\n",
-		m.draft.SkillBudget, spent, int(m.draft.SkillBudget)-spent)
-	b.WriteString("  rank <id|#> <n>  set ranks (0..4) on one skill\r\n")
-	b.WriteString("  reset            zero every skill\r\n")
-	b.WriteString("  done             accept and continue\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	remaining := int(m.draft.SkillBudget) - spent
+	remTag := "green|bold"
+	switch {
+	case remaining < 0:
+		remTag = "red|bold"
+	case remaining == 0:
+		remTag = "yellow|bold"
+	}
+	fmt.Fprintf(&b,
+		"  Budget {{%d}}::yellow|bold · Spent {{%d}}::yellow · Remaining {{%d}}::%s\r\n",
+		m.draft.SkillBudget, spent, remaining, remTag)
+	b.WriteString("  {{rank <id|#> <n>}}::yellow  set ranks (0..4) on one skill\r\n")
+	b.WriteString("  {{reset}}::yellow            zero every skill\r\n")
+	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	return s.WriteString(b.String())
 }
 
 func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
@@ -285,22 +326,22 @@ func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
 		return m.writeReview(s)
 	case "rank":
 		if len(fields) != 3 {
-			return s.WriteRaw([]byte("Usage: rank <id|#> <n>\r\n"))
+			return writeError(s, "Usage: rank <id|#> <n>")
 		}
 		return m.applySkillRank(s, skills, fields[1], fields[2])
 	}
-	return s.WriteRaw([]byte("Usage: rank <id|#> <n> | reset | done\r\n"))
+	return writeError(s, "Usage: rank <id|#> <n> | reset | done")
 }
 
 func (m *CharacterCreate) applySkillRank(s *telnet.Session, skills []string, idTok, nTok string) error {
 	idx := pickFromList(idTok, len(skills), func(i int) string { return skills[i] })
 	if idx < 0 {
-		return s.WriteRaw([]byte("Unknown skill. Type the id or list number.\r\n"))
+		return writeError(s, "Unknown skill. Type the id or list number.")
 	}
 	n, err := strconv.Atoi(nTok)
 	if err != nil || n < 0 || n > classSkillRankCapL1 {
-		return s.WriteRaw([]byte(fmt.Sprintf(
-			"Ranks must be an integer in [0..%d].\r\n", classSkillRankCapL1)))
+		return writeError(s, fmt.Sprintf(
+			"Ranks must be an integer in [0..%d].", classSkillRankCapL1))
 	}
 	id := skills[idx]
 	prev := m.draft.SkillRanks[id]
@@ -313,9 +354,9 @@ func (m *CharacterCreate) applySkillRank(s *telnet.Session, skills []string, idT
 		} else {
 			m.draft.SkillRanks[id] = prev
 		}
-		return s.WriteRaw([]byte(fmt.Sprintf(
-			"Not enough points (%d remaining).\r\n",
-			int(m.draft.SkillBudget)-m.skillsSpent())))
+		return writeError(s, fmt.Sprintf(
+			"Not enough points (%d remaining).",
+			int(m.draft.SkillBudget)-m.skillsSpent()))
 	}
 	if n == 0 {
 		// Keep the map sparse so an empty rank doesn't render

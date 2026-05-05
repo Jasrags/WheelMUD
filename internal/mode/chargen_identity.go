@@ -207,21 +207,35 @@ func postureLabel(p creature.Posture) string {
 }
 
 func (m *CharacterCreate) writeIdentityMenu(s *telnet.Session) error {
+	if err := writeStepHeader(s, chargenStepIdentity); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Gender", genderLabel(m.draft.Gender)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Age", fmt.Sprintf("%d", m.draft.Age)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Height", renderHeight(m.draft.HeightCm)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Weight", renderWeight(m.draft.WeightKg)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Handed", handLabel(m.draft.Handedness)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Alignment", postureLabel(m.draft.Alignment)); err != nil {
+		return err
+	}
 	var b strings.Builder
-	b.WriteString("Identity:\r\n")
-	fmt.Fprintf(&b, "  Gender:    %s\r\n", genderLabel(m.draft.Gender))
-	fmt.Fprintf(&b, "  Age:       %d\r\n", m.draft.Age)
-	fmt.Fprintf(&b, "  Height:    %s\r\n", renderHeight(m.draft.HeightCm))
-	fmt.Fprintf(&b, "  Weight:    %s\r\n", renderWeight(m.draft.WeightKg))
-	fmt.Fprintf(&b, "  Handed:    %s\r\n", handLabel(m.draft.Handedness))
-	fmt.Fprintf(&b, "  Alignment: %s\r\n", postureLabel(m.draft.Alignment))
-	b.WriteString("  gender <m|f>           set gender (re-rolls height/weight)\r\n")
-	b.WriteString("  age <n>                set age in years\r\n")
-	b.WriteString("  handed <r|l|a>         right / left / ambidextrous\r\n")
-	b.WriteString("  align <good|bad|evil>  alignment posture\r\n")
-	b.WriteString("  roll                   re-roll height and weight\r\n")
-	b.WriteString("  done                   accept and continue\r\n")
-	return s.WriteRaw([]byte(b.String()))
+	b.WriteString("  {{gender <m|f>}}::yellow           set gender (re-rolls height/weight)\r\n")
+	b.WriteString("  {{age <n>}}::yellow                set age in years\r\n")
+	b.WriteString("  {{handed <r|l|a>}}::yellow         right / left / ambidextrous\r\n")
+	b.WriteString("  {{align <good|bad|evil>}}::yellow  alignment posture\r\n")
+	b.WriteString("  {{roll}}::yellow                   re-roll height and weight\r\n")
+	b.WriteString("  {{done}}::green|bold                   accept and continue\r\n")
+	return s.WriteString(b.String())
 }
 
 // applyIdentity dispatches one of the identity verbs. Verbs mutate the
@@ -257,7 +271,8 @@ func (m *CharacterCreate) applyIdentity(s *telnet.Session, input string) error {
 		return m.applyIdentityAlign(s, arg)
 	}
 
-	return s.WriteRaw([]byte("Usage: gender <m|f> | age <n> | handed <r|l|a> | align <good|bad|evil> | roll | done\r\n"))
+	return writeError(s,
+		"Usage: gender <m|f> | age <n> | handed <r|l|a> | align <good|bad|evil> | roll | done")
 }
 
 func (m *CharacterCreate) applyIdentityGender(s *telnet.Session, arg string) error {
@@ -267,7 +282,7 @@ func (m *CharacterCreate) applyIdentityGender(s *telnet.Session, arg string) err
 	case "f", "female":
 		m.draft.Gender = creature.GenderFemale
 	default:
-		return s.WriteRaw([]byte("Gender must be 'm' / 'male' or 'f' / 'female'.\r\n"))
+		return writeError(s, "Gender must be 'm' / 'male' or 'f' / 'female'.")
 	}
 	// Base height/weight depends on gender; re-roll so the line
 	// stays consistent with the chosen gender.
@@ -278,7 +293,7 @@ func (m *CharacterCreate) applyIdentityGender(s *telnet.Session, arg string) err
 func (m *CharacterCreate) applyIdentityAge(s *telnet.Session, arg string) error {
 	n, err := strconv.Atoi(arg)
 	if err != nil || n < 1 || n > maxIdentityAgeYears {
-		return s.WriteRaw([]byte("Age must be a positive integer.\r\n"))
+		return writeError(s, "Age must be a positive integer.")
 	}
 	m.draft.Age = int16(n)
 	return m.writeIdentityMenu(s)
@@ -293,7 +308,7 @@ func (m *CharacterCreate) applyIdentityHanded(s *telnet.Session, arg string) err
 	case "a", "ambi", "ambidextrous":
 		m.draft.Handedness = creature.HandAmbidextrous
 	default:
-		return s.WriteRaw([]byte("Handedness must be 'r' / 'l' / 'a'.\r\n"))
+		return writeError(s, "Handedness must be 'r' / 'l' / 'a'.")
 	}
 	return m.writeIdentityMenu(s)
 }
@@ -307,7 +322,7 @@ func (m *CharacterCreate) applyIdentityAlign(s *telnet.Session, arg string) erro
 	case "evil":
 		m.draft.Alignment = creature.PostureEvil
 	default:
-		return s.WriteRaw([]byte("Alignment must be 'good', 'bad', or 'evil'.\r\n"))
+		return writeError(s, "Alignment must be 'good', 'bad', or 'evil'.")
 	}
 	return m.writeIdentityMenu(s)
 }
