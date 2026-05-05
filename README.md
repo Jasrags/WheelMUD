@@ -5,16 +5,23 @@ world + accounts, mode-stack command dispatcher, ANSI/cfmt rendering with
 width-aware reflow.
 
 > Status: pre-alpha. Network/protocol, login + character create/select,
-> world loader with hierarchical zone tree (continent/nation/region/
-> settlement/building) and persisted zones table, room/exit/item/mob
-> persistence with door verbs (open/close/lock/unlock/pick) and item
-> taxonomy (weapons/armor/containers/keys/etc.), movement + look +
-> examine + teleport, inventory verbs (inventory/get/drop/give) with
-> Str-based encumbrance and currency-aware `give 5sp <name>`,
-> communication (say / tell / reply / channels), session registry,
-> persist manager, tick scheduler, and admin inspectors (whereami,
-> zones) are in. Combat, skills, quests, OLC, area resets, banks/
-> shops, and broader admin tooling are pending.
+> connect splash + per-character MOTD/news on login, world loader
+> with hierarchical zone tree (continent/nation/region/settlement/
+> building) and persisted zones table, room/exit/item/mob
+> persistence with door verbs (open/close/lock/unlock/pick) and
+> item taxonomy (weapons/armor/containers/keys/lights/etc.),
+> container semantics (`put` / `get <item> from <container>` /
+> `look in`, capacity limits, recursive contents), movement +
+> look + examine + teleport, inventory verbs (inventory / get /
+> drop / give) with Str-based encumbrance and currency-aware
+> `give 5sp <name>`, communication (say / tell / reply / shout /
+> yell / channels), session registry, persist manager, tick
+> scheduler, BFS minimap + `zonemap` + auto-derived room
+> coordinates (`coords rebuild|show|issues`), `track` heuristic,
+> `time` clock, and admin tooling (whereami, zones, `spawn mob`
+> / `spawn item`, news authoring) are in. Combat, skills, quests,
+> full OLC, area resets, banks/shops, and broader operator
+> tooling are pending.
 > See [`ROADMAP.md`](ROADMAP.md) for the full punch list.
 
 ## Quick start
@@ -51,9 +58,9 @@ Environment variables, all optional:
 ```
 cmd/server/         entrypoint
 telnet/             protocol, session, registry, mode stack, color, wrap
-internal/cmd/       concrete commands (look, move, say, channel, who, examine, door verbs, inventory verbs, zones, ...)
+internal/cmd/       concrete commands (look, move, say, shout/yell, channel, who, examine, door verbs, inventory verbs, put, spawn, map/zonemap/coords/track, news, zones, ...)
 internal/mode/      login, character_select, character_create, game, postauth
-internal/repo/      account, character, room, exit, item, mob_*, channeling, channel, zone
+internal/repo/      account, character, room, exit, item, mob_*, channeling, channel, zone, mob_trail, news
 internal/db/        sql.DB open + embedded migrations
 internal/world/     YAML world loader + sync to DB
 internal/session/   single-session-per-account registry

@@ -1182,44 +1182,15 @@ Items already tracked elsewhere — included here so the roadmap points at them:
   hooks still pending: channeling suppression in stedding (§12), ambient
   horror / DoT in blight (§11), movement-cost / encounter flavor in swamp
   and waste (§10–11).
-- **Auto-derived room coordinates — design pending.** Today every
-  room ships with `coord_x/y/z = (0,0,0)` unless a builder hand-
-  authors them, so coord-aware features (admin `zonemap` direct-grid
-  layout, distance/track heuristics, future path scripting) have
-  nothing to read. Build a system that derives coords by BFS from
-  the starter room (`repo.StarterRoomID`) over cardinal + diagonal
-  + vertical exits, with these properties:
-  - **Anchor preservation.** New column `rooms.coords_auto` (default
-    `1`); the YAML loader stamps `0` whenever a `coords:` block is
-    explicitly authored. The derivation pass only mutates rooms with
-    `coords_auto = 1`. Multiple anchors are allowed; BFS propagates
-    from each.
-  - **Direction → delta map.** `n: y+1, s: y-1, e: x+1, w: x-1,
-    ne/nw/se/sw: combined, u: z+1, d: z-1`.
-  - **First-arrival wins.** Cycles that don't grid-align (n+n+s+s
-    forming a non-trivial loop) are normal; first BFS visit assigns
-    the coord and subsequent visits don't overwrite. Rooms reachable
-    from multiple anchors with conflicting coords are surfaced in an
-    admin `coords issues` report but not auto-resolved — builders pin
-    them by adding an explicit `coords:` anchor in YAML.
-  - **Run points.** (a) On boot, after world load, before listener
-    accept; (b) after any room or exit mutation via OLC (§16) —
-    incremental re-walk of the affected connected component, not a
-    full rebuild; (c) admin `coords rebuild` command for forced
-    re-derivation.
-  - **Self-healing on deletion.** When a room or exit is removed,
-    affected reachable rooms are re-walked. Newly-orphaned rooms
-    (no path to any anchor) are flagged in `coords issues` rather
-    than left with stale coords.
-  - **Migration 0026 (proposed):** add `rooms.coords_auto
-    INTEGER NOT NULL DEFAULT 1`; backfill existing rows to `1` (none
-    today carry explicit coords); the loader updates `coords_auto`
-    in lock-step with `roomInsertValues`.
-  - **Admin commands (proposed):** `coords rebuild`, `coords show
-    <room>`, `coords issues`.
-  - **Unblocks:** zonemap coord-direct layout v2, distance-based
-    spell range / track / line-of-sight heuristics, possible
-    weather/lighting gradients keyed off coords.
+- **Auto-derived room coordinates — landed.** Migration 0026 added
+  `rooms.coords_auto` (1 = BFS-derived, 0 = anchor authored in YAML);
+  loader stamps it in lock-step with `roomInsertValues`. BFS walks
+  cardinal + diagonal + vertical exits from anchors with first-
+  arrival wins; conflicts and orphans surface via `coords issues`
+  rather than being auto-resolved. Admin verbs `coords rebuild` /
+  `coords show <id|external_id>` / `coords issues` are wired.
+  Remaining: incremental re-walk on OLC mutation (block on §16
+  room/exit edit verbs).
 - **Seed test fixtures for container + light flows — pending.** The
   starter zone (Two Rivers / Emond's Field) currently exercises
   `look` / `get` / `drop` / `give` reasonably well, but two newer

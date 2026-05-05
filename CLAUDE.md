@@ -34,15 +34,19 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 ## Architecture
 
 - **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0020), constructs every
-  repo (accounts, characters, rooms, exits, items, mob_instances, zones,
-  channels), runs `world.LoadAndSync` to seed the DB from `WORLD_DIR`,
-  builds the command registry plus a `server` struct holding long-lived
-  deps, starts `tick.Scheduler` + `tick.Buckets` and the `persist.Manager`
-  autosaver, then accepts TCP connections. Each connection gets a
-  `telnet.Session`, the initial login mode is pushed, and
-  `telnet.RunSession` drives it. New long-lived dependencies belong on
-  the `server` struct.
+  `internal/db.Open` (runs embedded migrations 0001–0028), constructs every
+  repo (accounts, characters, rooms, exits, items, mob_instances,
+  mob_templates, mob_trails, zones, channels), loads the news catalog
+  (`internal/news`), runs `world.LoadAndSync` to seed the DB from
+  `WORLD_DIR`, builds the command registry plus a `server` struct
+  holding long-lived deps, starts `tick.Scheduler` + `tick.Buckets`
+  and the `persist.Manager` autosaver, then accepts TCP connections.
+  Each connection gets a `telnet.Session`, the connect splash is
+  written, the initial login mode is pushed, and `telnet.RunSession`
+  drives it. After login, `news.WriteMOTDBlock` renders any unseen
+  MOTD/news entries (gated by `characters.last_news_seen_at` from
+  migration 0027). New long-lived dependencies belong on the
+  `server` struct.
 
 - **`telnet/`** — protocol primitives + per-connection driver.
   - `session.go`: `Session` struct (conn, terminal type, width/height,
@@ -65,17 +69,27 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
     aliases, quoted tokenizer, line editor, history ring.
 
 - **`internal/cmd/`** — concrete commands wired in `main.go::buildRegistry`:
-  `quit`, `colors`, `who`, `say`, `tell`, `reply`, `alias`/`unalias`, one
-  verb per channel catalog row plus a `channels` overview, `help`, `look`,
-  `examine`, the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`,
-  the door verbs (`open`/`close`/`lock`/`unlock`/`pick`), the inventory
-  verbs (`inventory`/`get`/`drop`/`give`), the BFS minimap (`map`,
-  default depth 3, max 5), and the admin inspectors (`whereami`,
-  `zones`). New commands take their dependencies (repos,
-  registry, sessions, bus) by parameter and return a `*telnet.Command`.
-  Item/mob keyword resolution (including ordinal `2.sword`) goes through
+  `quit`, `colors`, `who`, `say`, `tell`, `reply`, `shout`/`yell`
+  (zone-wide broadcast), `alias`/`unalias`, `prompt` (per-character
+  template), one verb per channel catalog row plus a `channels`
+  overview, `help`, `look` (incl. `look in <container>`), `examine`,
+  the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`, the
+  door verbs (`open`/`close`/`lock`/`unlock`/`pick`), the inventory
+  verbs (`inventory`/`get`/`drop`/`give`/`put`) with `get <item>
+  from <container>` semantics and capacity-aware `put`, the BFS
+  minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
+  the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
+  `track`, `time`, `news`, and the admin tools (`whereami`, `zones`,
+  `spawn mob <ext> [count]` / `spawn item <ext> [count]`). New
+  commands take their dependencies (repos, registry, sessions, bus)
+  by parameter and return a `*telnet.Command`; commands with
+  required arguments declare `MinArgs` + `Long` so the dispatcher
+  emits a Long-aware usage block on too-few-args. Item/mob keyword
+  resolution (including ordinal `2.sword`) goes through
   `keyword.go::MatchItem` / `MatchMob`; encumbrance bands come from
-  `encumbrance.go::LoadFor` (Str-keyed d20 carrying-capacity table).
+  `encumbrance.go::LoadFor` (Str-keyed d20 carrying-capacity table)
+  and now sum recursive container contents (transitive ownership)
+  via `ItemRepo.ListAllOwnedTransitive`.
 
 - **`internal/mode/`** — login, character_select, character_create, game,
   postauth promotion. `promoteToGame` stamps `CharacterID`,
@@ -87,7 +101,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0020. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0028. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -103,7 +117,18 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   side-by-side) and dropped `accounts.auth_level`. Existing rows
   inherited their account's level via the 0019 backfill. 0020 added
   `rooms.nomap` so the §10 minimap can hide secret hideouts and admin
-  zones from the player-facing BFS.
+  zones from the player-facing BFS. 0021 added the `mob_trails` table
+  (per-mob `(room_id, ts)` history feeding `track`); 0022 added
+  `mob_templates.wander_chance`; 0023 added
+  `characters.prompt_template` for the `prompt` verb; 0024 added the
+  `world_state` key/value table (currently storing `world.ticks` for
+  the Clock); 0025 widened `rooms.sector` to the full sector enum;
+  0026 added `rooms.coords_auto` (1 = derived by BFS, 0 = anchor
+  authored in YAML) backing the auto-coords pass; 0027 added
+  `characters.last_news_seen_at` for the MOTD/news gate; 0028 added
+  `items.parent_item_id` (nullable, soft self-FK) so an item can
+  live inside another item, completing the location invariant
+  (room ⊕ owner ⊕ parent).
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
@@ -200,24 +225,38 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `scanItemRow`, the `Create` INSERT, AND the loader-side INSERT in
   `internal/world/loader.go::insertItems` (raw SQL, single transaction).
   Same lock-step rule as rooms.
-- Items live in exactly one location: either `room_id` is set (on the
-  floor) or `owner_character_id` is set (in someone's inventory), never
-  both. `ItemRepo.SetOwner` / `SetRoom` flip both columns atomically;
-  do not write the columns directly. `Character.Inventory` (JSON id
+- Items live in exactly one of three locations: `room_id` (on the
+  floor), `owner_character_id` (in someone's inventory), or
+  `parent_item_id` (inside another item — i.e. a container).
+  `ItemRepo.SetOwner` / `SetRoom` and the `Transfer*` family flip
+  the relevant columns atomically and clear the other two; do not
+  write the columns directly. The `Transfer*` variants (preferred
+  from the command layer) also guard on prior location so a
+  concurrent `get`/`give`/`put` race surfaces as `ErrItemMoved`
+  instead of a silent overwrite. `Character.Inventory` (JSON id
   list on `inventory_json`) is just the display ordering — SQL
   `owner_character_id` is the source of truth, and `inventory.go::
-  orderInventory` self-heals stale or missing JSON entries.
+  orderInventory` self-heals stale or missing JSON entries. Items
+  inside containers are NOT in `inventory_json`; encumbrance reads
+  them via `ListAllOwnedTransitive` (BFS through `parent_item_id`).
+- Cross-session output from a command (broadcasts to other
+  occupants of the room or zone — `say`, `shout`/`yell`, `give`,
+  `put`, `get`, door verbs, `spawn`) MUST go through
+  `Session.WriteAsync`; only the dispatcher's reply to its own
+  session uses `WriteString`. See the WriteAsync rule above.
 
 ## Tests
 
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
-alias table, every repo (memory + sqlite, including the new ZoneRepo),
-the world loader (including zone metadata + room.zone_id linkage), the
-session registry, the eventbus, the tick scheduler, the persist
-manager, and the concrete commands (look / move / say / tell / reply /
-channel / teleport / alias / examine / door verbs / inventory verbs /
-whereami / zones).
+alias table, every repo (memory + sqlite, including ZoneRepo,
+MobTemplateRepo, mob_trails, news), the world loader (zone metadata,
+room.zone_id linkage, item taxonomy, container fixtures, dark-room
+fixtures), the session registry, the eventbus, the tick scheduler,
+the persist manager, and the concrete commands (look / move / say /
+tell / reply / shout / yell / channel / teleport / alias / prompt /
+examine / door verbs / inventory verbs / put / spawn / map / zonemap
+/ coords / track / time / news / whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.
