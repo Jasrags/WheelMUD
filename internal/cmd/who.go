@@ -23,7 +23,13 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 			snap := sessions.Snapshot()
 			rows := make([]string, 0, len(snap))
 			now := time.Now().UTC()
+			viewerIsAdmin := c.Session.AuthLevel >= telnet.AuthAdmin
 			for _, peer := range snap {
+				// wizinvis: hide invisible peers from non-admin viewers.
+				// Caller's own session is never hidden from itself.
+				if peer != c.Session && peer.IsHidden() && !viewerIsAdmin {
+					continue
+				}
 				name := peer.CharacterName
 				if name == "" {
 					// Pre-character session — login or character-select.
@@ -38,6 +44,12 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 				marker := ""
 				if peer == c.Session {
 					marker = " (you)"
+				}
+				// Admin-visible marker for hidden peers (including self
+				// when self is wizinvis), so the operator can tell at a
+				// glance who is currently invisible.
+				if peer.IsHidden() && viewerIsAdmin {
+					marker += " *"
 				}
 				rows = append(rows, "- "+name+marker+idle)
 			}

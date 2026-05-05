@@ -108,6 +108,13 @@ type Session struct {
 	// promotion and written through to the repo on toggle. Read by
 	// other dispatchers iterating Snapshot() during a broadcast.
 	channelMuted map[string]bool
+	// hidden is the wizinvis flag — when true, the session is filtered
+	// out of `who` listings and tell-name completion for non-admin
+	// viewers. Toggled by the §17 wizinvis command. Session-scoped:
+	// not persisted across reconnect (intentional; no schema change).
+	// Read in foreign goroutines (other dispatchers iterating
+	// Snapshot()), so guarded by crossMu like channelMuted.
+	hidden bool
 
 	// writeMu is the single serializer for everything visible on the
 	// wire and for the line-edit state that drives async-write redraws.
@@ -251,6 +258,33 @@ func (s *Session) ChannelMutedSnapshot() map[string]bool {
 		cp[k] = v
 	}
 	return cp
+}
+
+// SetHidden sets the wizinvis bit on this session. Safe from any
+// goroutine; readers in `who` and tell-completion observe the new
+// value on their next call.
+func (s *Session) SetHidden(v bool) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.hidden = v
+}
+
+// IsHidden reports whether the session is currently wizinvis. Safe
+// from any goroutine.
+func (s *Session) IsHidden() bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.hidden
+}
+
+// ToggleHidden flips the wizinvis bit and returns the new value
+// (true = now hidden). The wizinvis command uses this to render the
+// "fade / return" feedback line.
+func (s *Session) ToggleHidden() bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.hidden = !s.hidden
+	return s.hidden
 }
 
 // IdleSince returns now - LastInputAt, or zero when no command has

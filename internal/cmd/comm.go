@@ -98,6 +98,12 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 			if peer == nil {
 				return c.Session.WriteString("{{There is no one by that name.}}::yellow\r\n")
 			}
+			// wizinvis: a hidden admin appears offline to non-admins
+			// even when probed by name. Same wording as a true miss
+			// so the probe can't distinguish "offline" from "hiding".
+			if peer != c.Session && peer.IsHidden() && c.Session.AuthLevel < telnet.AuthAdmin {
+				return c.Session.WriteString("{{There is no one by that name.}}::yellow\r\n")
+			}
 			if peer == c.Session {
 				return c.Session.WriteString("{{You mutter to yourself.}}::yellow\r\n")
 			}
@@ -182,6 +188,11 @@ func onlineNameCandidates(self *telnet.Session, sessions *session.Registry, part
 			continue
 		}
 		if peer.AuthLevel > self.AuthLevel {
+			continue
+		}
+		// wizinvis: hide invisible peers from non-admin completers
+		// (admins still see each other for ops convenience).
+		if peer.IsHidden() && self.AuthLevel < telnet.AuthAdmin {
 			continue
 		}
 		name := peer.CharacterName

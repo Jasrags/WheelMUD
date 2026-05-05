@@ -140,7 +140,10 @@ func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, e
 		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, target, room.ID, characters)
-	if err := c.Session.WriteString("{{Teleported " + target.CharacterName + " to " + room.Name + ".}}::green\r\n"); err != nil {
+	// Defang both spliced fields: CharacterName is player-supplied at
+	// character-create, and room.Name is builder-authored — neither is
+	// safe to splice raw into a cfmt template.
+	if err := c.Session.WriteString("{{Teleported " + defangWorldField(target.CharacterName) + " to " + defangWorldField(room.Name) + ".}}::green\r\n"); err != nil {
 		return fmt.Errorf("write caller ack: %w", err)
 	}
 	if err := target.WriteAsync("{{The world ripples; you are somewhere else.}}::magenta"); err != nil {
