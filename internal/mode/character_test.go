@@ -314,6 +314,8 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	f.feed("human")
 	f.feed("midlander")
 	f.feed("armsman")
+	f.feed("set str 14")
+	f.feed("done")
 	f.feed("yes")
 
 	if f.session.CurrentMode() != f.game {
@@ -331,6 +333,12 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	}
 	if got.ClassLevels[creature.ClassArmsman] != 1 {
 		t.Fatalf("ClassLevels = %v, want Armsman:1", got.ClassLevels)
+	}
+	if got.Core.Abilities.Str.Current != 14 || got.Core.Abilities.Str.Max != 14 {
+		t.Fatalf("Str = %+v, want Current=Max=14", got.Core.Abilities.Str)
+	}
+	if got.Core.Abilities.Dex.Current != 8 {
+		t.Fatalf("Dex = %+v, want Current=8 (point-buy floor)", got.Core.Abilities.Dex)
 	}
 }
 
@@ -412,6 +420,7 @@ func TestCharacterCreate_Multi_ReviewRejectNonYes(t *testing.T) {
 	f.feed("human")
 	f.feed("midlander")
 	f.feed("armsman")
+	f.feed("done")
 	f.feed("maybe") // anything other than yes/y/back/cancel
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -434,6 +443,7 @@ func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
 	f.feed("human")
 	f.feed("midlander")
 	f.feed("armsman")
+	f.feed("done")
 	f.feed("yes")
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -444,5 +454,109 @@ func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
 	}
 	if !strings.Contains(f.captured.String(), "already taken") {
 		t.Fatalf("expected duplicate message: %q", f.captured.String())
+	}
+}
+
+func TestCharacterCreate_Multi_AbilitiesPointBuy(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepAbilities {
+		t.Fatalf("step = %d, want chargenStepAbilities after class", mc.step)
+	}
+	// Floor is 8 across the board.
+	for i, sc := range mc.draft.Abilities {
+		if sc != 8 {
+			t.Fatalf("Abilities[%d] = %d, want 8 floor on entry", i, sc)
+		}
+	}
+
+	// Shorthand "<abil> <n>" is accepted alongside "set <abil> <n>".
+	f.feed("str 16") // costs 10
+	if mc.draft.Abilities[0] != 16 {
+		t.Fatalf("Str = %d, want 16", mc.draft.Abilities[0])
+	}
+	if got := mc.pointBuySpent(); got != 10 {
+		t.Fatalf("spent = %d, want 10", got)
+	}
+
+	// Out-of-range scores are rejected.
+	f.feed("set dex 19")
+	if mc.draft.Abilities[1] != 8 {
+		t.Fatalf("Dex = %d, out-of-range write leaked", mc.draft.Abilities[1])
+	}
+	if !strings.Contains(f.captured.String(), "8..18") {
+		t.Fatalf("expected range hint: %q", f.captured.String())
+	}
+
+	// Spend 14 more points to land exactly at budget (10 + 6 + 6 = 22, +3 = 25).
+	f.feed("set dex 14") // +6 → 16
+	f.feed("set con 14") // +6 → 22
+	f.feed("set int 11") // +3 → 25
+	if got := mc.pointBuySpent(); got != 25 {
+		t.Fatalf("spent = %d, want 25 (at budget)", got)
+	}
+
+	// Going over budget is rejected without overwriting prior state.
+	prev := mc.draft.Abilities[4]
+	f.feed("set wis 9") // +1 → 26, over
+	if mc.draft.Abilities[4] != prev {
+		t.Fatalf("Wis = %d, want %d (over-budget write leaked)", mc.draft.Abilities[4], prev)
+	}
+	if !strings.Contains(f.captured.String(), "Not enough points") {
+		t.Fatalf("expected over-budget message: %q", f.captured.String())
+	}
+
+	// Reset returns everything to the floor.
+	f.feed("reset")
+	for i, sc := range mc.draft.Abilities {
+		if sc != 8 {
+			t.Fatalf("Abilities[%d] = %d after reset, want 8", i, sc)
+		}
+	}
+
+	f.feed("done")
+	if mc.step != chargenStepReview {
+		t.Fatalf("step = %d, want chargenStepReview after done", mc.step)
+	}
+}
+
+func TestCharacterCreate_Multi_AbilitiesBackPreservesScores(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("set str 14")
+	f.feed("done")
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepReview {
+		t.Fatalf("step = %d, want chargenStepReview", mc.step)
+	}
+	f.feed("back")
+	if mc.step != chargenStepAbilities {
+		t.Fatalf("step = %d, want chargenStepAbilities after back", mc.step)
+	}
+	if mc.draft.Abilities[0] != 14 {
+		t.Fatalf("Str = %d after back, want 14 (revisit must preserve)", mc.draft.Abilities[0])
+	}
+}
+
+func TestPointBuyCost(t *testing.T) {
+	cases := []struct {
+		score, want int
+	}{
+		{8, 0}, {9, 1}, {10, 2}, {11, 3}, {12, 4}, {13, 5},
+		{14, 6}, {15, 8}, {16, 10}, {17, 13}, {18, 16},
+		{7, -1}, {19, -1}, {0, -1},
+	}
+	for _, c := range cases {
+		if got := pointBuyCost(c.score); got != c.want {
+			t.Errorf("pointBuyCost(%d) = %d, want %d", c.score, got, c.want)
+		}
 	}
 }

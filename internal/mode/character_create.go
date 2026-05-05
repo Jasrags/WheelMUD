@@ -43,9 +43,41 @@ const (
 	chargenStepRace
 	chargenStepBackground
 	chargenStepClass
+	chargenStepAbilities
 	chargenStepReview
 	chargenStepDone
 )
+
+// Point-buy V1 (#12). Standard d20 cost table; budget is 25 points
+// per docs/PLAN.md. Min/max bound the assignable starting score —
+// racial / inherent bonuses (#14) are layered on later, not here.
+const (
+	pointBuyBudget   = 25
+	pointBuyMinScore = 8
+	pointBuyMaxScore = 18
+)
+
+// pointBuyCosts is indexed by score - pointBuyMinScore. The non-linear
+// jumps (15→16: +2, 16→17: +3, 17→18: +3) make 17/18 expensive on
+// purpose — a 25-point budget cannot afford an 18 and three 14s.
+var pointBuyCosts = [...]int{
+	0,  // 8
+	1,  // 9
+	2,  // 10
+	3,  // 11
+	4,  // 12
+	5,  // 13
+	6,  // 14
+	8,  // 15
+	10, // 16
+	13, // 17
+	16, // 18
+}
+
+// abilityKeys is the canonical ordering for menus and indexing into
+// chargenDraft.Abilities. Matches the book's Str/Dex/Con/Int/Wis/Cha
+// presentation order.
+var abilityKeys = [...]string{"str", "dex", "con", "int", "wis", "cha"}
 
 // chargenDraft is the in-progress character being built across the
 // multi-step CharacterCreate flow. Each substep mutates one field;
@@ -58,6 +90,13 @@ type chargenDraft struct {
 	Race         string // "human" | "ogier"
 	BackgroundID string
 	ClassID      string
+
+	// Abilities are indexed by abilityKeys (Str=0..Cha=5). Zero means
+	// "step not visited yet"; the abilities substep initializes every
+	// slot to pointBuyMinScore on first entry so a partially-filled
+	// draft never serializes a 0.
+	Abilities    [6]int8
+	AbilitiesSet bool
 }
 
 // CharacterCreate prompts for a new character. With a chargen catalog
@@ -107,6 +146,8 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 		return "Background id [back/cancel]: "
 	case chargenStepClass:
 		return "Class id [back/cancel]: "
+	case chargenStepAbilities:
+		return "Abilities (set <abil> <n> | reset | done) [back/cancel]: "
 	case chargenStepReview:
 		return "Confirm? (yes / back / cancel): "
 	}
@@ -185,6 +226,8 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applyBackground(s, trimmed)
 	case chargenStepClass:
 		return m.applyClass(s, trimmed)
+	case chargenStepAbilities:
+		return m.applyAbilities(s, trimmed)
 	case chargenStepReview:
 		return m.applyReview(ctx, s, trimmed)
 	}
@@ -264,8 +307,161 @@ func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
 		return s.WriteRaw([]byte("Unknown class. Type the id or list number.\r\n"))
 	}
 	m.draft.ClassID = cls[idx].ID
-	m.step = chargenStepReview
-	return m.writeReview(s)
+	m.step = chargenStepAbilities
+	m.initAbilitiesIfNeeded()
+	return m.writeAbilitiesMenu(s)
+}
+
+// initAbilitiesIfNeeded primes every slot to the point-buy floor on
+// first entry into the abilities step. Idempotent: re-entering via
+// `back` from review preserves the draft's prior assignments.
+func (m *CharacterCreate) initAbilitiesIfNeeded() {
+	if m.draft.AbilitiesSet {
+		return
+	}
+	for i := range m.draft.Abilities {
+		m.draft.Abilities[i] = pointBuyMinScore
+	}
+	m.draft.AbilitiesSet = true
+}
+
+// pointBuyCost returns the cumulative cost of `score` measured from
+// the floor (8 = 0 points). Out-of-range scores return -1.
+func pointBuyCost(score int) int {
+	if score < pointBuyMinScore || score > pointBuyMaxScore {
+		return -1
+	}
+	return pointBuyCosts[score-pointBuyMinScore]
+}
+
+// pointBuySpent sums the cost of the current draft assignments.
+func (m *CharacterCreate) pointBuySpent() int {
+	total := 0
+	for _, sc := range m.draft.Abilities {
+		total += pointBuyCost(int(sc))
+	}
+	return total
+}
+
+func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
+	spent := m.pointBuySpent()
+	var b strings.Builder
+	b.WriteString("Point-buy ability scores:\r\n")
+	for i, key := range abilityKeys {
+		score := int(m.draft.Abilities[i])
+		mod := abilityModifier(score)
+		fmt.Fprintf(&b, "  %s %2d (mod %+d, cost %d)\r\n",
+			strings.ToUpper(key), score, mod, pointBuyCost(score))
+	}
+	fmt.Fprintf(&b, "  budget %d / spent %d / remaining %d\r\n",
+		pointBuyBudget, spent, pointBuyBudget-spent)
+	b.WriteString("  set <abil> <n>   change one score (8..18)\r\n")
+	b.WriteString("  reset            send all scores back to 8\r\n")
+	b.WriteString("  done             accept and continue\r\n")
+	return s.WriteRaw([]byte(b.String()))
+}
+
+// abilityModifier mirrors creature.AbilityModifier (floor((s-10)/2))
+// without taking a runtime dep on creature internals — keeps the
+// chargen step pure-arithmetic.
+func abilityModifier(score int) int {
+	// Go integer division truncates toward zero, but for scores in the
+	// point-buy range (8..18) the result matches floor.
+	return (score - 10) / 2
+}
+
+// applyAbilities parses one of:
+//
+//	show / blank line   → re-render the menu
+//	set <abil> <n>      → assign one score (also accepts "<abil> <n>")
+//	reset               → all back to 8
+//	done                → advance to review
+func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return m.writeAbilitiesMenu(s)
+	}
+	verb := strings.ToLower(fields[0])
+
+	switch verb {
+	case "show":
+		return m.writeAbilitiesMenu(s)
+	case "reset":
+		for i := range m.draft.Abilities {
+			m.draft.Abilities[i] = pointBuyMinScore
+		}
+		return m.writeAbilitiesMenu(s)
+	case "done", "next":
+		if m.pointBuySpent() > pointBuyBudget {
+			return s.WriteRaw([]byte("You're over budget; reduce a score or 'reset'.\r\n"))
+		}
+		m.step = chargenStepReview
+		return m.writeReview(s)
+	}
+
+	// Allow either "set <abil> <n>" or "<abil> <n>".
+	abil, scoreStr := "", ""
+	switch {
+	case verb == "set" && len(fields) == 3:
+		abil, scoreStr = strings.ToLower(fields[1]), fields[2]
+	case len(fields) == 2:
+		abil, scoreStr = verb, fields[1]
+	default:
+		return s.WriteRaw([]byte("Usage: set <abil> <n>  |  reset  |  done\r\n"))
+	}
+
+	idx := abilityIndex(abil)
+	if idx < 0 {
+		return s.WriteRaw([]byte("Ability must be one of str, dex, con, int, wis, cha.\r\n"))
+	}
+	score, err := strconv.Atoi(scoreStr)
+	if err != nil || score < pointBuyMinScore || score > pointBuyMaxScore {
+		return s.WriteRaw([]byte(fmt.Sprintf(
+			"Score must be an integer in [%d..%d].\r\n",
+			pointBuyMinScore, pointBuyMaxScore)))
+	}
+
+	// Try the assignment; reject if it would push us over budget.
+	prev := m.draft.Abilities[idx]
+	m.draft.Abilities[idx] = int8(score)
+	if m.pointBuySpent() > pointBuyBudget {
+		m.draft.Abilities[idx] = prev
+		return s.WriteRaw([]byte(fmt.Sprintf(
+			"Not enough points (would cost %d, %d remaining).\r\n",
+			pointBuyCost(score)-pointBuyCost(int(prev)),
+			pointBuyBudget-m.pointBuySpent())))
+	}
+	return m.writeAbilitiesMenu(s)
+}
+
+// buildAbilities renders the draft's [6]int8 into the
+// creature.Abilities triple. Current = Max = the assigned score;
+// Inherent stays 0 (ter'angreal/racial floors aren't applied here).
+func (m *CharacterCreate) buildAbilities() creature.Abilities {
+	score := func(i int) creature.AbilityScore {
+		v := m.draft.Abilities[i]
+		return creature.AbilityScore{Current: v, Max: v}
+	}
+	return creature.Abilities{
+		Str: score(0),
+		Dex: score(1),
+		Con: score(2),
+		Int: score(3),
+		Wis: score(4),
+		Cha: score(5),
+	}
+}
+
+// abilityIndex maps a 3-letter ability token (case-insensitive) to
+// its abilityKeys index, or -1 on miss.
+func abilityIndex(token string) int {
+	t := strings.ToLower(token)
+	for i, k := range abilityKeys {
+		if k == t {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *CharacterCreate) writeReview(s *telnet.Session) error {
@@ -281,6 +477,14 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 	if cl != nil {
 		fmt.Fprintf(&b, "  Class:      %s (%s)\r\n", cl.Name, cl.ID)
 	}
+	b.WriteString("  Abilities:  ")
+	for i, key := range abilityKeys {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "%s %d", strings.ToUpper(key), m.draft.Abilities[i])
+	}
+	b.WriteString("\r\n")
 	return s.WriteRaw([]byte(b.String()))
 }
 
@@ -304,6 +508,9 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		race = creature.RaceOgier
 	}
 
+	core := creature.Core{}
+	core.Abilities = m.buildAbilities()
+
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID:   s.AccountID,
 		Name:        m.draft.Name,
@@ -311,6 +518,7 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		Race:        race,
 		Background:  bg.Enum,
 		ClassLevels: map[creature.Class]int8{cl.Enum: 1},
+		Core:        core,
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):

@@ -150,12 +150,22 @@ characteristics,feats,equipment,the-one-power}.md`.
     feats / skills / starting equipment / channeler branch
     (#15) — each slots into the `chargenStep` enum + `chargenDraft`
     struct without restructuring this scaffold.
-12. **Ability score generation** (§ref `abilities.md`). Point-buy
-    V1 (cost table from book; default 25 points), then the player
-    assigns the six rolled scores to Str/Dex/Con/Int/Wis/Cha.
-    Reroll rule (sum of mods ≤ 0 OR highest score ≤ 13) lands
-    later; standard array + 4d6-drop-lowest as opt-in alternates.
-    Writes `Core.Abilities` directly.
+12. **Ability score generation** (§ref `abilities.md`) — **LANDED
+    2026-05-05**. Point-buy V1 in chargen as a new
+    `chargenStepAbilities` substep between class and review.
+    Standard d20 cost table (8=0, 9=1, 10=2, 11=3, 12=4, 13=5,
+    14=6, 15=8, 16=10, 17=13, 18=16) with a 25-point budget;
+    score range bounded to [8..18]. Verbs at the substep:
+    `set <abil> <n>` (also accepts shorthand `<abil> <n>`),
+    `reset` (all back to 8), `done` to advance, `show`/blank to
+    re-render. Over-budget assignments are refused without
+    overwriting prior state. Stamps `Core.Abilities` (Current=Max=
+    score, Inherent=0) on the `CharacterRepo.Create` call. `back`
+    from review preserves the assigned scores. **Stubbed for
+    follow-ups:** standard array + 4d6-drop-lowest opt-in
+    alternates, reroll rule (sum of mods ≤ 0 OR highest ≤ 13),
+    racial / heroic-characteristic modifiers (#14 layers them on
+    after this step writes the base scores).
 13. **Background + class selection** (§ref `backgrounds.md` /
     `classes.md`). Eleven backgrounds (Aiel ... Taraboner) supply
     bonus feats, class-/cross-class skills, home + bonus languages,
