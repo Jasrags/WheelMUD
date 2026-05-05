@@ -150,6 +150,25 @@ func (r *Registry) Lookup(verb string) (*Command, error) {
 	}
 }
 
+// LookupExact resolves verb to a command via alias or exact name only.
+// Unlike Lookup, it never falls through to unique-prefix matching —
+// callers (notably the help command, which merges its prefix pass with
+// the help-topic catalog) sometimes need to distinguish a true exact
+// hit from a prefix coincidence so the merged resolution can pick the
+// right side. Returns ErrUnknownCommand on miss.
+func (r *Registry) LookupExact(verb string) (*Command, error) {
+	verb = strings.ToLower(verb)
+	if verb == "" {
+		return nil, ErrUnknownCommand
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if c, ok := r.lookupExactLocked(verb); ok {
+		return c, nil
+	}
+	return nil, ErrUnknownCommand
+}
+
 // Prefix returns every command whose name starts with p, sorted by name.
 // Aliases are not included. Useful for help listings and future autocomplete.
 func (r *Registry) Prefix(p string) []*Command {

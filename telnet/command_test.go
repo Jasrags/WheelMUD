@@ -149,6 +149,48 @@ func TestRegistry_Lookup(t *testing.T) {
 	}
 }
 
+func TestRegistry_LookupExact(t *testing.T) {
+	r := NewRegistry()
+	if err := r.Register(
+		cmd("look", noopRun, withAliases("l")),
+		cmd("loot", noopRun),
+		cmd("help", noopRun),
+	); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	tests := []struct {
+		verb    string
+		want    string
+		wantErr error
+	}{
+		{verb: "look", want: "look"},
+		{verb: "LOOK", want: "look"}, // case-insensitive
+		{verb: "l", want: "look"},    // alias
+		{verb: "lo", wantErr: ErrUnknownCommand}, // no prefix fallback
+		{verb: "he", wantErr: ErrUnknownCommand}, // even when prefix is unique
+		{verb: "zzz", wantErr: ErrUnknownCommand},
+		{verb: "", wantErr: ErrUnknownCommand},
+	}
+	for _, tc := range tests {
+		t.Run(tc.verb, func(t *testing.T) {
+			got, err := r.LookupExact(tc.verb)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got.Name != tc.want {
+				t.Fatalf("got %q, want %q", got.Name, tc.want)
+			}
+		})
+	}
+}
+
 func TestRegistry_Prefix(t *testing.T) {
 	r := NewRegistry()
 	_ = r.Register(

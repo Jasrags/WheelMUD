@@ -18,6 +18,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
+	"github.com/Jasrags/WheelMUD/internal/help"
 	"github.com/Jasrags/WheelMUD/internal/news"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -139,7 +140,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog)
+	helpCatalog, err := help.Load()
+	if err != nil {
+		slog.Error("Failed to load help catalog", "error", err)
+		os.Exit(1)
+	}
+
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog, helpCatalog)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -334,7 +341,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -363,7 +370,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewPrompt(characters, defaultPromptTemplate)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewHelp(r)); err != nil {
+	if err := r.Register(cmd.NewHelp(r, helpCatalog)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs, clock)); err != nil {
