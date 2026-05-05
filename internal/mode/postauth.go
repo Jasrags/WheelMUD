@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -29,7 +30,11 @@ type MOTDFunc func(s *telnet.Session, lastSeen time.Time) error
 // AuthLevel. The character list is fetched from the repo, so a DB
 // failure surfaces a generic error and leaves the session in its
 // current mode for the user to retry.
-func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, game telnet.Mode) error {
+//
+// catalog is forwarded to CharacterCreate / CharacterSelect so the
+// multi-step chargen flow is offered when content is available; nil
+// preserves the legacy single-name flow.
+func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, catalog *chargen.Catalog, game telnet.Mode) error {
 	chars, err := characters.ListByAccount(ctx, s.AccountID)
 	if err != nil {
 		slog.Warn("postAuth: list characters failed", "remote", s.RemoteAddress, "account", s.AccountID, "error", err)
@@ -39,12 +44,14 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	case 0:
 		create := NewCharacterCreate(characters, game)
 		create.SetMOTD(motd)
+		create.SetCatalog(catalog)
 		return s.ReplaceMode(create)
 	case 1:
 		return promoteToGame(ctx, s, chars[0], characters, motd, game)
 	default:
 		sel := NewCharacterSelect(chars, characters, game)
 		sel.SetMOTD(motd)
+		sel.SetCatalog(catalog)
 		return s.ReplaceMode(sel)
 	}
 }

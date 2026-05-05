@@ -133,13 +133,23 @@ characteristics,feats,equipment,the-one-power}.md`.
     `cmd/server/main.go` constructs the catalog alongside news /
     help and threads it via the `server` struct. Ogier seed entry
     deferred — slots in cleanly when #14 lands.
-11. **Multi-step `CharacterCreate` mode** (§5 / §6). Replaces the
-    single-name prompt with a substep stack: abilities → race +
-    background → class (+ channeler branch) → identity → feats /
-    skills / equipment → review/confirm. Uses the existing mode
-    stack so each step is its own `Mode` and `back` / `cancel` work
-    naturally. Falls back to the legacy name-only flow when the
-    chargen catalog is missing so dev / test fixtures stay simple.
+11. **Multi-step `CharacterCreate` mode** (§5 / §6) — **SCAFFOLD
+    LANDED**. `CharacterCreate.SetCatalog` now drives a substep
+    state machine: name → race → background → class → review/
+    confirm, with `back` to revisit and `cancel` to restart. Race
+    selection filters the background and class menus
+    (`Catalog.BackgroundsForRace` / `ClassesForRace`); the review
+    step persists `Race`, `Background`, and `ClassLevels{chosen:1}`
+    on the `Character` aggregate before promoting to game.
+    Catalog is threaded `Login → Create → postAuth →
+    CharacterCreate / CharacterSelect` via setters mirroring the
+    existing `SetMOTD` pattern, and absent catalog (every existing
+    test, dev fixtures with no `data/chargen` on disk) falls back
+    to the legacy single-name flow. **Stubbed for follow-ups:**
+    abilities (#12), heroic characteristics / identity (#14),
+    feats / skills / starting equipment / channeler branch
+    (#15) — each slots into the `chargenStep` enum + `chargenDraft`
+    struct without restructuring this scaffold.
 12. **Ability score generation** (§ref `abilities.md`). Point-buy
     V1 (cost table from book; default 25 points), then the player
     assigns the six rolled scores to Str/Dex/Con/Int/Wis/Cha.

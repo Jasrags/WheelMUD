@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -269,5 +271,178 @@ func TestLogin_ZeroCharacterRoutesToCharacterCreate(t *testing.T) {
 	f.feed("correct-horse")
 	if _, ok := f.session.CurrentMode().(*CharacterCreate); !ok {
 		t.Fatalf("CurrentMode = %T, want *CharacterCreate (account has 0 chars)", f.session.CurrentMode())
+	}
+}
+
+// pushCharacterCreateMulti builds a CharacterCreate fixture wired to
+// a real chargen.Catalog (the embedded default), driving the multi-
+// step flow rather than the legacy single-name flow.
+func pushCharacterCreateMulti(t *testing.T) *charCreateFixture {
+	t.Helper()
+	server, client := net.Pipe()
+	t.Cleanup(func() { server.Close(); client.Close() })
+
+	fsys, err := chargen.SourceFS()
+	if err != nil {
+		t.Fatalf("chargen source: %v", err)
+	}
+	cat, err := chargen.Load(fsys)
+	if err != nil {
+		t.Fatalf("chargen load: %v", err)
+	}
+
+	cr := repo.NewMemoryCharacterRepo()
+	game := &stubMode{name: "game"}
+	mode := NewCharacterCreate(cr, game)
+	mode.SetCatalog(cat)
+
+	s := telnet.NewSession(server)
+	s.AccountID = 1
+
+	captured := &safeBuf{}
+	drainPeer(t, client, captured)
+
+	if err := s.PushMode(mode); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	return &charCreateFixture{t: t, session: s, peer: client, chars: cr, game: game, captured: captured}
+}
+
+func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("yes")
+
+	if f.session.CurrentMode() != f.game {
+		t.Fatalf("CurrentMode = %T, want game", f.session.CurrentMode())
+	}
+	got, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find Hero: %v", err)
+	}
+	if got.Race != creature.RaceHuman {
+		t.Fatalf("Race = %v, want RaceHuman", got.Race)
+	}
+	if got.Background != creature.BackgroundMidlander {
+		t.Fatalf("Background = %v, want Midlander", got.Background)
+	}
+	if got.ClassLevels[creature.ClassArmsman] != 1 {
+		t.Fatalf("ClassLevels = %v, want Armsman:1", got.ClassLevels)
+	}
+}
+
+func TestCharacterCreate_Multi_BackRevisesPreviousStep(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("back")
+	// Now back at race step; pick ogier.
+	f.feed("ogier")
+	// Background list rendered. Ogier-only entries are not currently
+	// in the catalog, so just go back twice and confirm we don't
+	// crash and end up in name step.
+	f.feed("back")
+	f.feed("back")
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepName {
+		t.Fatalf("step = %d after 2x back, want chargenStepName(%d)", mc.step, chargenStepName)
+	}
+}
+
+func TestCharacterCreate_Multi_CancelResetsDraft(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("cancel")
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepName {
+		t.Fatalf("step = %d after cancel, want chargenStepName", mc.step)
+	}
+	if mc.draft.Name != "" || mc.draft.Race != "" || mc.draft.BackgroundID != "" {
+		t.Fatalf("cancel did not clear draft: %+v", mc.draft)
+	}
+}
+
+func TestCharacterCreate_Multi_RejectsBadRace(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("dragon")
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepRace {
+		t.Fatalf("step = %d, want chargenStepRace after bad race", mc.step)
+	}
+	if !strings.Contains(f.captured.String(), "human") {
+		t.Fatalf("expected race hint: %q", f.captured.String())
+	}
+}
+
+func TestCharacterCreate_Multi_BackgroundByListNumber(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1") // first background in catalog
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepClass {
+		t.Fatalf("step = %d, want chargenStepClass after numeric pick", mc.step)
+	}
+	if mc.draft.BackgroundID == "" {
+		t.Fatal("BackgroundID empty after numeric pick")
+	}
+}
+
+func TestCharacterCreate_Multi_ReviewRejectNonYes(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("maybe") // anything other than yes/y/back/cancel
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepReview {
+		t.Fatalf("step = %d, want chargenStepReview after non-yes", mc.step)
+	}
+	if _, err := f.chars.FindByName(context.Background(), "Hero"); err == nil {
+		t.Fatal("character should not have been created without yes")
+	}
+}
+
+func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	if _, err := f.chars.Create(context.Background(), repo.Character{AccountID: 999, Name: "Hero"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("yes")
+	mc, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if mc.step != chargenStepName {
+		t.Fatalf("step = %d, want chargenStepName after duplicate", mc.step)
+	}
+	if !strings.Contains(f.captured.String(), "already taken") {
+		t.Fatalf("expected duplicate message: %q", f.captured.String())
 	}
 }

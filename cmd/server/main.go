@@ -251,6 +251,7 @@ func main() {
 		login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
 			return newsCatalog.WriteMOTDBlock(s, lastSeen)
 		})
+		login.SetCatalog(chargenCatalog)
 		return login
 	}
 

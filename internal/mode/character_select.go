@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -18,6 +19,7 @@ type CharacterSelect struct {
 	repo      repo.CharacterRepo
 	game      telnet.Mode
 	motd      MOTDFunc
+	catalog   *chargen.Catalog
 	listShown bool
 }
 
@@ -27,6 +29,10 @@ func NewCharacterSelect(chars []repo.Character, characters repo.CharacterRepo, g
 
 // SetMOTD wires the MOTD hook fired by promoteToGame on selection.
 func (m *CharacterSelect) SetMOTD(f MOTDFunc) { m.motd = f }
+
+// SetCatalog forwards the chargen catalog to a CharacterCreate
+// spawned by the user typing 'create'.
+func (m *CharacterSelect) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 
 func (m *CharacterSelect) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Pick a character (or 'create' / 'quit'): "
@@ -64,6 +70,7 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 	case strings.EqualFold(choice, "create"):
 		create := NewCharacterCreate(m.repo, m.game)
 		create.SetMOTD(m.motd)
+		create.SetCatalog(m.catalog)
 		return s.ReplaceMode(create)
 	}
 

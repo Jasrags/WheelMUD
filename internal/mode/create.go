@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -43,11 +44,17 @@ type Create struct {
 	username string
 	hash     string
 	motd     MOTDFunc
+	catalog  *chargen.Catalog
 }
 
 // SetMOTD propagates the MOTD/news hook from Login through Create →
 // postAuth → CharacterCreate / promoteToGame.
 func (c *Create) SetMOTD(f MOTDFunc) { c.motd = f }
+
+// SetCatalog propagates the chargen catalog from Login → Create →
+// postAuth → CharacterCreate so newly-created accounts land in the
+// multi-step chargen flow when content is available.
+func (c *Create) SetCatalog(cat *chargen.Catalog) { c.catalog = cat }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
 // to postAuth after the account is persisted; sessions enforces the
@@ -158,7 +165,7 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, c.characters, c.motd, c.game)
+	return postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game)
 }
 
 // reservedUsernames are case-insensitively forbidden. "new" routes to

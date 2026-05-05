@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/auth"
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -51,12 +52,18 @@ type Login struct {
 	username string
 	account  *repo.Account // resolved after step 1; nil when no such user
 	motd     MOTDFunc      // optional MOTD/news hook fired by promoteToGame
+	catalog  *chargen.Catalog
 }
 
 // SetMOTD wires an optional MOTD hook that promoteToGame fires on
 // game entry. nil disables it. Threaded through to CharacterCreate /
 // CharacterSelect when the post-auth router fans out.
 func (l *Login) SetMOTD(f MOTDFunc) { l.motd = f }
+
+// SetCatalog wires the chargen content catalog so post-auth can
+// route 0-character accounts into the multi-step chargen flow. nil
+// keeps the legacy single-name flow.
+func (l *Login) SetCatalog(c *chargen.Catalog) { l.catalog = c }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
 // sessions enforces the single-session-per-account policy: a successful
@@ -119,6 +126,7 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 		// is canceled, the user reconnects.
 		create := NewCreate(l.accounts, l.characters, l.sessions, l.game)
 		create.SetMOTD(l.motd)
+		create.SetCatalog(l.catalog)
 		return s.ReplaceMode(create)
 	}
 
@@ -212,7 +220,7 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, l.characters, l.motd, l.game)
+	return postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game)
 }
 
 // fail resets to the username step and writes a uniform failure
