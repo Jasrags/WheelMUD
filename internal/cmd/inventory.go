@@ -53,7 +53,7 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 				b.WriteString("  {{(nothing)}}::gray\r\n")
 			} else {
 				for _, it := range ordered {
-					renderInventoryNode(&b, it, idx, 1)
+					renderInventoryNodeWithEquip(&b, it, idx, 1, char.Equipment)
 				}
 			}
 
@@ -191,6 +191,7 @@ func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessi
 				slog.Warn("drop: transfer failed", "item", it.ID, "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You can't drop it right now.}}::red\r\n")
 			}
+			autoUnequipIfHeld(c, characters, it.ID)
 			char, err := characters.FindByName(c.Ctx, s.CharacterName)
 			if err != nil {
 				slog.Warn("drop: char lookup failed", "char", s.CharacterID, "error", err)
@@ -343,6 +344,7 @@ func giveItem(c *telnet.Context, items repo.ItemRepo, characters repo.CharacterR
 		slog.Warn("give: transfer failed", "item", it.ID, "to", peer.CharacterID, "error", err)
 		return s.WriteString("{{It slips between you.}}::red\r\n")
 	}
+	autoUnequipIfHeld(c, characters, it.ID)
 
 	// Splice both JSON ordering lists. Best-effort — SQL is the truth.
 	if actor, err := characters.FindByName(c.Ctx, s.CharacterName); err == nil {
@@ -438,12 +440,27 @@ func totalCarriedWeight(topLevel []repo.Item, idx map[int64][]repo.Item) float64
 // (recursively) into b. depth is the indent level (1 == "  ", 2 ==
 // "    ") so the inventory listing reads as a small tree.
 func renderInventoryNode(b *strings.Builder, it repo.Item, idx map[int64][]repo.Item, depth int) {
+	renderInventoryNodeWithEquip(b, it, idx, depth, creature.Equipment{})
+}
+
+// renderInventoryNodeWithEquip mirrors renderInventoryNode but appends
+// a `(worn)` / `(wielded)` / `(offhand)` annotation when the item is
+// currently in one of the single-occupancy slots on eq. Equipped
+// items remain owned by the carrier (equipment_json is an overlay,
+// not a relocation), so they still appear in the inventory tree.
+func renderInventoryNodeWithEquip(b *strings.Builder, it repo.Item, idx map[int64][]repo.Item, depth int, eq creature.Equipment) {
 	for i := 0; i < depth; i++ {
 		b.WriteString("  ")
 	}
 	b.WriteString("{{")
 	b.WriteString(it.Name)
-	b.WriteString("}}::green\r\n")
+	b.WriteString("}}::green")
+	if slot, ok := eq.FindByItem(it.ID); ok {
+		b.WriteString(" {{(")
+		b.WriteString(slot.Label())
+		b.WriteString(")}}::gray")
+	}
+	b.WriteString("\r\n")
 	if it.Type != repo.ItemTypeContainer {
 		return
 	}
@@ -456,7 +473,7 @@ func renderInventoryNode(b *strings.Builder, it repo.Item, idx map[int64][]repo.
 		return
 	}
 	for _, child := range children {
-		renderInventoryNode(b, child, idx, depth+1)
+		renderInventoryNodeWithEquip(b, child, idx, depth+1, eq)
 	}
 }
 
@@ -575,6 +592,7 @@ func NewPut(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 				slog.Warn("put: transfer failed", "item", it.ID, "container", container.ID, "error", err)
 				return s.WriteString("{{It slips from your grasp.}}::red\r\n")
 			}
+			autoUnequipIfHeld(c, characters, it.ID)
 
 			// Maintain inventory_json ordering — the item is no longer
 			// at top level. Best-effort.
@@ -879,4 +897,3 @@ func completeGive(items repo.ItemRepo, sessions *session.Registry) func(s *telne
 		}
 	}
 }
-

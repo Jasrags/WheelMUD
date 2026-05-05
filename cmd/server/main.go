@@ -17,9 +17,9 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/help"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
-	"github.com/Jasrags/WheelMUD/internal/help"
 	"github.com/Jasrags/WheelMUD/internal/news"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -461,6 +461,10 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewDrop(items, characters, sessions),
 		cmd.NewGive(items, characters, sessions),
 		cmd.NewPut(items, characters, sessions),
+		cmd.NewWear(items, characters, sessions),
+		cmd.NewWield(items, characters, sessions),
+		cmd.NewRemove(items, characters, sessions),
+		cmd.NewEquipment(items, characters),
 		cmd.NewSpawn(items, mobTemplates, mobs, characters, sessions, audits),
 	); err != nil {
 		return nil, err
@@ -669,4 +673,3 @@ func (srv *server) broadcast(msg string) {
 		}
 	}
 }
-

@@ -81,7 +81,14 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   the move family (`n`/`s`/`e`/`w`/`u`/`d`/etc.), `teleport`, the
   door verbs (`open`/`close`/`lock`/`unlock`/`pick`), the inventory
   verbs (`inventory`/`get`/`drop`/`give`/`put`) with `get <item>
-  from <container>` semantics and capacity-aware `put`, the BFS
+  from <container>` semantics and capacity-aware `put`, the
+  equipment verbs (`wear`/`wield [off]`/`remove`/`equipment`/`eq`)
+  driving the `creature.Equipment` slot map persisted in
+  `equipment_json` (an overlay on inventory — equipped items keep
+  `owner_character_id`, `inventory` annotates them as
+  `(worn)`/`(wielded)`/`(offhand)`, and `drop`/`give`/`put` call
+  `autoUnequipIfHeld` so leaving inventory never strands a slot
+  pointer), the BFS
   minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
   the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
   `track`, `time`, `news`, and the admin tools (`whereami`, `zones`,
@@ -293,7 +300,7 @@ room.zone_id linkage, item taxonomy, container fixtures, dark-room
 fixtures), the session registry, the eventbus, the tick scheduler,
 the persist manager, and the concrete commands (look / move / say /
 tell / reply / shout / yell / channel / teleport / alias / prompt /
-examine / door verbs / inventory verbs / put / spawn / map / zonemap
+examine / door verbs / inventory verbs / put / equipment verbs / spawn / map / zonemap
 / coords / track / time / news / whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse

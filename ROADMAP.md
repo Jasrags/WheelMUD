@@ -586,7 +586,7 @@ will need on top of those tables.
       unbind enforcement (collar-side commands, suppression while
       collared), Warder bond effects, angreal/sa'angreal slot
       boost with cross-gender inert behavior.
-- [ ] **Equipment slots and wear/wield logic** — WoT does not use a
+- [~] **Equipment slots and wear/wield logic** — WoT does not use a
       D&D wear-slot bitmask. Discrete slots: `armor` (one body
       armor), `shield` (separate from armor; bonuses stack),
       `primary_wield` + `off_hand` (two-handed weapons consume both;
@@ -603,6 +603,15 @@ will need on top of those tables.
       type, swap semantics, save/restore on login, affects
       reapplied on equip and stripped on remove, container-on-belt
       vs in-inventory distinction.
+      Landed 2026-05-04: V1 verbs `wear` (Armor / Shield /
+      Clothing→Outfit), `wield <weapon> [off]` (PrimaryWield /
+      OffHand), `remove`, and `equipment` / `eq` listing. Persisted
+      via `equipment_json` (no migration). `inventory` annotates
+      equipped items; `drop` / `give` / `put` auto-clear the slot.
+      Pending: two-handed weapons, Cloak / Backpack / WornMisc /
+      BeltPouches slot disambiguation, wear-requirements (Str /
+      class / level / wear-flag), affect application on equip/
+      remove, double-weapon attack profiles.
 - [~] **Currency model** — `internal/currency` package: four
       denominations (`cp`/`sp`/`mk`/`gc`) at fixed ratios
       `1/10/100/1000`, all wealth stored as a signed `Amount` of

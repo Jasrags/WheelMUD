@@ -164,6 +164,31 @@ func (r *MemoryCharacterRepo) RecordInventory(_ context.Context, id int64, ids [
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordEquipment(_ context.Context, id int64, eq creature.Equipment) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			// Deep-copy slice fields so the caller mutating eq after
+			// the call doesn't bleed back into stored state.
+			cp := eq
+			if len(eq.BeltPouches) > 0 {
+				cp.BeltPouches = append([]int64(nil), eq.BeltPouches...)
+			} else {
+				cp.BeltPouches = nil
+			}
+			if len(eq.WornMisc) > 0 {
+				cp.WornMisc = append([]int64(nil), eq.WornMisc...)
+			} else {
+				cp.WornMisc = nil
+			}
+			c.Equipment = cp
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordCoin(_ context.Context, id int64, coin, bank currency.Amount) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

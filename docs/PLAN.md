@@ -66,11 +66,25 @@ After A: meaningfully nicer to live in for ops and builders.
 Combat needs armor on bodies and weapons in hands. Shops/banks need
 item flow. Both build on the inventory/container work just landed.
 
-7. **Equipment slots + `wear` / `wield` / `remove`** (§9 / §14).
+7. ~~**Equipment slots + `wear` / `wield` / `remove`** (§9 / §14).
    `character_equipment` table keyed `(character_id, slot)`. Slot enum
    from the WoT body map. Validates against item type/flags.
    Encumbrance already reads transitive ownership — extend to include
-   equipped.
+   equipped.~~ Landed 2026-05-04. No migration needed —
+   `equipment_json` and the `creature.Equipment` slot struct already
+   round-trip via migration 0009. Verbs:
+   `wear <item>` (Armor / Shield / Clothing→Outfit, slot derived from
+   `ItemType`), `wield <item> [off]` (PrimaryWield default, OffHand
+   on `off`/`offhand`/`second`), `remove <item>` (overlay clear; item
+   stays owned), and `equipment` / `eq` listing. `inventory` annotates
+   equipped items as `(worn)` / `(wielded)` / `(offhand)`. `drop` /
+   `give` / `put` auto-clear the slot via `autoUnequipIfHeld` so
+   leaving inventory can never strand a dangling slot pointer.
+   Encumbrance unchanged (equipped items keep `owner_character_id` so
+   `ListAllOwnedTransitive` already counts them). V1 follow-ups:
+   two-handed weapons (no `FlagTwoHanded` yet), Cloak / Backpack /
+   WornMisc / BeltPouches slot disambiguation, wear requirements
+   (Str / class / level), auto-swap on full slot.
 8. **Shops** (§14). Shopkeeper mob subtype, `list` / `buy` / `sell` /
    `value`. Half-price sell rule (the existing `trade_good` flag is
    already exempt in code).

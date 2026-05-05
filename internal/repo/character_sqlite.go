@@ -179,6 +179,24 @@ func (r *SQLiteCharacterRepo) RecordInventory(ctx context.Context, id int64, ids
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordEquipment(ctx context.Context, id int64, eq creature.Equipment) error {
+	js, err := jsonMarshalString(eq)
+	if err != nil {
+		return fmt.Errorf("marshal equipment: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET equipment_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record equipment: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters SET coin_cp = ?, bank_cp = ? WHERE id = ?`,

@@ -145,8 +145,8 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 				Defense: 14,
 				Saves:   creature.Saves{Fort: 1, Ref: 3, Will: 0},
 				InitMod: 3, BAB: 1,
-				Speed:    creature.Speed{BaseFt: 30},
-				ReachFt:  5, FaceFt: 5, ThreatFt: 5,
+				Speed:   creature.Speed{BaseFt: 30},
+				ReachFt: 5, FaceFt: 5, ThreatFt: 5,
 				Conditions: creature.CondFatigued,
 				Position:   creature.PosCharging,
 				Specials:   creature.QualLowLightVision,
@@ -162,10 +162,10 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 			HeightCm:    195, WeightKg: 88, Age: 20,
 			Handedness: creature.HandRight,
 			Fame:       12, Infamy: 3, InfamyShare: 0.2,
-			Coin:        currency.Amount(123),
-			BankBalance: currency.Amount(456),
-			Position:    creature.StanceFighting,
-			Encumbrance: creature.LoadLight,
+			Coin:          currency.Amount(123),
+			BankBalance:   currency.Amount(456),
+			Position:      creature.StanceFighting,
+			Encumbrance:   creature.LoadLight,
 			BoundRoomID:   StarterRoomID,
 			PlayedSeconds: 7200,
 			LastLogin:     time.Date(2026, 5, 1, 8, 0, 0, 0, time.UTC),
@@ -341,6 +341,48 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 	t.Run(name+"/mark_news_seen_unknown_returns_not_found", func(t *testing.T) {
 		cr, _ := newRepo(t)
 		err := cr.MarkNewsSeen(context.Background(), 9999, time.Now())
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/record_equipment_roundtrips", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "ow", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Perrin"})
+		eq := creature.Equipment{
+			Armor:        11,
+			PrimaryWield: 22,
+			OffHand:      33,
+			BeltPouches:  []int64{44, 55},
+		}
+		if err := cr.RecordEquipment(ctx, c.ID, eq); err != nil {
+			t.Fatalf("RecordEquipment: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Perrin")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.Equipment.Armor != 11 || got.Equipment.PrimaryWield != 22 || got.Equipment.OffHand != 33 {
+			t.Fatalf("equipment slot mismatch: %+v", got.Equipment)
+		}
+		if !reflect.DeepEqual(got.Equipment.BeltPouches, []int64{44, 55}) {
+			t.Fatalf("BeltPouches mismatch: %+v", got.Equipment.BeltPouches)
+		}
+		// Overwrite to empty.
+		if err := cr.RecordEquipment(ctx, c.ID, creature.Equipment{}); err != nil {
+			t.Fatalf("RecordEquipment empty: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Perrin")
+		if got.Equipment.PrimaryWield != 0 || len(got.Equipment.BeltPouches) != 0 {
+			t.Fatalf("equipment not cleared: %+v", got.Equipment)
+		}
+	})
+
+	t.Run(name+"/record_equipment_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordEquipment(context.Background(), 9999, creature.Equipment{})
 		if !errors.Is(err, ErrCharacterNotFound) {
 			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
 		}

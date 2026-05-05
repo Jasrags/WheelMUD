@@ -155,6 +155,13 @@ type CharacterRepo interface {
 	// pickup / drop / give. The inventory_json column is the display
 	// ordering; ownership truth lives on items.owner_character_id.
 	RecordInventory(ctx context.Context, id int64, ids []int64) error
+	// RecordEquipment persists the worn/wielded slot map after a
+	// wear/wield/remove (or an auto-clear from drop/give/put). The
+	// equipment_json column is a pointer overlay over inventory:
+	// equipped items keep owner_character_id set, so location truth
+	// still lives on items, not on this map. Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordEquipment(ctx context.Context, id int64, eq creature.Equipment) error
 	// RecordCoin persists carried + bank wealth after a transfer or
 	// shop transaction.
 	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error
