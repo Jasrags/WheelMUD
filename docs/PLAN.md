@@ -95,152 +95,241 @@ After B: characters can outfit themselves and circulate currency.
 
 ---
 
-## Phase C — Combat MVP
+## Phase C — Character creation flow
 
-10. **Initiative + round tick** (§11). Wire a `combat` tick bucket;
+The current `internal/mode/character_create.go` is a single-screen
+name prompt — every character lands as a class-less, abilityless,
+backgroundless husk. Phase D (combat) reads `Core.Defense`, `BAB`,
+`Saves`, and `Abilities`; without chargen, every roll defaults to
+zeroes and combat is meaningless. The schema is already there:
+`creature.Race` / `Background` / `Class` / `Abilities` / Heroic
+Characteristics fields all exist on `Character` and round-trip
+through migration 0009. What is missing is the **multi-step chargen
+mode plus the WoT content catalogs** that drive each step. References
+live in `docs/reference/{abilities,backgrounds,classes,heroic-
+characteristics,feats,equipment,the-one-power}.md`.
+
+10. **Chargen content loader** (§6 / §12). New `internal/chargen`
+    package + `data/chargen/*.yaml` catalogs (backgrounds, classes,
+    feats, skills, weaves). Loader parallel to `internal/news` and
+    `internal/world` — load once at boot, expose typed structs to
+    the chargen mode and (later) to level-up / weave-resolution
+    paths. No DB tables: catalogs are content, not state.
+11. **Multi-step `CharacterCreate` mode** (§5 / §6). Replaces the
+    single-name prompt with a substep stack: abilities → race +
+    background → class (+ channeler branch) → identity → feats /
+    skills / equipment → review/confirm. Uses the existing mode
+    stack so each step is its own `Mode` and `back` / `cancel` work
+    naturally. Falls back to the legacy name-only flow when the
+    chargen catalog is missing so dev / test fixtures stay simple.
+12. **Ability score generation** (§ref `abilities.md`). Point-buy
+    V1 (cost table from book; default 25 points), then the player
+    assigns the six rolled scores to Str/Dex/Con/Int/Wis/Cha.
+    Reroll rule (sum of mods ≤ 0 OR highest score ≤ 13) lands
+    later; standard array + 4d6-drop-lowest as opt-in alternates.
+    Writes `Core.Abilities` directly.
+13. **Background + class selection** (§ref `backgrounds.md` /
+    `classes.md`). Eleven backgrounds (Aiel ... Taraboner) supply
+    bonus feats, class-/cross-class skills, home + bonus languages,
+    height/weight modifiers, and one of three equipment-option
+    bundles. Seven classes (Algai'd'siswai, Armsman, Initiate,
+    Noble, Wanderer, Wilder, Woodsman) drive BAB, save progression,
+    HD, class-skill list, level-1 features. Race (Human / Ogier)
+    gates which classes/backgrounds are available. Writes Race,
+    Background, ClassLevels = {chosen: 1}.
+14. **Heroic characteristics + identity** (§ref `heroic-
+    characteristics.md`). Gender, age, height/weight (Table 6-1
+    random rolls modified by background), handedness, alignment
+    posture (Good default; Bad / Evil flagged so they can be hidden
+    from the player-facing menu later), and the existing name
+    prompt. Writes HeightCm, WeightKg, Age, Handedness, Alignment,
+    Name.
+15. **First-level feats, skills, weaves, starting equipment**
+    (§ref `feats.md` / `classes.md` Table 3-1 / `equipment.md` /
+    `the-one-power.md`). Drive Table 3-1 to allocate the 1st-level
+    feat slot and the (4 + Int mod) × 4 class-skill ranks; merge in
+    background bonus feats / skills. For Initiate / Wilder, branch
+    into channeler chargen: Source by gender, affinities (one or
+    two of the five Powers), and starting weaves from the level-0
+    list, writing `Channeling` on the character. Spawn the chosen
+    background's equipment-option bundle into the new character's
+    inventory and auto-equip the free outfit (Outfit slot already
+    handled by Phase B). Persists via the existing
+    `CharacterRepo.Create` — chargen builds the full `Character`
+    aggregate before the single insert.
+
+After C: a freshly-created character is mechanically *complete* —
+abilities, class, race, background, feats, skills, gear, and (for
+channelers) an opening weave list. Phase D combat math now reads
+real numbers instead of zeroes. Level-up / mid-game skill rank
+investment / new-weave learning intentionally **stay in old Phase D**
+(now E); this phase is day-zero only.
+
+---
+
+## Phase D — Combat MVP
+
+16. **Initiative + round tick** (§11). Wire a `combat` tick bucket;
     per-room `Fight` state.
-11. **Damage types & resistances** (§11). DR / resists already exist on
+17. **Damage types & resistances** (§11). DR / resists already exist on
     `creature.Core`; just plumb the math.
-12. **Hit/miss/dodge/parry rolls** (§11). `d20 + bab + ability` vs
+18. **Hit/miss/dodge/parry rolls** (§11). `d20 + bab + ability` vs
     Defense. Reads `WeaponStats.ThreatLow` / `CritMult`.
-13. **Death / corpses / looting / XP grant** (§11). At HP ≤ 0 drop a
+19. **Death / corpses / looting / XP grant** (§11). At HP ≤ 0 drop a
     corpse item carrying the inventory list, schedule decay tick,
     award XP to attackers.
-14. **Aggro / threat tables** (§11). Per-`Fight`
+20. **Aggro / threat tables** (§11). Per-`Fight`
     `threat[CreatureID]int`.
-15. **PvE / PvP zones + safe zones** (§11). Reuse existing
+21. **PvE / PvP zones + safe zones** (§11). Reuse existing
     `room.flags.peaceful`; add `pvp` flag on character.
-16. **Group / party** (§11). `group` invites, `follow`, shared XP
+22. **Group / party** (§11). `group` invites, `follow`, shared XP
     split, peaceful-on-group-leader.
 
-After C: full "kill a thing, get XP, find loot, repeat" loop.
+After D: full "kill a thing, get XP, find loot, repeat" loop.
 
 ---
 
-## Phase D — Progression & affects
+## Phase E — Progression & affects
 
-Doable in parallel with late C; affects are shared by both.
+Doable in parallel with late D; affects are shared by both. Phase C
+shipped the *day-zero* class / feat / skill / weave selection; this
+phase ships the *over-time* level-up paths that build on the same
+catalogs.
 
-17. **Class / archetype model** (§12). Drives chargen pick + level-
-    table key.
-18. **Levels & XP curve** (§12).
-19. **Skill tree + ranks** (§12). `character_skills` table; ability
-    checks read it.
-20. **Affects / buffs / debuffs with durations** (§12).
+23. **Levels & XP curve** (§12). Reads the §12 class / level table;
+    awards feat slots, skill points, ability bumps, weave slots on
+    train.
+24. **Mid-game skill rank investment** (§12). Per-character
+    `character_skills` writes; respects class-skill / cross-class
+    caps from the chargen catalog.
+25. **Affects / buffs / debuffs with durations** (§12).
     `creature_affects` table. Combat reads it for poison/bleed; weaves
     and consumables write it.
-21. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
+26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure.
-22. **Channeling sub-record** (§9). Schema half-landed
-    (creature/channeling tables); finish wiring.
-23. **Weave list with slot levels** (§12). Replaces placeholder weaves
-    with the real WoT spell list.
+27. **Channeling slot refresh + madness tick** (§9). Schema half-
+    landed (creature/channeling tables); chargen seeded affinities +
+    starting weaves; this finishes the per-tick mechanics (slot
+    refresh on rest, madness accrual while embraced for men, stilled
+    state).
+28. **Mid-game weave learning** (§12). New weaves added to
+    `WeavesKnown` via trainer NPC + practice-points spend. Catalog
+    already loaded by Phase C #10.
 
-After D: meaningful vertical progression.
+After E: meaningful vertical progression on top of a chargen-
+complete character.
 
 ---
 
-## Phase E — NPC behavior & quests
+## Phase F — NPC behavior & quests
 
 Content multiplier. Without this the world is static.
 
-24. **Trigger / event system** (§15) — `on_enter`, `on_say`,
+29. **Trigger / event system** (§15) — `on_enter`, `on_say`,
     `on_attack`, `on_death`, `on_tick`. Pure dispatch layer; consumers
-    in 25–26.
-25. **NPC dialogue trees** (§15). JSON per mob; uses §13 `say` capture.
-26. **Quest engine state machine** (§15). Per-character per-quest
+    in 30–31.
+30. **NPC dialogue trees** (§15). JSON per mob; uses §13 `say` capture.
+31. **Quest engine state machine** (§15). Per-character per-quest
     state + objective ticks.
-27. **Embedded scripting (gopher-lua) + sandbox** (§15). Biggest lift
-    in the whole roadmap. Defer until 24–26 prove the trigger surface
+32. **Embedded scripting (gopher-lua) + sandbox** (§15). Biggest lift
+    in the whole roadmap. Defer until 29–31 prove the trigger surface
     is what you actually want — otherwise the Lua API gets redesigned
     twice.
 
 ---
 
-## Phase F — OLC
+## Phase G — OLC
 
 Once content matters, builders need to author it without YAML edits +
 restart.
 
-28. **Permission/builder role formalization** (§16). `AuthLevel`
+33. **Permission/builder role formalization** (§16). `AuthLevel`
     already splits builder from admin; add per-zone builder grants.
-29. **`redit` / `oedit` / `medit` / `zedit`** (§16). Mode-based
+34. **`redit` / `oedit` / `medit` / `zedit`** (§16). Mode-based
     editors using the existing mode stack.
-30. **Versioned area saves + diff/preview** (§16). Snapshot before
+35. **Versioned area saves + diff/preview** (§16). Snapshot before
     commit; admin `revert` rolls back.
-31. **Hot-reload of areas without restart** (§7). The §7
+36. **Hot-reload of areas without restart** (§7). The §7
     `reload world` admin command, gated on the new versioning.
     **Also unblocks the auto-coords incremental re-walk** parked in
     the roadmap on "blocked on §16."
 
 ---
 
-## Phase G — Communication breadth & UX polish
+## Phase H — Communication breadth & UX polish
 
 Lower urgency; do whichever lands free time.
 
-32. **Ignore / mute** (§13).
-33. **Mail editor mode + `mail`** (§5 / §13). Mode stack supports
+37. **Ignore / mute** (§13).
+38. **Mail editor mode + `mail`** (§5 / §13). Mode stack supports
     multi-line input with `.` to end.
-34. **Bulletin boards / notes** (§13).
-35. **Width-aware wrap (CJK / combining marks)** (§2).
-36. **Long-token break in `WrapText`** (§2).
-37. **Lockout-on-failed-logins finish** (§6) — partial today.
-38. **Email verification / password reset** (§6).
+39. **Bulletin boards / notes** (§13).
+40. **Width-aware wrap (CJK / combining marks)** (§2).
+41. **Long-token break in `WrapText`** (§2).
+42. **Lockout-on-failed-logins finish** (§6) — partial today.
+43. **Email verification / password reset** (§6).
 
 ---
 
-## Phase H — Network protocol breadth
+## Phase I — Network protocol breadth
 
 À la carte; pick what your client population wants.
 
-39. **CHARSET / UTF-8 negotiation** (§1). Cheapest; unblocks accented
+44. **CHARSET / UTF-8 negotiation** (§1). Cheapest; unblocks accented
     names.
-40. **MSSP** (§1). Tiny, but gets WheelMUD on MUD-listing sites.
-41. **GMCP** (§1). Highest-value modern protocol; opens
+45. **MSSP** (§1). Tiny, but gets WheelMUD on MUD-listing sites.
+46. **GMCP** (§1). Highest-value modern protocol; opens
     MUSHclient/Mudlet integrations, in-client UI panels.
-42. **MCCP2/3** (§1). Compression; nice-to-have unless bandwidth is a
+47. **MCCP2/3** (§1). Compression; nice-to-have unless bandwidth is a
     real concern.
-43. **MXP** (§1). Clickable links; useful once help/news is rich.
-44. **TLS listener** (§1).
-45. **WebSocket gateway** (§1). Browser clients — high payoff if you
+48. **MXP** (§1). Clickable links; useful once help/news is rich.
+49. **TLS listener** (§1).
+50. **WebSocket gateway** (§1). Browser clients — high payoff if you
     want public reach.
-46. **SSH listener for ops** (§1). Lowest priority unless doing a lot
+51. **SSH listener for ops** (§1). Lowest priority unless doing a lot
     of remote admin.
 
 ---
 
-## Phase I — Ops, CI, packaging (run in parallel from Phase B onward)
+## Phase J — Ops, CI, packaging (run in parallel from Phase B onward)
 
 Never gate gameplay but the cost compounds if you wait.
 
-47. **GitHub Actions CI matrix** (§21) + **coverage target** (§21).
+52. **GitHub Actions CI matrix** (§21) + **coverage target** (§21).
     Do this **first** — every later phase produces more code to
     break.
-48. **Config file (TOML/YAML) + per-env overrides + `.env.example`**
+53. **Config file (TOML/YAML) + per-env overrides + `.env.example`**
     (§20).
-49. **Metrics + pprof on private `:9090`** (§19).
-50. **Request/command audit log per character** (§19).
-51. **Backup rotation (`VACUUM INTO`)** (§7).
-52. **Telnet integration test driving the protocol** (§21).
-53. **Fuzz tests on IAC parser + tokenizer** (§21).
-54. **`goreleaser` + systemd unit + healthcheck** (§22).
+54. **Metrics + pprof on private `:9090`** (§19).
+55. **Request/command audit log per character** (§19).
+56. **Backup rotation (`VACUUM INTO`)** (§7).
+57. **Telnet integration test driving the protocol** (§21).
+58. **Fuzz tests on IAC parser + tokenizer** (§21).
+59. **`goreleaser` + systemd unit + healthcheck** (§22).
 
 ---
 
 ## Sequencing rules
 
-- **Run #47 (CI matrix) right now**, before anything else. It doesn't
+- **Run #52 (CI matrix) right now**, before anything else. It doesn't
   gate gameplay, but it stops regressions in everything below it.
-- **Don't start Phase C without Phase B finished.** Combat against
-  unequipped fists and naked mobs is throwaway content.
-- **Don't start Phase D's weaves before Phase C's hit/miss.** Weaves
+- **Don't start Phase D (combat) without Phase C (chargen) finished.**
+  Combat math reads `Core.Defense` / `BAB` / `Saves` / `Abilities`,
+  all of which are class- and ability-driven; without chargen those
+  default to zero and nothing combats meaningfully.
+- **Don't start Phase D without Phase B finished either.** Combat
+  against unequipped fists and naked mobs is throwaway content.
+- **Phase C feeds Phase E.** The chargen catalog (#10) is the same
+  data Phase E's level-up / weave-learning paths read; building both
+  on the same loader keeps the level-1 and level-N rules from
+  drifting.
+- **Don't start Phase E's weaves before Phase D's hit/miss.** Weaves
   inherit the d20 pipeline.
-- **Phase E #27 (Lua) is the single biggest lift.** Defer it until
-  24–26 prove the trigger surface is what you actually want.
-- **Phase F #31 is the natural unblock of the parked auto-coords
-  incremental rewalk** — it should be the *last* item in F.
-- **Phase H is à la carte.** GMCP first if you want third-party
+- **Phase F #32 (Lua) is the single biggest lift.** Defer it until
+  29–31 prove the trigger surface is what you actually want.
+- **Phase G #36 is the natural unblock of the parked auto-coords
+  incremental rewalk** — it should be the *last* item in G.
+- **Phase I is à la carte.** GMCP first if you want third-party
   clients; WebSocket first if you want browser reach.
 
 ---

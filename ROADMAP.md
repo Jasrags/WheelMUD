@@ -217,6 +217,35 @@ constants and helpers in `telnet/iac.go`.
       with FK + cascade, account isolation enforced in `CharacterSelect`
 - [x] Character-select + character-create modes — auto-skip when account
       has 0 chars (forced create) or 1 char (auto-promote); 2+ shows menu
+- [ ] **Character creation flow** — replace the current single-screen
+      name prompt (`internal/mode/character_create.go`) with the full
+      WoT chargen pipeline, driven by content catalogs in
+      `data/chargen/*.yaml` loaded by a new `internal/chargen` package.
+      Substeps via the existing mode stack, in order: ability scores
+      (point-buy V1; standard array + 4d6-drop-lowest as alternates;
+      reroll rule per *abilities.md*) → race + background (eleven WoT
+      backgrounds from *backgrounds.md* with bonus feats / class skills
+      / home + bonus languages / height-mod / one of three equipment
+      bundles) → class (seven WoT classes from *classes.md* driving
+      BAB / save progression / HD / class-skill list / level-1
+      features) → channeler branch for Initiate / Wilder (Source by
+      gender, affinities from the five Powers, starting weaves from
+      level-0 list per *the-one-power.md*) → heroic characteristics
+      (gender / age / height / weight via *heroic-characteristics.md*
+      Table 6-1 with background mods, handedness, alignment posture
+      [Good default; Bad / Evil hidden from menu V1], name) →
+      first-level feat slot + `(4 + Int mod) × 4` class-skill ranks
+      from *classes.md* Table 3-1, merged with background bonuses →
+      starting equipment from chosen background bundle, spawned into
+      inventory and auto-equipped (Outfit slot wired in §14) → review/
+      confirm screen → single `CharacterRepo.Create`. Falls back to the
+      legacy name-only flow when no chargen catalog is loaded so dev
+      fixtures stay simple. Schema is already there — `creature.Race`,
+      `Background`, `ClassLevels`, `Abilities`, Heroic Characteristics
+      fields, and `Channeling` all round-trip through migration 0009;
+      this is content + UI, not migrations. Catalogs are the same data
+      level-up / weave-learning will read in §12, so loader lives once
+      and serves both day-zero (this item) and over-time progression.
 - [x] Mode-driven echo masking — Login / Create / CharacterCreate flip
       `Session.InPasswordMode` via lifecycle; `togglepassword` debug
       command retired
