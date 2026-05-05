@@ -8,11 +8,11 @@ import (
 	"context"
 	"log/slog"
 	"math/rand"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 )
@@ -267,14 +267,15 @@ func (h *WanderHandler) broadcast(m creature.MobInstance, fromRoomID int64, exit
 		arrive = "{{" + name + " arrives.}}::white"
 	}
 	for _, peer := range h.sessions.Snapshot() {
-		switch peer.CurrentRoomID {
+		_, peerName, peerRoom := peer.InWorld()
+		switch peerRoom {
 		case fromRoomID:
 			if err := peer.WriteAsync(leave); err != nil {
-				slog.Debug("wander: peer write failed", "to", peer.CharacterName, "error", err)
+				slog.Debug("wander: peer write failed", "to", peerName, "error", err)
 			}
 		case exit.ToRoomID:
 			if err := peer.WriteAsync(arrive); err != nil {
-				slog.Debug("wander: peer write failed", "to", peer.CharacterName, "error", err)
+				slog.Debug("wander: peer write failed", "to", peerName, "error", err)
 			}
 		}
 	}
@@ -284,25 +285,7 @@ func (h *WanderHandler) broadcast(m creature.MobInstance, fromRoomID int64, exit
 // mob's display name. Mob names come from authored YAML (trusted),
 // but defense-in-depth so a builder typo can never inject styling
 // or terminal escapes into a peer's session.
-func safeMobName(name string) string {
-	if name == "" {
-		return "Something"
-	}
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	out := b.String()
-	if out == "" {
-		return "Something"
-	}
-	rep := strings.NewReplacer("{{", "{ {", "}}", "} }", "::", ": :")
-	return rep.Replace(out)
-}
+func safeMobName(name string) string { return display.Defang(name, "Something") }
 
 func reverseDir(d string) string {
 	switch d {

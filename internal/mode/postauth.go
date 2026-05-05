@@ -53,9 +53,16 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 // time (best-effort), runs the optional MOTD hook, and replaces the
 // mode with game.
 func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, motd MOTDFunc, game telnet.Mode) error {
-	s.CharacterID = c.ID
-	s.CharacterName = c.Name
-	s.CurrentRoomID = c.CurrentRoomID
+	roomID := c.CurrentRoomID
+	if roomID == 0 {
+		// Defensive: a character row missing a room id (e.g. created
+		// before the column existed) gets dropped at the starter so
+		// look / move have somewhere to anchor. Resolve before the
+		// SetInWorld write so the snapshot any foreign reader sees
+		// is internally consistent.
+		roomID = repo.StarterRoomID
+	}
+	s.SetInWorld(c.ID, c.Name, roomID)
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
 	s.SetLastNewsSeen(c.LastNewsSeen)
@@ -79,12 +86,6 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 		slog.Error("postauth: character stored at sub-player auth level",
 			"character", c.ID, "level", c.AuthLevel)
 		s.AuthLevel = telnet.AuthPlayer
-	}
-	if s.CurrentRoomID == 0 {
-		// Defensive: a character row missing a room id (e.g. created
-		// before the column existed) gets dropped at the starter so
-		// look / move have somewhere to anchor.
-		s.CurrentRoomID = repo.StarterRoomID
 	}
 	if err := characters.RecordPlay(ctx, c.ID, time.Now()); err != nil {
 		slog.Warn("RecordPlay failed", "char", c.ID, "error", err)

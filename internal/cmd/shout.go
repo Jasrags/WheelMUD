@@ -75,13 +75,14 @@ func zoneBroadcast(c *telnet.Context, sessions *session.Registry, rooms repo.Roo
 		if peer == c.Session {
 			continue
 		}
-		if peer.CharacterID == 0 || peer.CurrentRoomID == 0 {
+		peerCharID, peerName, peerRoomID := peer.InWorld()
+		if peerCharID == 0 || peerRoomID == 0 {
 			continue
 		}
-		peerRoom, err := rooms.FindByID(c.Ctx, peer.CurrentRoomID)
+		peerRoom, err := rooms.FindByID(c.Ctx, peerRoomID)
 		if err != nil {
 			if !errors.Is(err, repo.ErrRoomNotFound) {
-				slog.Debug(selfVerb+": peer room lookup failed", "to", peer.CharacterName, "room", peer.CurrentRoomID, "error", err)
+				slog.Debug(selfVerb+": peer room lookup failed", "to", peerName, "room", peerRoomID, "error", err)
 			}
 			continue
 		}
@@ -89,7 +90,7 @@ func zoneBroadcast(c *telnet.Context, sessions *session.Registry, rooms repo.Roo
 			continue
 		}
 		if err := peer.WriteAsync(otherMsg); err != nil {
-			slog.Debug(selfVerb+": peer write failed", "to", peer.CharacterName, "error", err)
+			slog.Debug(selfVerb+": peer write failed", "to", peerName, "error", err)
 		}
 	}
 	return c.Session.WriteString(selfMsg)

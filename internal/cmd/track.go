@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -128,30 +129,9 @@ func buildTrackReport(
 	), nil
 }
 
-// safeName scrubs a YAML-authored display string before it lands
-// inside cfmt template tags. Strips control bytes and defangs the
-// `{{` / `}}` / `::` triplets so a builder typo in mob/room names
-// can't break tag rendering or leak terminal escapes. fallback is
-// used when the input is empty or scrubs to empty.
-func safeName(name, fallback string) string {
-	if name == "" {
-		return fallback
-	}
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	out := b.String()
-	if out == "" {
-		return fallback
-	}
-	rep := strings.NewReplacer("{{", "{ {", "}}", "} }", "::", ": :")
-	return rep.Replace(out)
-}
+// safeName aliases display.Defang. Kept as a package-local function
+// so existing call sites stay readable.
+var safeName = display.Defang
 
 // inferStepDirection returns the long-form direction name for the
 // exit from prevRoomID to newestRoomID. Falls back to "onward" when

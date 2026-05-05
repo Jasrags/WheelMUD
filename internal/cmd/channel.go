@@ -65,7 +65,8 @@ func NewChannel(ch repo.Channel, sessions *session.Registry, characters repo.Cha
 					continue
 				}
 				if err := peer.WriteAsync(otherMsg); err != nil {
-					slog.Debug("channel: peer write failed", "channel", name, "to", peer.CharacterName, "error", err)
+					_, peerName, _ := peer.InWorld()
+					slog.Debug("channel: peer write failed", "channel", name, "to", peerName, "error", err)
 				}
 			}
 			return c.Session.WriteString(selfMsg)

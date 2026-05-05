@@ -205,14 +205,18 @@ func (w *PhaseAmbientWatcher) Tick(ctx context.Context) {
 // else's ambient).
 func (w *PhaseAmbientWatcher) broadcast(ctx context.Context, t Transition) {
 	for _, s := range w.sessions.Snapshot() {
-		if s == nil || s.CharacterID == 0 || s.CurrentRoomID == 0 {
+		if s == nil {
 			continue
 		}
-		room, err := w.rooms.FindByID(ctx, s.CurrentRoomID)
+		charID, charName, roomID := s.InWorld()
+		if charID == 0 || roomID == 0 {
+			continue
+		}
+		room, err := w.rooms.FindByID(ctx, roomID)
 		if err != nil {
 			if !errors.Is(err, repo.ErrRoomNotFound) {
 				slog.Debug("phase ambient: room lookup failed",
-					"session", s.CharacterName, "roomID", s.CurrentRoomID, "error", err)
+					"session", charName, "roomID", roomID, "error", err)
 			}
 			continue
 		}
@@ -226,7 +230,7 @@ func (w *PhaseAmbientWatcher) broadcast(ctx context.Context, t Transition) {
 		line = fmt.Sprintf("{{%s}}::%s", line, transitionStyles[t])
 		if err := s.WriteAsync(line); err != nil {
 			slog.Debug("phase ambient: write failed",
-				"session", s.CharacterName, "error", err)
+				"session", charName, "error", err)
 		}
 	}
 }

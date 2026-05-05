@@ -364,11 +364,12 @@ func giveItem(c *telnet.Context, items repo.ItemRepo, characters repo.CharacterR
 	// so spell out the loop here to skip both.
 	roomMsg := "{{" + actorName + " gives " + it.Name + " to " + peer.CharacterName + ".}}::cyan"
 	for _, other := range sessions.Snapshot() {
-		if other == s || other == peer || other.CurrentRoomID != s.CurrentRoomID {
+		_, otherName, otherRoom := other.InWorld()
+		if other == s || other == peer || otherRoom != s.CurrentRoomID {
 			continue
 		}
 		if err := other.WriteAsync(roomMsg); err != nil {
-			slog.Debug("give: peer broadcast failed", "to", other.CharacterName, "error", err)
+			slog.Debug("give: peer broadcast failed", "to", otherName, "error", err)
 		}
 	}
 	return s.WriteString("{{You give " + it.Name + " to " + peer.CharacterName + ".}}::cyan\r\n")

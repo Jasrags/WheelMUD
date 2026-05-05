@@ -1,86 +1,29 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"net"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/testhelper"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// bufConn satisfies net.Conn against an in-memory buffer. Tests use it
-// to inspect everything a Session writes without dealing with the
-// net.Pipe's synchronous-read scheduling. Read is unused by these
-// tests; it just blocks until Close.
-type bufConn struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	closed chan struct{}
-	once   sync.Once
-}
+// bufConn / newBufConn / bufSession alias the shared helpers in
+// internal/testhelper. Existing tests across this package refer to
+// these unexported names; the alias preserves the call sites while
+// keeping the implementation in one place.
+type bufConn = testhelper.BufConn
 
-func newBufConn() *bufConn { return &bufConn{closed: make(chan struct{})} }
-
-func (b *bufConn) Read(_ []byte) (int, error) {
-	<-b.closed
-	return 0, errClosed
-}
-
-func (b *bufConn) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *bufConn) Close() error {
-	b.once.Do(func() { close(b.closed) })
-	return nil
-}
-
-func (b *bufConn) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-// Reset clears the captured output. Used by tests that send
-// multiple commands and want to assert only on the latest write.
-func (b *bufConn) Reset() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.buf.Reset()
-}
-
-func (b *bufConn) LocalAddr() net.Addr                { return fakeAddr{} }
-func (b *bufConn) RemoteAddr() net.Addr               { return fakeAddr{} }
-func (b *bufConn) SetDeadline(_ time.Time) error      { return nil }
-func (b *bufConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (b *bufConn) SetWriteDeadline(_ time.Time) error { return nil }
-
-type fakeAddr struct{}
-
-func (fakeAddr) Network() string { return "fake" }
-func (fakeAddr) String() string  { return "fake:0" }
-
-var errClosed = errors.New("buf conn closed")
+func newBufConn() *bufConn { return testhelper.NewBufConn() }
 
 func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	t.Helper()
-	c := newBufConn()
-	s := telnet.NewSession(c)
-	if s == nil {
-		t.Fatal("NewSession returned nil")
-	}
-	t.Cleanup(func() { c.Close() })
-	return s, c
+	return testhelper.BufSession(t)
 }
 
 // noonClock returns a frozen-noon Clock for tests that need to pass a

@@ -352,11 +352,12 @@ func savePlayTimes(ctx context.Context, sessions *session.Registry, characters r
 	now := time.Now().UTC()
 	count := 0
 	for _, s := range sessions.Snapshot() {
-		if s.CharacterID == 0 {
+		charID, _, _ := s.InWorld()
+		if charID == 0 {
 			continue
 		}
-		if err := characters.RecordPlay(ctx, s.CharacterID, now); err != nil {
-			slog.Warn("autosave: RecordPlay failed", "char", s.CharacterID, "error", err)
+		if err := characters.RecordPlay(ctx, charID, now); err != nil {
+			slog.Warn("autosave: RecordPlay failed", "char", charID, "error", err)
 			continue
 		}
 		count++

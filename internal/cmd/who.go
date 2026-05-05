@@ -30,7 +30,7 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 				if peer != c.Session && peer.IsHidden() && !viewerIsAdmin {
 					continue
 				}
-				name := peer.CharacterName
+				_, name, _ := peer.InWorld()
 				if name == "" {
 					// Pre-character session — login or character-select.
 					// Show as "(connecting)" rather than the remote address

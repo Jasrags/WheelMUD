@@ -184,7 +184,7 @@ func resolveRoom(ctx context.Context, rooms repo.RoomRepo, arg string) (repo.Roo
 // logged but doesn't abort the teleport in-process so a transient DB
 // hiccup doesn't trap the caller.
 func relocate(ctx context.Context, s *telnet.Session, roomID int64, characters repo.CharacterRepo) {
-	s.CurrentRoomID = roomID
+	s.SetCurrentRoom(roomID)
 	if s.CharacterID == 0 {
 		return
 	}
@@ -199,7 +199,8 @@ func relocate(ctx context.Context, s *telnet.Session, roomID int64, characters r
 // → session index can land on the registry when it matters.
 func lookupByCharacter(sessions *session.Registry, name string) *telnet.Session {
 	for _, s := range sessions.Snapshot() {
-		if strings.EqualFold(s.CharacterName, name) {
+		_, charName, _ := s.InWorld()
+		if strings.EqualFold(charName, name) {
 			return s
 		}
 	}

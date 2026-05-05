@@ -55,11 +55,12 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 				if peer == c.Session {
 					continue
 				}
-				if peer.CurrentRoomID != c.Session.CurrentRoomID {
+				_, peerName, peerRoom := peer.InWorld()
+				if peerRoom != c.Session.CurrentRoomID {
 					continue
 				}
 				if err := peer.WriteAsync(otherMsg); err != nil {
-					slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
+					slog.Debug("comm: peer write failed", "to", peerName, "error", err)
 				}
 			}
 			return c.Session.WriteString(selfMsg)

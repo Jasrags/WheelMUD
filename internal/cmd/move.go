@@ -117,7 +117,7 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		})
 	}
 
-	s.CurrentRoomID = exit.ToRoomID
+	s.SetCurrentRoom(exit.ToRoomID)
 	if s.CharacterID != 0 {
 		// Best-effort persistence: if it fails we still let the player
 		// move within the current process so the experience isn't broken

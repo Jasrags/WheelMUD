@@ -1,79 +1,26 @@
 package world
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"net"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/testhelper"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// --- net.Conn buffer harness ---------------------------------------------
-//
-// Local copy of the bufConn pattern from internal/cmd/look_test.go. Lifting
-// it to a shared testutil package is tracked as a future cleanup; inlining
-// keeps this slice self-contained.
+// bufConn / newBufConn / bufSession alias the shared helpers in
+// internal/testhelper. See internal/testhelper/bufconn.go.
+type bufConn = testhelper.BufConn
 
-var errBufClosed = errors.New("buf conn closed")
-
-type bufConn struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	closed chan struct{}
-	once   sync.Once
-}
-
-func newBufConn() *bufConn { return &bufConn{closed: make(chan struct{})} }
-
-func (b *bufConn) Read(_ []byte) (int, error) {
-	<-b.closed
-	return 0, errBufClosed
-}
-
-func (b *bufConn) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *bufConn) Close() error {
-	b.once.Do(func() { close(b.closed) })
-	return nil
-}
-
-func (b *bufConn) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-func (b *bufConn) LocalAddr() net.Addr                { return fakeAddr{} }
-func (b *bufConn) RemoteAddr() net.Addr               { return fakeAddr{} }
-func (b *bufConn) SetDeadline(_ time.Time) error      { return nil }
-func (b *bufConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (b *bufConn) SetWriteDeadline(_ time.Time) error { return nil }
-
-type fakeAddr struct{}
-
-func (fakeAddr) Network() string { return "fake" }
-func (fakeAddr) String() string  { return "fake:0" }
+func newBufConn() *bufConn { return testhelper.NewBufConn() }
 
 func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	t.Helper()
-	c := newBufConn()
-	s := telnet.NewSession(c)
-	if s == nil {
-		t.Fatal("NewSession returned nil")
-	}
-	t.Cleanup(func() { c.Close() })
-	return s, c
+	return testhelper.BufSession(t)
 }
 
 // --- helpers --------------------------------------------------------------

@@ -63,18 +63,23 @@ type Session struct {
 	// see ROADMAP §4 ("User-defined aliases stored on the character").
 	Aliases *AliasTable
 
-	// In-world session state. CharacterID, CharacterName, and
-	// CurrentRoomID are owned by the dispatcher goroutine: written by
-	// the mode-promotion helpers (postauth.promoteToGame) and by
-	// movement commands during dispatch, read only by other commands
-	// running on the same dispatch path. Code outside the dispatcher
-	// (e.g. session.Registry consumers, future `who` implementations)
-	// must treat these as snapshot values that can change underfoot;
-	// add explicit synchronization here if/when a non-dispatcher reader
-	// lands.
+	// In-world session state. CharacterID / CharacterName /
+	// CurrentRoomID are crossMu-guarded: written by the mode-
+	// promotion helper (postauth.promoteToGame) and by movement
+	// commands (move, teleport, admin movement). Same-goroutine
+	// dispatch readers can still read the exported fields directly
+	// — Go memory model + alignment make those reads benign because
+	// they execute on the same goroutine that does the write — but
+	// **any goroutine other than this session's dispatcher** must use
+	// `Session.InWorld()` to take the crossMu-guarded snapshot.
+	// Writes go through `SetInWorld` (postauth promotion) or
+	// `SetCurrentRoom` (movement).
 	//
-	// CharacterID / CharacterName are zero / empty pre-character (login
-	// or select); CurrentRoomID is zero pre-game (login, select, create).
+	// CharacterID / CharacterName are zero / empty pre-character
+	// (login or select); CurrentRoomID is zero pre-game (login,
+	// select, create). Documented zero-value semantics survive the
+	// snapshot path: an InWorld() call on a pre-game session
+	// returns (0, "", 0).
 	CharacterID   int64
 	CharacterName string
 	CurrentRoomID int64
@@ -191,6 +196,47 @@ func (s *Session) LastTellFrom() string {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	return s.lastTellFrom
+}
+
+// InWorld returns a crossMu-protected snapshot of the in-world
+// session state. Foreign-goroutine readers (broadcast loops
+// iterating session.Registry.Snapshot, the §10 phase-ambient ticker,
+// etc.) MUST use this rather than reading the exported fields
+// directly — direct reads from a non-dispatcher goroutine race
+// against SetCurrentRoom / SetInWorld writes.
+//
+// Returned values are a frozen point-in-time copy: the player may
+// have moved by the time the caller acts on the room id, but the
+// triple is internally consistent (no torn read where charID and
+// roomID disagree on the player's identity).
+func (s *Session) InWorld() (charID int64, charName string, roomID int64) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.CharacterID, s.CharacterName, s.CurrentRoomID
+}
+
+// SetInWorld stamps the (CharacterID, CharacterName, CurrentRoomID)
+// triple atomically under crossMu. Called by postauth.promoteToGame
+// when a character is selected and entering the game world. The
+// dispatcher goroutine still reads the exported fields directly;
+// this setter exists so the write happens-before relation is
+// established for any foreign reader that uses InWorld().
+func (s *Session) SetInWorld(charID int64, charName string, roomID int64) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.CharacterID = charID
+	s.CharacterName = charName
+	s.CurrentRoomID = roomID
+}
+
+// SetCurrentRoom updates the dispatcher's current room under
+// crossMu. Called by the move family and teleport / admin movement.
+// Use this rather than direct assignment so foreign-goroutine
+// broadcast loops that read InWorld() observe the new room.
+func (s *Session) SetCurrentRoom(roomID int64) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.CurrentRoomID = roomID
 }
 
 // StampInput records the wall-clock at which this session's
