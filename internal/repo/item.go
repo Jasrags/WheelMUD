@@ -263,6 +263,15 @@ type ItemRepo interface {
 	// TransferContainerToOwner pulls an item out of a container into
 	// a character's inventory. Guards on prior parent (fromParentID).
 	TransferContainerToOwner(ctx context.Context, itemID, fromParentID, toOwnerID int64) error
+	// FindByExternalID returns the item whose external_id matches.
+	// items.external_id has a UNIQUE index, so at most one row.
+	// Returns ErrItemNotFound when no row matches. Used by the admin
+	// `spawn item` command as the template-lookup path until a
+	// dedicated item-template repo is split out.
+	FindByExternalID(ctx context.Context, externalID string) (Item, error)
+	// ListExternalIDs returns every item's external_id, sorted. Tab
+	// completion only — pagination is a future concern.
+	ListExternalIDs(ctx context.Context) ([]string, error)
 }
 
 // ErrItemNotFound is returned by GetByID when no row matches the id.

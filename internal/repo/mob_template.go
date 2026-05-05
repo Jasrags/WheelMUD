@@ -25,4 +25,9 @@ type MobTemplateRepo interface {
 	// GetByExternalID returns the template with the given YAML id.
 	// Returns ErrTemplateNotFound if no row matches.
 	GetByExternalID(ctx context.Context, externalID string) (creature.MobTemplate, error)
+	// ListExternalIDs returns every template's external_id, sorted.
+	// Used for admin tab completion of `spawn mob`. Templates are
+	// write-once and small (one row per archetype), so a full scan
+	// is acceptable; pagination is a follow-up if the table grows.
+	ListExternalIDs(ctx context.Context) ([]string, error)
 }

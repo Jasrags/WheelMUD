@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
@@ -62,4 +63,15 @@ func (r *MemoryMobTemplateRepo) GetByExternalID(_ context.Context, externalID st
 		return creature.MobTemplate{}, ErrTemplateNotFound
 	}
 	return r.byID[id], nil
+}
+
+func (r *MemoryMobTemplateRepo) ListExternalIDs(_ context.Context) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.byExt))
+	for ext := range r.byExt {
+		out = append(out, ext)
+	}
+	sort.Strings(out)
+	return out, nil
 }

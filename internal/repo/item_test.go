@@ -453,6 +453,49 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 		}
 	})
 
+	t.Run(name+"/find_by_external_id", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		roomID := makeRoom(t, fix)
+		if _, err := fix.items.Create(ctx, Item{
+			ExternalID: "tr.lantern", Name: "a brass lantern", RoomID: roomID,
+			Type: ItemTypeLight, Stats: &LightStats{RadiusFt: 20},
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.items.FindByExternalID(ctx, "tr.lantern")
+		if err != nil {
+			t.Fatalf("FindByExternalID: %v", err)
+		}
+		if got.Name != "a brass lantern" || got.Type != ItemTypeLight {
+			t.Fatalf("typed fields lost: %+v", got)
+		}
+		if _, ok := got.Stats.(*LightStats); !ok {
+			t.Fatalf("stats type lost: %T", got.Stats)
+		}
+		if _, err := fix.items.FindByExternalID(ctx, "tr.unknown"); !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("unknown ext: got %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/list_external_ids_sorted", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		roomID := makeRoom(t, fix)
+		for _, ext := range []string{"tr.zeta", "tr.alpha", "tr.beta"} {
+			if _, err := fix.items.Create(ctx, Item{ExternalID: ext, Name: "x", RoomID: roomID}); err != nil {
+				t.Fatalf("Create %s: %v", ext, err)
+			}
+		}
+		got, err := fix.items.ListExternalIDs(ctx)
+		if err != nil {
+			t.Fatalf("ListExternalIDs: %v", err)
+		}
+		if len(got) != 3 || got[0] != "tr.alpha" || got[1] != "tr.beta" || got[2] != "tr.zeta" {
+			t.Fatalf("unsorted or wrong: %+v", got)
+		}
+	})
+
 	t.Run(name+"/empty_room", func(t *testing.T) {
 		fix := newFix(t)
 		got, err := fix.items.ListInRoom(context.Background(), 99999)

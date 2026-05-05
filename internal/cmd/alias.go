@@ -55,7 +55,7 @@ func NewAlias() *telnet.Command {
 func NewUnalias() *telnet.Command {
 	return &telnet.Command{
 		Name:    "unalias",
-		Help:    "Remove a per-session command alias",
+		Help:    "unalias <name> [name...] — remove one or more session aliases",
 		Auth:    telnet.AuthGuest,
 		MinArgs: 1,
 		Run: func(c *telnet.Context) error {

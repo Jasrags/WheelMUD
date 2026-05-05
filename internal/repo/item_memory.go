@@ -165,6 +165,33 @@ func (r *MemoryItemRepo) ListAllOwnedTransitive(_ context.Context, ownerCharID i
 	return out, nil
 }
 
+func (r *MemoryItemRepo) FindByExternalID(_ context.Context, externalID string) (Item, error) {
+	if externalID == "" {
+		return Item{}, ErrItemNotFound
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, i := range r.items {
+		if i.ExternalID == externalID {
+			return i, nil
+		}
+	}
+	return Item{}, ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) ListExternalIDs(_ context.Context) ([]string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.items))
+	for _, i := range r.items {
+		if i.ExternalID != "" {
+			out = append(out, i.ExternalID)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (r *MemoryItemRepo) GetByID(_ context.Context, id int64) (Item, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

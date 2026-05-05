@@ -15,7 +15,7 @@ import (
 func NewShout(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "shout",
-		Help:    "Shout to everyone in your zone",
+		Help:    "shout <message> — broadcast to everyone in your zone",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
@@ -30,7 +30,7 @@ func NewShout(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 func NewYell(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "yell",
-		Help:    "Yell across your zone",
+		Help:    "yell <message> — alarmed broadcast across your zone",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {

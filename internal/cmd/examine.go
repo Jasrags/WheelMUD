@@ -24,7 +24,7 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 	return &telnet.Command{
 		Name:      "examine",
 		Aliases:   []string{"exa", "ex"},
-		Help:      "Examine <target> for a closer look",
+		Help:      "examine <target> — take a closer look at an item, mob, or room feature",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExamineTargets(items, mobs),

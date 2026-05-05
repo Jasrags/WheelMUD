@@ -227,19 +227,51 @@ func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {
 	}
 }
 
-func TestMemoryMobTemplateRepo(t *testing.T) {
-	runMobTemplateRepoTests(t, "memory", func(t *testing.T) MobTemplateRepo {
-		return NewMemoryMobTemplateRepo()
+func testListExternalIDs(t *testing.T, name string, newRepo func(t *testing.T) MobTemplateRepo) {
+	t.Run(name+"/list_external_ids_sorted_and_empty", func(t *testing.T) {
+		r := newRepo(t)
+		ctx := context.Background()
+		got, err := r.ListExternalIDs(ctx)
+		if err != nil {
+			t.Fatalf("ListExternalIDs empty: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty, got %+v", got)
+		}
+		for _, ext := range []string{"tr.zeta", "tr.alpha", "tr.beta"} {
+			if _, err := r.Create(ctx, creature.MobTemplate{
+				ExternalID:    ext,
+				ChallengeCode: 'A',
+				Core:          creature.Core{Name: ext, HPMax: 1, Defense: 10, Speed: creature.Speed{BaseFt: 30}, ReachFt: 5, FaceFt: 5, ThreatFt: 5, Size: creature.SizeMedium, Type: creature.TypeHumanoid},
+			}); err != nil {
+				t.Fatalf("Create %s: %v", ext, err)
+			}
+		}
+		got, err = r.ListExternalIDs(ctx)
+		if err != nil {
+			t.Fatalf("ListExternalIDs: %v", err)
+		}
+		if len(got) != 3 || got[0] != "tr.alpha" || got[1] != "tr.beta" || got[2] != "tr.zeta" {
+			t.Fatalf("unsorted: %+v", got)
+		}
 	})
 }
 
+func TestMemoryMobTemplateRepo(t *testing.T) {
+	mk := func(t *testing.T) MobTemplateRepo { return NewMemoryMobTemplateRepo() }
+	runMobTemplateRepoTests(t, "memory", mk)
+	testListExternalIDs(t, "memory", mk)
+}
+
 func TestSQLiteMobTemplateRepo(t *testing.T) {
-	runMobTemplateRepoTests(t, "sqlite", func(t *testing.T) MobTemplateRepo {
+	mk := func(t *testing.T) MobTemplateRepo {
 		conn, err := db.Open(context.Background(), ":memory:")
 		if err != nil {
 			t.Fatalf("open db: %v", err)
 		}
 		t.Cleanup(func() { conn.Close() })
 		return NewSQLiteMobTemplateRepo(conn)
-	})
+	}
+	runMobTemplateRepoTests(t, "sqlite", mk)
+	testListExternalIDs(t, "sqlite", mk)
 }

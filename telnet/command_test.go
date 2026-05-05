@@ -30,6 +30,7 @@ func cmd(name string, run func(*Context) error, opts ...func(*Command)) *Command
 func withAliases(a ...string) func(*Command) { return func(c *Command) { c.Aliases = a } }
 func withMinArgs(n int) func(*Command)       { return func(c *Command) { c.MinArgs = n } }
 func withHelp(h string) func(*Command)       { return func(c *Command) { c.Help = h } }
+func withLong(l string) func(*Command)       { return func(c *Command) { c.Long = l } }
 
 func noopRun(_ *Context) error { return nil }
 
@@ -246,6 +247,37 @@ func TestRegistry_Dispatch(t *testing.T) {
 				t.Fatalf("raw %q, want %q", called.Raw, tc.wantRaw)
 			}
 		})
+	}
+}
+
+func TestRegistry_Dispatch_MinArgsPrefersLong(t *testing.T) {
+	// When a verb supplies a Long body, MinArgs failure prints Long
+	// verbatim instead of "Usage: <Help>" — Help is a one-line
+	// description and prefixing it with "Usage:" misleads the user.
+	r := NewRegistry()
+	_ = r.Register(cmd("spawn", func(c *Context) error { return nil },
+		withMinArgs(2),
+		withHelp("Spawn a mob or item from a template"),
+		withLong("Usage: spawn mob <ext> [count]\n       spawn item <ext> [count]")))
+	s, peer := newPipeSession(t)
+	outCh := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 512)
+		_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		n, _ := peer.Read(buf)
+		outCh <- string(buf[:n])
+	}()
+	go func() { _ = r.Dispatch(context.Background(), s, "spawn") }()
+	select {
+	case out := <-outCh:
+		if !strings.Contains(out, "spawn mob <ext>") {
+			t.Fatalf("expected Long body in output, got %q", out)
+		}
+		if strings.Contains(out, "Usage: Spawn a mob or item from a template") {
+			t.Fatalf("MinArgs fallback used Help when Long was set: %q", out)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no output")
 	}
 }
 

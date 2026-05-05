@@ -365,6 +365,41 @@ func (r *SQLiteItemRepo) TransferContainerToOwner(ctx context.Context, itemID, f
 	return r.transferRowsResult(ctx, res, itemID, "transfer container->owner")
 }
 
+// FindByExternalID looks an item up by its external_id. The column
+// has a UNIQUE index so at most one row matches; returns
+// ErrItemNotFound when nothing is found.
+func (r *SQLiteItemRepo) FindByExternalID(ctx context.Context, externalID string) (Item, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT `+itemSelectCols+` FROM items WHERE external_id = ?`, externalID,
+	)
+	i, err := scanItemRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Item{}, ErrItemNotFound
+		}
+		return Item{}, err
+	}
+	return i, nil
+}
+
+// ListExternalIDs returns every item's external_id, sorted.
+func (r *SQLiteItemRepo) ListExternalIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT external_id FROM items ORDER BY external_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list item external ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan item external id: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // scanItemRow reads one row from a SELECT itemSelectCols result and
 // builds a fully decoded Item, including the polymorphic stats blob.
 // Centralized so the column list and decode contract live in one

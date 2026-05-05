@@ -222,6 +222,24 @@ func (r *Registry) Dispatch(ctx context.Context, s *Session, line string) error 
 		return s.WriteRaw([]byte("Command error\r\n"))
 	}
 	if len(args) < cmd.MinArgs {
+		// Prefer Long when it's set — Help is a one-line summary
+		// (often the description, not the syntax) and prefixing it
+		// with "Usage: " produces a misleading line. Long is the
+		// authoritative usage block for commands that bother to
+		// write one. Fall back to Help, then to the verb name so
+		// the response is never empty.
+		if cmd.Long != "" {
+			// Long is authored with bare "\n" newlines; telnet
+			// requires CR+LF for proper line breaks. Normalize so
+			// authors can write natural multi-line strings without
+			// peppering them with \r.
+			body := strings.ReplaceAll(cmd.Long, "\r\n", "\n")
+			body = strings.ReplaceAll(body, "\n", "\r\n")
+			if !strings.HasSuffix(body, "\r\n") {
+				body += "\r\n"
+			}
+			return s.WriteRaw([]byte(body))
+		}
 		usage := cmd.Help
 		if usage == "" {
 			usage = cmd.Name

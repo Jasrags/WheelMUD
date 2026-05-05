@@ -139,7 +139,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, zones, characters, sessions, bus, channels, clock, newsCatalog)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -334,7 +334,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -393,6 +393,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewDrop(items, characters, sessions),
 		cmd.NewGive(items, characters, sessions),
 		cmd.NewPut(items, characters, sessions),
+		cmd.NewSpawn(items, mobTemplates, mobs, characters, sessions),
 	); err != nil {
 		return nil, err
 	}

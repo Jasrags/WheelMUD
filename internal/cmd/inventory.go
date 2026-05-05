@@ -84,9 +84,12 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 // flips ownership and persists.
 func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:      "get",
-		Aliases:   []string{"take"},
-		Help:      "Get <item> — pick something up off the floor",
+		Name:    "get",
+		Aliases: []string{"take"},
+		Help:    "Get <item> — pick something up off the floor",
+		Long: "Usage: get <item>                    - pick from the floor\n" +
+			"       get <item> from <container>   - take from a container\n\n" +
+			"<container> may be in your inventory or on the floor.",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeRoomItems(items),
@@ -464,8 +467,12 @@ func renderInventoryNode(b *strings.Builder, it repo.Item, idx map[int64][]repo.
 // liquid-only, and self/cycle checks live in canPut.
 func NewPut(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:      "put",
-		Help:      "Put <item> in <container> — stash it inside",
+		Name: "put",
+		Help: "Put <item> in <container> — stash it inside",
+		Long: "Usage: put <item> in <container>\n" +
+			"       put <item> into <container>\n\n" +
+			"<container> may be in your inventory or on the floor.\n" +
+			"Capacity, depth, and self/cycle checks apply.",
 		MinArgs:   3,
 		Auth:      telnet.AuthPlayer,
 		Completer: completePut(items),

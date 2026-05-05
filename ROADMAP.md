@@ -996,19 +996,20 @@ will need on top of those tables.
       via `net.ParseCIDR`. `kick <player> [reason]` closes the
       socket with a notice. `mute <player> <duration>` flips a
       flag blocking channel + say emits.
-- [ ] `spawn` admin command — `spawn mob <external_id> [count]` /
-      `spawn item <external_id> [count]` instantiates a fresh
-      mob_instance or item from a template (e.g. `spawn mob
-      tr.village_dog 3`, `spawn item tr.inn_lantern`) and drops it
-      in the admin's current room. Resolves the external_id via
-      MobTemplateRepo / ItemRepo, copies the template stats/flags/
-      stats_json, then writes a new row with a unique runtime id.
-      Default count = 1, capped at a safety limit (e.g. 20) to
-      prevent fat-finger floods. Tab completion against existing
-      template external_ids. Gated AuthAdmin, audited via the admin
-      audit log. Stretch: `spawn item <ext> in <container_keyword>`
-      to pre-fill a container; `spawn mob <ext> at <room_id>` to
-      target a remote room.
+- [~] `spawn` admin command — `spawn mob <ext> [count]` and
+      `spawn item <ext> [count]` ship in `internal/cmd/spawn.go`
+      gated `AuthAdmin`. Mobs route through
+      `MobTemplateRepo.GetByExternalID` + a fresh `MobInstance` per
+      copy. Items use the seeded YAML row as a template — typed
+      fields and Stats are deep-cloned (no aliasing across spawns)
+      and a unique runtime external_id is minted (`<ext>#sp-<nanos>-
+      <i>`) so the UNIQUE index holds. Default count = 1, capped at
+      20. Tab completion offers `mob` / `item` then the matching
+      template ids. `slog.Info("admin: spawn", ...)` until the
+      `admin_audit` table lands. Pending: `spawn item <ext> in
+      <container_keyword>`, `spawn mob <ext> at <room_id>`,
+      reverse `despawn` / `purge`, dedicated item-template repo
+      (split from item-instance repo when the world grows).
 - [ ] Audit log of admin actions — `admin_audit` table (`actor_id`,
       `verb`, `target`, `args`, `at`). Wrap admin commands at
       dispatch with a logger middleware; queryable via `audit

@@ -78,7 +78,9 @@ func writeDetail(s *telnet.Session, c *telnet.Command) error {
 	}
 	if c.Long != "" {
 		b.WriteString("\r\n")
-		b.WriteString(c.Long)
+		// Long is authored with bare "\n" — telnet needs CR+LF.
+		body := strings.ReplaceAll(c.Long, "\r\n", "\n")
+		b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 		b.WriteString("\r\n")
 	}
 	return s.WriteRaw([]byte(b.String()))

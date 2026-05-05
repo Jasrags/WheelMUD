@@ -247,7 +247,7 @@ func announce(c *telnet.Context, exits repo.ExitRepo, sessions *session.Registry
 func NewOpen(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:      "open",
-		Help:      "Open a door in the given direction",
+		Help:      "open <direction> — open a closed door (e.g. open north)",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExits(exits),
@@ -284,7 +284,7 @@ func NewOpen(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 func NewClose(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:      "close",
-		Help:      "Close a door in the given direction",
+		Help:      "close <direction> — close an open door (e.g. close north)",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExits(exits),
@@ -322,7 +322,7 @@ func NewClose(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 func NewLock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:      "lock",
-		Help:      "Lock a closed door (requires the matching key)",
+		Help:      "lock <direction> — lock a closed door (requires the matching key)",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExits(exits),
@@ -362,7 +362,7 @@ func NewLock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registr
 func NewUnlock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:      "unlock",
-		Help:      "Unlock a locked door (requires the matching key)",
+		Help:      "unlock <direction> — unlock a locked door (requires the matching key)",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExits(exits),
@@ -404,7 +404,7 @@ func NewUnlock(exits repo.ExitRepo, items repo.ItemRepo, sessions *session.Regis
 func NewPick(exits repo.ExitRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:      "pick",
-		Help:      "Attempt to pick a locked door",
+		Help:      "pick <direction> — attempt to pick a locked door",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeExits(exits),

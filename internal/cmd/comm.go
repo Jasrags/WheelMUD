@@ -23,7 +23,7 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "say",
 		Aliases: []string{"'"}, // most MUDs alias the apostrophe to say
-		Help:    "Speak to everyone in this room",
+		Help:    "say <message> — speak to everyone in this room",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
@@ -118,7 +118,7 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 func NewReply(sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name:    "reply",
-		Help:    "Reply to the last `tell` you received",
+		Help:    "reply <text> — answer the last `tell` you received",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {

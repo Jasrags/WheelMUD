@@ -120,6 +120,23 @@ func (r *SQLiteMobTemplateRepo) GetByExternalID(ctx context.Context, externalID 
 	return r.queryOne(ctx, "external_id = ?", externalID)
 }
 
+func (r *SQLiteMobTemplateRepo) ListExternalIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT external_id FROM mob_templates ORDER BY external_id`)
+	if err != nil {
+		return nil, fmt.Errorf("list mob template external ids: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, fmt.Errorf("scan mob template external id: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg any) (creature.MobTemplate, error) {
 	query := fmt.Sprintf(
 		`SELECT id, external_id, name, %s, %s
