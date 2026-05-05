@@ -1,0 +1,46 @@
+# Level-0 starting weaves for channelers, drawn from
+# docs/reference/the-one-power.md. Step #15 (chargen first-level
+# weaves) presents these filtered by the player's selected
+# affinities. Higher-level weaves are added as combat math (Phase D)
+# and progression (Phase E) come online.
+
+- id: spark
+  name: Spark
+  level: 0
+  power: Fire
+  description: A small sustained flame in the palm; lights torches and tinder.
+- id: candle
+  name: Candle
+  level: 0
+  power: Fire
+  description: Lights a single candle, lamp, or campfire from a few paces away.
+- id: cool_breeze
+  name: Cool Breeze
+  level: 0
+  power: Air
+  description: A gentle wind across the channeler and one nearby companion.
+- id: clean
+  name: Clean
+  level: 0
+  power: Water
+  description: Removes a small stain or layer of grime from cloth or skin.
+- id: trickle
+  name: Trickle
+  level: 0
+  power: Water
+  description: Calls a thin stream of water from a humid air for a few seconds.
+- id: settle_dust
+  name: Settle Dust
+  level: 0
+  power: Earth
+  description: Briefly settles dust or loose grit in a small room or trail.
+- id: steady_hand
+  name: Steady Hand
+  level: 0
+  power: Spirit
+  description: Calms minor tremors, stilling fingers and quieting nerves.
+- id: warmth
+  name: Warmth
+  level: 0
+  power: Fire
+  description: Gently warms a small object — a cup, a stone, a hand.

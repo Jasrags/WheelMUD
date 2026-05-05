@@ -1,0 +1,130 @@
+# Background feats from docs/reference/backgrounds.md Table 2-1
+# (Background Feats Reference). General 1st-level feats land here
+# too once chargen step #15 needs them; for now this catalog covers
+# only the background-restricted set so backgrounds.yaml validates.
+
+- id: artist
+  name: Artist
+  background: true
+  backgrounds: [taraboner]
+  description: |-
+    +2 Perform; +2 to one art-Craft skill (e.g. calligraphy,
+    painting, sculpture, embroidery).
+- id: blooded
+  name: Blooded
+  background: true
+  backgrounds: [aiel, borderlander]
+  description: +2 initiative; +2 Spot.
+- id: bullheaded
+  name: Bullheaded
+  background: true
+  backgrounds: [aiel, midlander]
+  description: +1 Will saves; +2 Intimidate.
+- id: cosmopolitan
+  name: Cosmopolitan
+  background: true
+  backgrounds: [cairhienin, domani, ebou_dari, illianer, tar_valoner]
+  description: |-
+    Choose a non-class skill: it becomes a class skill, +2 on its
+    checks. May be taken multiple times for different skills.
+- id: disciplined
+  name: Disciplined
+  background: true
+  backgrounds: [aiel, athaan_miere]
+  description: +1 Will saves; +2 Concentration.
+- id: duelist
+  name: Duelist
+  background: true
+  backgrounds: [ebou_dari]
+  description: +2 Diplomacy; +2 initiative.
+- id: education
+  name: Education
+  background: true
+  backgrounds: [tar_valoner]
+  description: |-
+    All Knowledge skills become class skills; +1 on all Knowledge
+    checks; +2 on two Knowledge skills of choice. 1st-level only.
+- id: gambler
+  name: Gambler
+  background: true
+  backgrounds: [ebou_dari, tairen]
+  description: |-
+    Profession (gambler) is a class skill; +2 Profession (gambler);
+    +2 Sense Motive.
+- id: living_history
+  name: Living History
+  background: true
+  backgrounds: [taraboner]
+  description: +2 on all Knowledge checks.
+- id: luck_of_heroes
+  name: Luck of Heroes
+  background: true
+  backgrounds: [midlander]
+  description: +1 luck bonus on all saving throws.
+- id: mercantile_background
+  name: Mercantile Background
+  background: true
+  backgrounds: [athaan_miere, ebou_dari, illianer, taraboner, tairen]
+  description: +2 Appraise; +2 on Craft or Profession of choice.
+- id: militia
+  name: Militia
+  background: true
+  backgrounds: [cairhienin, domani, illianer, midlander, tar_valoner, tairen]
+  description: |-
+    Bonus feats: Martial Weapon Proficiency (crossbow) and
+    Martial Weapon Proficiency (pike or halberd).
+- id: saddleback
+  name: Saddleback
+  background: true
+  backgrounds: [borderlander, tairen]
+  description: +2 Ride.
+- id: sea_legs
+  name: Sea Legs
+  background: true
+  backgrounds: [athaan_miere]
+  description: +2 Balance; +2 Swim.
+- id: seductive
+  name: Seductive
+  background: true
+  backgrounds: [domani]
+  description: +3 Bluff and Diplomacy when dealing with the opposite sex.
+- id: shadowspawn_hunter
+  name: Shadowspawn Hunter
+  background: true
+  backgrounds: [borderlander]
+  description: |-
+    +1 competence bonus on damage rolls vs Trollocs (melee + ranged ≤30 ft);
+    treat weapon as having Improved Critical against Trollocs. May be taken
+    multiple times to extend the creature list.
+- id: silver_palm
+  name: Silver Palm
+  background: true
+  backgrounds: [athaan_miere, cairhienin, illianer]
+  description: +2 Appraise; +2 Bluff.
+- id: smooth_talk
+  name: Smooth Talk
+  background: true
+  backgrounds: [athaan_miere, cairhienin, tar_valoner]
+  description: +2 Diplomacy; +2 Sense Motive.
+- id: stealthy
+  name: Stealthy
+  background: true
+  backgrounds: [aiel, borderlander]
+  description: +2 Hide; +2 Move Silently.
+- id: street_smart
+  name: Street Smart
+  background: true
+  backgrounds: [cairhienin, domani, ebou_dari, illianer]
+  description: +2 Bluff; +2 Gather Information.
+- id: strong_soul
+  name: Strong Soul
+  background: true
+  backgrounds: [borderlander, midlander]
+  description: |-
+    +1 Fortitude and Will saves; additional +1 vs energy drain and
+    death effects.
+- id: survivor
+  name: Survivor
+  background: true
+  backgrounds: [aiel]
+  description: +1 Fortitude; +2 Wilderness Lore.

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
@@ -59,6 +60,7 @@ type server struct {
 	bus        *eventbus.Bus
 	saves      *persist.Manager
 	news       *news.Catalog
+	chargen    *chargen.Catalog
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -169,6 +171,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	chargenFS, err := chargen.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve chargen source", "error", err)
+		os.Exit(1)
+	}
+	chargenCatalog, err := chargen.Load(chargenFS)
+	if err != nil {
+		slog.Error("Failed to load chargen catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Chargen catalog loaded",
+		"backgrounds", len(chargenCatalog.Backgrounds()),
+		"classes", len(chargenCatalog.Classes()),
+		"feats", len(chargenCatalog.Feats()),
+		"skills", len(chargenCatalog.Skills()),
+		"weaves", len(chargenCatalog.Weaves()))
+
 	scheduler := tick.New()
 	buckets := tick.NewBuckets(scheduler)
 
@@ -212,6 +231,7 @@ func main() {
 		bus:        bus,
 		saves:      saves,
 		news:       newsCatalog,
+		chargen:    chargenCatalog,
 		closed:     make(chan struct{}),
 	}
 

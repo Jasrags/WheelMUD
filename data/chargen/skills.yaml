@@ -1,0 +1,112 @@
+# Class-skill universe — every skill referenced by classes.yaml,
+# backgrounds.yaml, or feats.yaml must be listed here.
+#
+# Source: docs/reference/classes.md class skill lists +
+# docs/reference/backgrounds.md Table 2-1.
+#
+# `ability` is the keyed ability used by the skill check
+# (Str/Dex/Con/Int/Wis/Cha). Description is optional and is
+# rendered by the chargen mode help text.
+
+- id: appraise
+  name: Appraise
+  ability: Int
+- id: balance
+  name: Balance
+  ability: Dex
+- id: bluff
+  name: Bluff
+  ability: Cha
+- id: climb
+  name: Climb
+  ability: Str
+- id: concentration
+  name: Concentration
+  ability: Con
+- id: craft
+  name: Craft
+  ability: Int
+- id: decipher_script
+  name: Decipher Script
+  ability: Int
+- id: diplomacy
+  name: Diplomacy
+  ability: Cha
+- id: disguise
+  name: Disguise
+  ability: Cha
+- id: forgery
+  name: Forgery
+  ability: Int
+- id: gather_information
+  name: Gather Information
+  ability: Cha
+- id: handle_animal
+  name: Handle Animal
+  ability: Cha
+- id: heal
+  name: Heal
+  ability: Wis
+- id: hide
+  name: Hide
+  ability: Dex
+- id: innuendo
+  name: Innuendo
+  ability: Wis
+- id: intimidate
+  name: Intimidate
+  ability: Cha
+- id: intuit_direction
+  name: Intuit Direction
+  ability: Wis
+- id: jump
+  name: Jump
+  ability: Str
+- id: knowledge
+  name: Knowledge
+  ability: Int
+- id: knowledge_blight
+  name: Knowledge (Blight)
+  ability: Int
+- id: knowledge_local
+  name: Knowledge (Local)
+  ability: Int
+- id: listen
+  name: Listen
+  ability: Wis
+- id: move_silently
+  name: Move Silently
+  ability: Dex
+- id: open_lock
+  name: Open Lock
+  ability: Dex
+- id: perform
+  name: Perform
+  ability: Cha
+- id: profession
+  name: Profession
+  ability: Wis
+- id: profession_sailor
+  name: Profession (Sailor)
+  ability: Wis
+- id: ride
+  name: Ride
+  ability: Dex
+- id: search
+  name: Search
+  ability: Int
+- id: sense_motive
+  name: Sense Motive
+  ability: Wis
+- id: spot
+  name: Spot
+  ability: Wis
+- id: swim
+  name: Swim
+  ability: Str
+- id: use_rope
+  name: Use Rope
+  ability: Dex
+- id: wilderness_lore
+  name: Wilderness Lore
+  ability: Wis

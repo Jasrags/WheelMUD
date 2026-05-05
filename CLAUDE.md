@@ -42,7 +42,8 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `internal/db.Open` (runs embedded migrations 0001–0028), constructs every
   repo (accounts, characters, rooms, exits, items, mob_instances,
   mob_templates, mob_trails, zones, channels), loads the news catalog
-  (`internal/news`), runs `world.LoadAndSync` to seed the DB from
+  (`internal/news`) and the chargen catalog (`internal/chargen`),
+  runs `world.LoadAndSync` to seed the DB from
   `WORLD_DIR`, builds the command registry plus a `server` struct
   holding long-lived deps, starts `tick.Scheduler` + `tick.Buckets`
   and the `persist.Manager` autosaver, then accepts TCP connections.
@@ -187,6 +188,19 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `restock_interval_s`, wired to `tick.Buckets.AreaReset` —
   5min default cadence) and the `Clock.HourOfDay()` helper backing
   the shop hour gate.
+
+- **`internal/chargen/`** — YAML chargen content catalog
+  (backgrounds, classes, feats, skills, weaves) loaded once at
+  boot from `internal/chargen/default/*.yaml` (or `CHARGEN_DIR`
+  override). Mirrors the `internal/news` / `internal/world`
+  embed-with-override pattern. The Catalog is content, not state
+  — it never touches the DB; chargen mode (#11+) reads typed
+  structs from it. Cross-references (background → feats/skills,
+  class → skills, weave → power) are validated at Load time so a
+  catalog typo fails boot loudly. ID → `creature.Background` /
+  `creature.Class` enum mapping is stamped on each entry so the
+  chargen mode can persist selections through the existing
+  Character schema.
 
 - **`internal/session/`** — process-level registry that enforces
   single-session-per-account: `Bind` returns the displaced session;

@@ -1,0 +1,262 @@
+# Backgrounds — Table 2-1 from docs/reference/backgrounds.md.
+#
+# Eleven human backgrounds + one Ogier "background-equivalent" entry.
+# Equipment options here are textual labels carrying an item list.
+# Step #15 (chargen first-level feats/skills/equipment) will resolve
+# these labels to item external_ids and spawn them via ItemRepo.Create.
+
+- id: aiel
+  name: Aiel
+  race: human
+  home_language: Common (Aiel)
+  bonus_languages:
+    - Aiel Hand-Speech (clan)
+    - Aiel Hand-Speech (society)
+    - Common (Cairhien)
+  bonus_feats: [blooded, bullheaded, disciplined, stealthy, survivor]
+  background_skills: [hide, move_silently, spot, wilderness_lore]
+  skill_restriction: ride
+  weapon_restriction: sword
+  height_mod_in: 4
+  equipment_options:
+    - label: "Tent, cadin'sor, buckler, waterskin, 2 healer's balms"
+      items: [tent, cadinsor, buckler, waterskin, healers_balm, healers_balm]
+    - label: "Jewelry (60 mk)"
+      items: [jewelry_60mk]
+    - label: "Aiel shortbow, 20 arrows, buckler"
+      items: [aiel_shortbow, arrows_20, buckler]
+  description: |-
+    Tall, fair- or red-haired desert dwellers from the Three-fold Land,
+    bound by ji'e'toh. Despise swords; cannot ride at character creation.
+
+- id: athaan_miere
+  name: Atha'an Miere (Sea Folk)
+  race: human
+  home_language: Common (Atha'an Miere)
+  bonus_languages:
+    - Common (Arad Doman)
+    - Common (Ebou Dar)
+    - Common (Illian)
+    - Common (Tarabon)
+    - Common (Tairen)
+  bonus_feats: [disciplined, mercantile_background, sea_legs, silver_palm, smooth_talk]
+  background_skills: [intuit_direction, profession_sailor, swim, use_rope]
+  required_skill: profession_sailor
+  equipment_options:
+    - label: "Rapier; hourglass"
+      items: [rapier, hourglass]
+    - label: "2 healer's balms; lantern, hooded; rope; silk (50 ft)"
+      items: [healers_balm, healers_balm, lantern_hooded, rope_50, silk_50]
+    - label: "Jewelry (100 mk)"
+      items: [jewelry_100mk]
+  description: |-
+    Sea-going clans of the islands south of the Sea of Storms. Salt-named
+    sailors, traders, and Windfinders.
+
+- id: borderlander
+  name: Borderlander
+  race: human
+  home_language: Common (Borderlands)
+  bonus_languages:
+    - Common (Arad Doman)
+    - Common (Cairhien)
+    - Common (Midlands)
+    - Trolloc
+  bonus_feats: [blooded, saddleback, shadowspawn_hunter, stealthy, strong_soul]
+  background_skills: [knowledge_blight, listen, move_silently, ride]
+  height_mod_in: 0
+  equipment_options:
+    - label: "Heavy horse + tack; studded leather armor"
+      items: [horse_heavy, bridle, military_saddle, studded_leather]
+    - label: "Light horse + tack; 2 healer's balms"
+      items: [horse_light, bridle, riding_saddle, healers_balm, healers_balm]
+    - label: "Mail shirt"
+      items: [mail_shirt]
+  description: |-
+    Hard-bitten warriors from Saldaea, Kandor, Arafel, and Shienar — the
+    nations whose northern borders line the Blight.
+
+- id: cairhienin
+  name: Cairhienin
+  race: human
+  home_language: Common (Cairhien)
+  bonus_languages:
+    - Common (Aiel)
+    - Common (Borderlands)
+    - Common (Midlands)
+    - Common (Tairen)
+  bonus_feats: [cosmopolitan, militia, silver_palm, smooth_talk, street_smart]
+  background_skills: [diplomacy, forgery, innuendo, sense_motive]
+  height_mod_in: -2
+  equipment_options:
+    - label: "Military saddle; longsword; small steel mirror"
+      items: [military_saddle, longsword, mirror_steel]
+    - label: "Hourglass; 2 healer's balms"
+      items: [hourglass, healers_balm, healers_balm]
+    - label: "Noble's outfit; signet ring"
+      items: [noble_outfit, signet_ring]
+  description: |-
+    Pale, dark-haired schemers from the city of the Topless Towers,
+    masters of Daes Dae'mar — the Game of Houses.
+
+- id: domani
+  name: Domani
+  race: human
+  home_language: Common (Arad Doman)
+  bonus_languages:
+    - Common (Atha'an Miere)
+    - Common (Borderlands)
+    - Common (Midlands)
+    - Common (Tarabon)
+  bonus_feats: [cosmopolitan, militia, seductive, street_smart]
+  background_skills: [bluff, diplomacy, gather_information, perform]
+  equipment_options:
+    - label: "Jeweled signet ring (70 mk)"
+      items: [jeweled_signet_ring]
+    - label: "Courtier's outfit; 2 bottles of fine wine"
+      items: [courtier_outfit, fine_wine, fine_wine]
+    - label: "Masterwork musical instrument"
+      items: [mw_instrument]
+  description: |-
+    Hedonistic traders of Arad Doman; legendary bargainers and seducers,
+    fierce-tempered men.
+
+- id: ebou_dari
+  name: Ebou Dari
+  race: human
+  home_language: Common (Ebou Dar)
+  bonus_languages:
+    - Common (Atha'an Miere)
+    - Common (Illian)
+    - Common (Midlands)
+    - Common (Tairen)
+    - Common (Tarabon)
+  bonus_feats: [cosmopolitan, duelist, gambler, mercantile_background, street_smart]
+  background_skills: [appraise, balance, hide, open_lock]
+  height_mod_in: -2
+  equipment_options:
+    - label: "Jeweled dagger or marriage knife (60 mk)"
+      items: [jeweled_dagger]
+    - label: "Disguise kit; grapple hook; 50 ft hemp rope"
+      items: [disguise_kit, grapple_hook, rope_50_hemp]
+    - label: "Masterwork thieves' tools"
+      items: [mw_thieves_tools]
+  description: |-
+    Olive-skinned, marriage-knife wearing duelists from the canal city of
+    Ebou Dar at the mouth of the River Eldar.
+
+- id: illianer
+  name: Illianer
+  race: human
+  home_language: Common (Illian)
+  bonus_languages:
+    - Common (Atha'an Miere)
+    - Common (Ebou Dar)
+    - Common (Midlands)
+    - Common (Tairen)
+    - Common (Tarabon)
+  bonus_feats: [cosmopolitan, mercantile_background, militia, silver_palm, street_smart]
+  background_skills: [craft, intimidate, knowledge, search]
+  equipment_options:
+    - label: "Courtier's outfit; light crossbow"
+      items: [courtier_outfit, crossbow_light]
+    - label: "Short sword; 20 days trail rations; 2 healer's balms"
+      items: [short_sword, rations_20, healers_balm, healers_balm]
+    - label: "Trade goods (Table 7-3)"
+      items: [trade_goods_pack]
+  description: |-
+    Tall, accented coastal traders from the city of Illian on the Sea of
+    Storms; restored Altara's rulers, drove back Whitecloaks.
+
+- id: midlander
+  name: Midlander
+  race: human
+  home_language: Common (Midlands)
+  bonus_languages:
+    - Common (Arad Doman)
+    - Common (Borderlands)
+    - Common (Cairhien)
+    - Common (Ebou Dar)
+    - Common (Illian)
+    - Common (Tairen)
+  bonus_feats: [bullheaded, luck_of_heroes, militia, strong_soul]
+  background_skills: [handle_animal, heal, ride, wilderness_lore]
+  equipment_options:
+    - label: "Light horse; healer's kit"
+      items: [horse_light, healers_kit]
+    - label: "Boar spear; longsword; leather armor; small steel shield; tent"
+      items: [boar_spear, longsword, leather_armor, shield_small, tent]
+    - label: "Two Rivers longbow"
+      items: [longbow_two_rivers]
+  description: |-
+    Solid, dependable folk of Andor, Murandy, the Two Rivers, and the
+    central westlands. Some carry the ancient blood of Manetheren.
+
+- id: taraboner
+  name: Taraboner
+  race: human
+  home_language: Common (Tarabon)
+  bonus_languages:
+    - Common (Arad Doman)
+    - Common (Atha'an Miere)
+    - Common (Ebou Dar)
+    - Common (Illian)
+    - Common (Tairen)
+  bonus_feats: [artist, living_history, mercantile_background]
+  background_skills: [appraise, hide, move_silently, open_lock]
+  equipment_options:
+    - label: "Thieves' tools; hooded lantern; crowbar; small steel mirror"
+      items: [thieves_tools, lantern_hooded, crowbar, mirror_steel]
+    - label: "Masterwork artisan's tools"
+      items: [mw_artisans_tools]
+    - label: "Illuminator's rocket"
+      items: [illuminators_rocket]
+  description: |-
+    Veiled-faced southerners from Tarabon between the Mountains of Mist
+    and the Aryth Ocean; proud heritage tracing to the Age of Legends.
+
+- id: tairen
+  name: Tairen
+  race: human
+  home_language: Common (Tairen)
+  bonus_languages:
+    - Common (Atha'an Miere)
+    - Common (Cairhien)
+    - Common (Ebou Dar)
+    - Common (Illian)
+    - Common (Midlands)
+    - Common (Tarabon)
+  bonus_feats: [gambler, mercantile_background, militia, saddleback]
+  background_skills: [profession, ride, search, sense_motive]
+  equipment_options:
+    - label: "Light horse + tack; courtier's outfit"
+      items: [horse_light, bridle, riding_saddle, courtier_outfit]
+    - label: "35 mk; dice or deck of playing cards"
+      items: [coin_pouch_35, dice_or_cards]
+    - label: "Mail shirt"
+      items: [mail_shirt]
+  description: |-
+    Self-confident nobles and weather-tanned commoners from the south
+    coast city of Tear. Channeling is forbidden by Tairen law.
+
+- id: tar_valoner
+  name: Tar Valoner
+  race: human
+  home_language: Common (Midlands)
+  bonus_languages:
+    - Common (Borderlands)
+    - Common (Cairhien)
+    - Common (Illian)
+    - Common (Tairen)
+  bonus_feats: [cosmopolitan, education, militia, smooth_talk]
+  background_skills: [concentration, craft, knowledge, profession]
+  equipment_options:
+    - label: "Sword; Warder's studded leather armor"
+      items: [longsword, warder_studded_leather]
+    - label: "Light crossbow; hooded lantern; small steel mirror"
+      items: [crossbow_light, lantern_hooded, mirror_steel]
+    - label: "65 mk"
+      items: [coin_pouch_65]
+  description: |-
+    Worldly, cosmopolitan citizens of the island city at the foot of
+    Dragonmount; home of the White Tower.

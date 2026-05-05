@@ -121,12 +121,18 @@ mode plus the WoT content catalogs** that drive each step. References
 live in `docs/reference/{abilities,backgrounds,classes,heroic-
 characteristics,feats,equipment,the-one-power}.md`.
 
-10. **Chargen content loader** (§6 / §12). New `internal/chargen`
-    package + `data/chargen/*.yaml` catalogs (backgrounds, classes,
-    feats, skills, weaves). Loader parallel to `internal/news` and
-    `internal/world` — load once at boot, expose typed structs to
-    the chargen mode and (later) to level-up / weave-resolution
-    paths. No DB tables: catalogs are content, not state.
+10. **Chargen content loader** (§6 / §12) — **LANDED**. New
+    `internal/chargen` package + embedded `internal/chargen/default/
+    *.yaml` catalogs (backgrounds, classes, feats, skills, weaves)
+    with `CHARGEN_DIR` env override mirroring `WORLD_DIR`. Loader
+    validates cross-references at boot (background → feats/skills,
+    class → skills, weave → power) and stamps `creature.Background`
+    / `creature.Class` enum values onto each entry so the chargen
+    mode can persist selections through the existing Character
+    schema. No DB tables: catalogs are content, not state. Wiring:
+    `cmd/server/main.go` constructs the catalog alongside news /
+    help and threads it via the `server` struct. Ogier seed entry
+    deferred — slots in cleanly when #14 lands.
 11. **Multi-step `CharacterCreate` mode** (§5 / §6). Replaces the
     single-name prompt with a substep stack: abilities → race +
     background → class (+ channeler branch) → identity → feats /

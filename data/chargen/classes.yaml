@@ -1,0 +1,219 @@
+# Hero classes — docs/reference/classes.md, Tables 3-2..3-10.
+#
+# `bab` keys the Base Attack Bonus formula:
+#   high   = +1/level   (Algai'd'siswai, Armsman, Woodsman)
+#   medium = +3/4/level (Initiate, Noble, Wilder, Wanderer)
+#   low    = +1/2/level (reserved for future variants)
+# `save_*` is "high" (good progression) or "low" (poor progression);
+# the per-level numeric value is derived from class + level by the
+# combat math in Phase D.
+# `skill_points` is the per-level base; 1st level multiplies by 4.
+# `key_abilities` is the priority list from each class's narrative.
+
+- id: algai_d_siswai
+  name: Algai'd'siswai
+  abbrev: Alg
+  hit_die: 10
+  bab: high
+  save_fort: low
+  save_ref: high
+  save_will: low
+  skill_points: 4
+  class_skills:
+    - balance
+    - climb
+    - craft
+    - hide
+    - intimidate
+    - intuit_direction
+    - jump
+    - listen
+    - move_silently
+    - wilderness_lore
+  key_abilities: [Str, Dex, Con, Wis]
+  channeler: false
+  description: |-
+    Aiel desert warriors. Fast movement, Weapon Focus (shortspear),
+    Dance the Spears, Uncanny Dodge. Cannot wear armor; cannot use
+    swords (forfeit XP if violated).
+
+- id: armsman
+  name: Armsman
+  abbrev: Arm
+  hit_die: 10
+  bab: high
+  save_fort: high
+  save_ref: low
+  save_will: low
+  skill_points: 2
+  class_skills:
+    - climb
+    - craft
+    - handle_animal
+    - intimidate
+    - jump
+    - profession
+    - ride
+    - swim
+  key_abilities: [Str, Con, Dex]
+  channeler: false
+  description: |-
+    Heavy-arms specialists; bonus combat feats every two levels.
+    All armor and shields, all simple and martial weapons.
+
+- id: initiate
+  name: Initiate
+  abbrev: Ini
+  hit_die: 4
+  bab: medium
+  save_fort: low
+  save_ref: low
+  save_will: high
+  skill_points: 4
+  class_skills:
+    - concentration
+    - craft
+    - decipher_script
+    - diplomacy
+    - heal
+    - knowledge
+    - profession
+    - sense_motive
+    - spot
+  key_abilities: [Int, Wis, Cha]
+  channeler: true
+  channel_source: either
+  description: |-
+    Trained channeler of the One Power. Aes Sedai, Asha'man, and
+    similar disciplines. Initiates use Int + Wis to channel.
+
+- id: noble
+  name: Noble
+  abbrev: Nbl
+  hit_die: 8
+  bab: medium
+  save_fort: low
+  save_ref: low
+  save_will: high
+  skill_points: 6
+  class_skills:
+    - appraise
+    - bluff
+    - diplomacy
+    - forgery
+    - gather_information
+    - handle_animal
+    - intimidate
+    - knowledge
+    - listen
+    - perform
+    - ride
+    - sense_motive
+    - spot
+  key_abilities: [Cha, Int, Wis]
+  channeler: false
+  description: |-
+    Status, education, and influence. Bonus class skills, retinue,
+    favors, and command-presence abilities.
+
+- id: wanderer
+  name: Wanderer
+  abbrev: Wan
+  hit_die: 6
+  bab: medium
+  save_fort: low
+  save_ref: high
+  save_will: low
+  skill_points: 8
+  class_skills:
+    - appraise
+    - balance
+    - bluff
+    - climb
+    - craft
+    - decipher_script
+    - diplomacy
+    - disguise
+    - forgery
+    - gather_information
+    - hide
+    - innuendo
+    - intuit_direction
+    - jump
+    - knowledge_local
+    - listen
+    - move_silently
+    - open_lock
+    - perform
+    - profession
+    - search
+    - sense_motive
+    - spot
+    - swim
+    - use_rope
+  key_abilities: [Dex, Int, Cha]
+  channeler: false
+  description: |-
+    Stealth, wits, skills, and luck. Sneak attack, evasion, uncanny
+    dodge, and the deepest skill list of any class.
+
+- id: wilder
+  name: Wilder
+  abbrev: Wil
+  hit_die: 6
+  bab: medium
+  save_fort: low
+  save_ref: low
+  save_will: high
+  skill_points: 4
+  class_skills:
+    - bluff
+    - concentration
+    - craft
+    - diplomacy
+    - heal
+    - intuit_direction
+    - knowledge
+    - profession
+    - sense_motive
+    - spot
+    - wilderness_lore
+  key_abilities: [Cha, Wis]
+  channeler: true
+  channel_source: either
+  description: |-
+    Untrained natural channeler. Wilders use Wis + Cha to channel,
+    block their own potential, and learn weaves through instinct.
+
+- id: woodsman
+  name: Woodsman
+  abbrev: Wds
+  hit_die: 10
+  bab: high
+  save_fort: high
+  save_ref: high
+  save_will: low
+  skill_points: 4
+  class_skills:
+    - climb
+    - craft
+    - handle_animal
+    - heal
+    - hide
+    - intuit_direction
+    - jump
+    - knowledge
+    - listen
+    - move_silently
+    - profession
+    - ride
+    - search
+    - spot
+    - swim
+    - use_rope
+    - wilderness_lore
+  key_abilities: [Str, Dex, Con, Wis]
+  channeler: false
+  description: |-
+    Hunter and warrior of the wilderness. Tracking, animal empathy
+    (exclusive class skill), favored enemy.
