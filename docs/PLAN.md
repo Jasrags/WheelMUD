@@ -166,22 +166,53 @@ characteristics,feats,equipment,the-one-power}.md`.
     alternates, reroll rule (sum of mods ≤ 0 OR highest ≤ 13),
     racial / heroic-characteristic modifiers (#14 layers them on
     after this step writes the base scores).
-13. **Background + class selection** (§ref `backgrounds.md` /
-    `classes.md`). Eleven backgrounds (Aiel ... Taraboner) supply
-    bonus feats, class-/cross-class skills, home + bonus languages,
-    height/weight modifiers, and one of three equipment-option
-    bundles. Seven classes (Algai'd'siswai, Armsman, Initiate,
-    Noble, Wanderer, Wilder, Woodsman) drive BAB, save progression,
-    HD, class-skill list, level-1 features. Race (Human / Ogier)
-    gates which classes/backgrounds are available. Writes Race,
-    Background, ClassLevels = {chosen: 1}.
-14. **Heroic characteristics + identity** (§ref `heroic-
-    characteristics.md`). Gender, age, height/weight (Table 6-1
-    random rolls modified by background), handedness, alignment
-    posture (Good default; Bad / Evil flagged so they can be hidden
-    from the player-facing menu later), and the existing name
-    prompt. Writes HeightCm, WeightKg, Age, Handedness, Alignment,
-    Name.
+13. ~~**Background + class selection** (§ref `backgrounds.md` /
+    `classes.md`).~~ **LANDED 2026-05-05.** Substep persistence
+    landed in #11; this item ships the player-facing detail surface
+    so picks are informed rather than blind. Background and class
+    menus render compact one-line summaries (background:
+    home_language + feat/skill/outfit counts; class: HD + BAB +
+    channeler tag) plus a footer "Type 'info <id|#>' for full
+    details." `info <id|#>` at either step opens a descriptor block
+    showing languages, bonus feats, background skills, height mod,
+    restrictions, and equipment-option bundles for backgrounds; HD,
+    BAB, saves, skill points/level, key abilities, channeler source,
+    and class-skill list for classes. `info` is a read-only verb —
+    it never commits a selection. Race (Human / Ogier) gating goes
+    through `Catalog.BackgroundsForRace` / `ClassesForRace` (the
+    latter filters out channelers for ogier picks per book lore).
+    Eleven human backgrounds and seven classes ship; the Ogier
+    background-equivalent slots in cleanly when #14 lands. Writes
+    Race, Background, ClassLevels = {chosen: 1} via the existing
+    review-step path. **Stubbed for follow-ups:** application of
+    bonus_feats / background_skills / equipment_options to the
+    draft (those land with #15 once feats/skills/equipment have
+    runtime effect); height/weight modifier surfaces visually here
+    but is consumed by #14 when identity lands.
+14. ~~**Heroic characteristics + identity** (§ref `heroic-
+    characteristics.md`).~~ **LANDED 2026-05-05.** New
+    `chargenStepIdentity` substep between abilities and review,
+    with `gender <m|f>`, `age <n>`, `handed <r|l|a>`,
+    `align <good|bad|evil>`, `roll`, and `done` verbs. Defaults
+    are stamped on first entry — gender male, alignment good,
+    handedness right; age 20 (human) / 95 (ogier); height &
+    weight rolled via Table 6-1 against the chosen race +
+    `Background.HeightModIn` (female base sizes are slightly
+    smaller per the rulebook table). `gender <m|f>` re-rolls
+    height/weight so the line stays consistent with the gender
+    base; `roll` re-rolls without changing other fields. Random
+    source is `*rand.Rand` on the mode (`SetRNG` for tests; time-
+    seeded by default). Stamps `Core.Gender`, `Core.Alignment`,
+    and the top-level `HeightCm` / `WeightKg` / `Age` /
+    `Handedness` columns through the existing
+    `CharacterRepo.Create` path. Bad / Evil postures are flagged
+    via the existing `creature.Posture` enum but not yet hidden
+    from the menu (deferred until the alignment-driven content
+    lands). Name continues to come from `chargenStepName` up
+    front. **Stubbed for follow-ups:** ogier-race backgrounds
+    (catalog-side, blocked on #14's content surface),
+    background-driven default-age hint, height/weight readouts
+    using the in-world span/league/stone display layer.
 15. **First-level feats, skills, weaves, starting equipment**
     (§ref `feats.md` / `classes.md` Table 3-1 / `equipment.md` /
     `the-one-power.md`). Drive Table 3-1 to allocate the 1st-level

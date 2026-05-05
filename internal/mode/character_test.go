@@ -2,6 +2,7 @@ package mode
 
 import (
 	"context"
+	"math/rand"
 	"net"
 	"strings"
 	"testing"
@@ -315,7 +316,8 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	f.feed("midlander")
 	f.feed("armsman")
 	f.feed("set str 14")
-	f.feed("done")
+	f.feed("done") // abilities → identity
+	f.feed("done") // identity → review (defaults accepted)
 	f.feed("yes")
 
 	if f.session.CurrentMode() != f.game {
@@ -339,6 +341,22 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	}
 	if got.Core.Abilities.Dex.Current != 8 {
 		t.Fatalf("Dex = %+v, want Current=8 (point-buy floor)", got.Core.Abilities.Dex)
+	}
+	// Identity defaults (no override during the happy-path) — gender
+	// male, alignment good, handedness right, age and height/weight
+	// non-zero (rolled from Table 6-1).
+	if got.Core.Gender != creature.GenderMale {
+		t.Fatalf("Gender = %v, want Male", got.Core.Gender)
+	}
+	if got.Core.Alignment != creature.PostureGood {
+		t.Fatalf("Alignment = %v, want Good", got.Core.Alignment)
+	}
+	if got.Handedness != creature.HandRight {
+		t.Fatalf("Handedness = %v, want Right", got.Handedness)
+	}
+	if got.Age == 0 || got.HeightCm == 0 || got.WeightKg == 0 {
+		t.Fatalf("identity unset: age=%d height=%d weight=%d",
+			got.Age, got.HeightCm, got.WeightKg)
 	}
 }
 
@@ -414,13 +432,79 @@ func TestCharacterCreate_Multi_BackgroundByListNumber(t *testing.T) {
 	}
 }
 
+func TestCharacterCreate_Multi_BackgroundInfo(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.captured.Reset()
+	f.feed("info aiel")
+	out := f.captured.String()
+	// info renders the descriptor; selection step is unchanged so the
+	// player can still pick an option afterwards.
+	for _, want := range []string{"Aiel", "Home language", "Bonus feats", "Equipment options"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("info output missing %q: %q", want, out)
+		}
+	}
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepBackground {
+		t.Fatalf("step = %d after info, want chargenStepBackground", mc.step)
+	}
+	if mc.draft.BackgroundID != "" {
+		t.Fatalf("info should not commit a selection, got %q", mc.draft.BackgroundID)
+	}
+	// Numeric form too: 'info 1' shows the first bg.
+	f.captured.Reset()
+	f.feed("info 1")
+	if !strings.Contains(f.captured.String(), "Home language") {
+		t.Fatalf("info 1 did not render: %q", f.captured.String())
+	}
+}
+
+func TestCharacterCreate_Multi_ClassInfo(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.captured.Reset()
+	f.feed("info armsman")
+	out := f.captured.String()
+	for _, want := range []string{"Armsman", "Hit die", "BAB", "Saves", "Class skills"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("class info missing %q: %q", want, out)
+		}
+	}
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepClass {
+		t.Fatalf("step = %d after info, want chargenStepClass", mc.step)
+	}
+	if mc.draft.ClassID != "" {
+		t.Fatalf("info should not commit a selection, got %q", mc.draft.ClassID)
+	}
+}
+
+func TestCharacterCreate_Multi_OgierClassesFilterChannelers(t *testing.T) {
+	// Sanity-check the race gate: ogier picks must not see Initiate /
+	// Wilder. The catalog has no ogier-race backgrounds yet (deferred
+	// to #14), so we only exercise ClassesForRace transitively here.
+	f := pushCharacterCreateMulti(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	mc.draft.Race = "ogier"
+	for _, cl := range mc.catalog.ClassesForRace("ogier") {
+		if cl.Channeler {
+			t.Fatalf("ogier class list contains channeler %q", cl.ID)
+		}
+	}
+}
+
 func TestCharacterCreate_Multi_ReviewRejectNonYes(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
 	f.feed("midlander")
 	f.feed("armsman")
-	f.feed("done")
+	f.feed("done") // abilities → identity
+	f.feed("done") // identity → review
 	f.feed("maybe") // anything other than yes/y/back/cancel
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -443,7 +527,8 @@ func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
 	f.feed("human")
 	f.feed("midlander")
 	f.feed("armsman")
-	f.feed("done")
+	f.feed("done") // abilities → identity
+	f.feed("done") // identity → review
 	f.feed("yes")
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -520,8 +605,8 @@ func TestCharacterCreate_Multi_AbilitiesPointBuy(t *testing.T) {
 	}
 
 	f.feed("done")
-	if mc.step != chargenStepReview {
-		t.Fatalf("step = %d, want chargenStepReview after done", mc.step)
+	if mc.step != chargenStepIdentity {
+		t.Fatalf("step = %d, want chargenStepIdentity after done", mc.step)
 	}
 }
 
@@ -532,10 +617,10 @@ func TestCharacterCreate_Multi_AbilitiesBackPreservesScores(t *testing.T) {
 	f.feed("midlander")
 	f.feed("armsman")
 	f.feed("set str 14")
-	f.feed("done")
+	f.feed("done") // → identity
 	mc := f.session.CurrentMode().(*CharacterCreate)
-	if mc.step != chargenStepReview {
-		t.Fatalf("step = %d, want chargenStepReview", mc.step)
+	if mc.step != chargenStepIdentity {
+		t.Fatalf("step = %d, want chargenStepIdentity", mc.step)
 	}
 	f.feed("back")
 	if mc.step != chargenStepAbilities {
@@ -543,6 +628,108 @@ func TestCharacterCreate_Multi_AbilitiesBackPreservesScores(t *testing.T) {
 	}
 	if mc.draft.Abilities[0] != 14 {
 		t.Fatalf("Str = %d after back, want 14 (revisit must preserve)", mc.draft.Abilities[0])
+	}
+}
+
+func TestCharacterCreate_Multi_IdentityVerbs(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	mc.SetRNG(rand.New(rand.NewSource(42)))
+
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("done") // abilities → identity (defaults stamped)
+
+	if mc.step != chargenStepIdentity {
+		t.Fatalf("step = %d, want chargenStepIdentity", mc.step)
+	}
+	if !mc.draft.IdentitySet {
+		t.Fatal("identity defaults not stamped on entry")
+	}
+	if mc.draft.HeightCm == 0 || mc.draft.WeightKg == 0 {
+		t.Fatalf("rolled height/weight zero: h=%d w=%d",
+			mc.draft.HeightCm, mc.draft.WeightKg)
+	}
+
+	// Each verb mutates one field.
+	f.feed("gender f")
+	if mc.draft.Gender != creature.GenderFemale {
+		t.Fatalf("Gender = %v, want Female", mc.draft.Gender)
+	}
+	f.feed("age 25")
+	if mc.draft.Age != 25 {
+		t.Fatalf("Age = %d, want 25", mc.draft.Age)
+	}
+	f.feed("handed left")
+	if mc.draft.Handedness != creature.HandLeft {
+		t.Fatalf("Handedness = %v, want Left", mc.draft.Handedness)
+	}
+	f.feed("align bad")
+	if mc.draft.Alignment != creature.PostureBad {
+		t.Fatalf("Alignment = %v, want Bad", mc.draft.Alignment)
+	}
+
+	// Bad inputs leave state untouched and surface a hint.
+	prevAge := mc.draft.Age
+	f.captured.Reset()
+	f.feed("age zero")
+	if mc.draft.Age != prevAge {
+		t.Fatalf("bad age leaked: %d", mc.draft.Age)
+	}
+	if !strings.Contains(f.captured.String(), "Age must be") {
+		t.Fatalf("expected age hint: %q", f.captured.String())
+	}
+
+	// done advances to review and the review block surfaces identity.
+	f.captured.Reset()
+	f.feed("done")
+	if mc.step != chargenStepReview {
+		t.Fatalf("step = %d, want chargenStepReview", mc.step)
+	}
+	out := f.captured.String()
+	for _, want := range []string{"female", "Age:", "Height:", "Weight:", "left", "bad"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("review missing %q: %q", want, out)
+		}
+	}
+}
+
+func TestCharacterCreate_Multi_IdentityRollDeterministic(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	mc.SetRNG(rand.New(rand.NewSource(7)))
+
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("midlander")
+	f.feed("armsman")
+	f.feed("done") // → identity
+
+	h1, w1 := mc.draft.HeightCm, mc.draft.WeightKg
+	// Re-rolling with the same seed twice must change the values
+	// (rng advances between calls).
+	f.feed("roll")
+	h2, w2 := mc.draft.HeightCm, mc.draft.WeightKg
+	if h1 == h2 && w1 == w2 {
+		t.Fatalf("roll did not change values: h=%d w=%d", h1, w1)
+	}
+	// Sanity: human heights land somewhere between 4 ft and 7 ft.
+	for _, h := range []int16{h1, h2} {
+		if h < 120 || h > 220 {
+			t.Fatalf("human height %d cm out of plausible range", h)
+		}
+	}
+}
+
+func TestRollHeightWeight_OgierTaller(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	hHuman, _ := rollHeightWeight(r, "human", creature.GenderMale, 0)
+	r = rand.New(rand.NewSource(1))
+	hOgier, _ := rollHeightWeight(r, "ogier", creature.GenderMale, 0)
+	if hOgier <= hHuman {
+		t.Fatalf("ogier height %d <= human height %d (same seed)", hOgier, hHuman)
 	}
 }
 

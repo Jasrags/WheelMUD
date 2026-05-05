@@ -39,6 +39,12 @@ func (b *safeBuf) String() string {
 	return b.buf.String()
 }
 
+func (b *safeBuf) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
 // drainPeer continuously reads from peer and appends to dst. Returns
 // when the peer is closed; cleanup is the caller's responsibility.
 func drainPeer(t *testing.T, peer net.Conn, dst *safeBuf) {

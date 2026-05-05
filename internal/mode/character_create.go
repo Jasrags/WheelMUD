@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
@@ -44,6 +46,7 @@ const (
 	chargenStepBackground
 	chargenStepClass
 	chargenStepAbilities
+	chargenStepIdentity
 	chargenStepReview
 	chargenStepDone
 )
@@ -97,6 +100,18 @@ type chargenDraft struct {
 	// draft never serializes a 0.
 	Abilities    [6]int8
 	AbilitiesSet bool
+
+	// Identity (#14). Defaults are stamped on first entry into the
+	// identity substep — height/weight roll Table 6-1 against race +
+	// background HeightModIn, the rest pick conservative defaults
+	// the player can override.
+	Gender      creature.Gender
+	Age         int16
+	Handedness  creature.Hand
+	Alignment   creature.Posture
+	HeightCm    int16
+	WeightKg    int16
+	IdentitySet bool
 }
 
 // CharacterCreate prompts for a new character. With a chargen catalog
@@ -119,10 +134,27 @@ type CharacterCreate struct {
 
 	step  chargenStep
 	draft chargenDraft
+
+	// rng drives the height/weight rolls in the identity substep.
+	// Tests inject a deterministic source via SetRNG; production paths
+	// fall through to a time-seeded default on first use.
+	rng *rand.Rand
 }
 
 func NewCharacterCreate(characters repo.CharacterRepo, game telnet.Mode) *CharacterCreate {
 	return &CharacterCreate{repo: characters, game: game}
+}
+
+// SetRNG injects a deterministic random source for the identity step's
+// height/weight rolls. Tests use this to assert exact values; nil
+// keeps the default time-seeded source.
+func (m *CharacterCreate) SetRNG(r *rand.Rand) { m.rng = r }
+
+func (m *CharacterCreate) randSource() *rand.Rand {
+	if m.rng == nil {
+		m.rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+	return m.rng
 }
 
 // SetMOTD wires the MOTD hook fired by promoteToGame after the
@@ -143,11 +175,13 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	case chargenStepRace:
 		return "Race (human / ogier) [back/cancel]: "
 	case chargenStepBackground:
-		return "Background id [back/cancel]: "
+		return "Background (id, # or 'info <id|#>') [back/cancel]: "
 	case chargenStepClass:
-		return "Class id [back/cancel]: "
+		return "Class (id, # or 'info <id|#>') [back/cancel]: "
 	case chargenStepAbilities:
 		return "Abilities (set <abil> <n> | reset | done) [back/cancel]: "
+	case chargenStepIdentity:
+		return "Identity (gender/age/handed/align/roll | done) [back/cancel]: "
 	case chargenStepReview:
 		return "Confirm? (yes / back / cancel): "
 	}
@@ -228,6 +262,8 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applyClass(s, trimmed)
 	case chargenStepAbilities:
 		return m.applyAbilities(s, trimmed)
+	case chargenStepIdentity:
+		return m.applyIdentity(s, trimmed)
 	case chargenStepReview:
 		return m.applyReview(ctx, s, trimmed)
 	}
@@ -266,20 +302,99 @@ func (m *CharacterCreate) writeBackgroundMenu(s *telnet.Session) error {
 	var b strings.Builder
 	b.WriteString("Backgrounds:\r\n")
 	for i, bg := range bgs {
-		fmt.Fprintf(&b, "  %2d. %-16s %s\r\n", i+1, bg.ID, bg.Name)
+		fmt.Fprintf(&b, "  %2d. %-16s %-22s %s\r\n",
+			i+1, bg.ID, bg.Name, backgroundSummary(bg))
 	}
+	b.WriteString("Type 'info <id|#>' for full details.\r\n")
 	return s.WriteRaw([]byte(b.String()))
+}
+
+// backgroundSummary renders the one-line menu hint for a background:
+// home language plus the count of bonus feats / skills / equipment
+// options. Keeps the menu narrow enough for an 80-col terminal.
+func backgroundSummary(bg *chargen.Background) string {
+	return fmt.Sprintf("%s (%d feats, %d skills, %d outfits)",
+		bg.HomeLanguage, len(bg.BonusFeats), len(bg.BackgroundSkills),
+		len(bg.EquipmentOptions))
 }
 
 func (m *CharacterCreate) applyBackground(s *telnet.Session, input string) error {
 	bgs := m.catalog.BackgroundsForRace(m.draft.Race)
+	if rest, ok := stripInfoVerb(input); ok {
+		idx := pickFromList(rest, len(bgs), func(i int) string { return bgs[i].ID })
+		if idx < 0 {
+			return s.WriteRaw([]byte("Unknown background. Type the id or list number.\r\n"))
+		}
+		return m.writeBackgroundInfo(s, bgs[idx])
+	}
 	bg := pickFromList(input, len(bgs), func(i int) string { return bgs[i].ID })
 	if bg < 0 {
-		return s.WriteRaw([]byte("Unknown background. Type the id or list number.\r\n"))
+		return s.WriteRaw([]byte("Unknown background. Type the id or list number, or 'info <id|#>'.\r\n"))
 	}
 	m.draft.BackgroundID = bgs[bg].ID
 	m.step = chargenStepClass
 	return m.writeClassMenu(s)
+}
+
+// writeBackgroundInfo renders the full descriptor block: languages,
+// bonus feats, background skills, height mod, restrictions, and the
+// equipment-option bundles. The player can then pick by id/number, or
+// 'info' another option, or 'back' / 'cancel'.
+func (m *CharacterCreate) writeBackgroundInfo(s *telnet.Session, bg *chargen.Background) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%s)\r\n", bg.Name, bg.ID)
+	fmt.Fprintf(&b, "  Home language:    %s\r\n", bg.HomeLanguage)
+	if len(bg.BonusLanguages) > 0 {
+		fmt.Fprintf(&b, "  Bonus languages:  %s\r\n", strings.Join(bg.BonusLanguages, ", "))
+	}
+	if len(bg.BonusFeats) > 0 {
+		fmt.Fprintf(&b, "  Bonus feats:      %s\r\n", strings.Join(bg.BonusFeats, ", "))
+	}
+	if len(bg.BackgroundSkills) > 0 {
+		fmt.Fprintf(&b, "  Background skills:%s\r\n", " "+strings.Join(bg.BackgroundSkills, ", "))
+	}
+	if bg.RequiredSkill != "" {
+		fmt.Fprintf(&b, "  Required skill:   %s\r\n", bg.RequiredSkill)
+	}
+	if bg.SkillRestriction != "" {
+		fmt.Fprintf(&b, "  Skill restriction:%s\r\n", " "+bg.SkillRestriction)
+	}
+	if bg.WeaponRestriction != "" {
+		fmt.Fprintf(&b, "  Weapon restriction:%s\r\n", " "+bg.WeaponRestriction)
+	}
+	if bg.HeightModIn != 0 {
+		fmt.Fprintf(&b, "  Height mod:       %+d in\r\n", bg.HeightModIn)
+	}
+	if len(bg.EquipmentOptions) > 0 {
+		b.WriteString("  Equipment options:\r\n")
+		for i, eo := range bg.EquipmentOptions {
+			fmt.Fprintf(&b, "    %d. %s\r\n", i+1, eo.Label)
+		}
+	}
+	if bg.Description != "" {
+		b.WriteString("\r\n")
+		b.WriteString(strings.TrimRight(bg.Description, "\n"))
+		b.WriteString("\r\n")
+	}
+	return s.WriteRaw([]byte(b.String()))
+}
+
+// stripInfoVerb returns the trailing argument when input begins with
+// "info " (case-insensitive), and reports whether the prefix matched.
+// "info" alone with no argument returns ("", true) so callers can
+// surface a usage hint.
+func stripInfoVerb(input string) (string, bool) {
+	fields := strings.Fields(input)
+	if len(fields) == 0 {
+		return "", false
+	}
+	if !strings.EqualFold(fields[0], "info") && !strings.EqualFold(fields[0], "details") {
+		return "", false
+	}
+	if len(fields) < 2 {
+		return "", true
+	}
+	return strings.Join(fields[1:], " "), true
 }
 
 func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
@@ -291,25 +406,68 @@ func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
 	var b strings.Builder
 	b.WriteString("Classes:\r\n")
 	for i, cl := range cls {
-		channeler := ""
-		if cl.Channeler {
-			channeler = " (channeler)"
-		}
-		fmt.Fprintf(&b, "  %2d. %-16s %s%s\r\n", i+1, cl.ID, cl.Name, channeler)
+		fmt.Fprintf(&b, "  %2d. %-16s %-18s %s\r\n",
+			i+1, cl.ID, cl.Name, classSummary(cl))
 	}
+	b.WriteString("Type 'info <id|#>' for full details.\r\n")
 	return s.WriteRaw([]byte(b.String()))
+}
+
+// classSummary renders the one-line menu hint: hit die, BAB
+// progression, and (when relevant) the channeler tag.
+func classSummary(cl *chargen.Class) string {
+	tag := ""
+	if cl.Channeler {
+		tag = " channeler"
+	}
+	return fmt.Sprintf("d%d HD, %s BAB%s", cl.HitDie, cl.BAB, tag)
 }
 
 func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
 	cls := m.catalog.ClassesForRace(m.draft.Race)
+	if rest, ok := stripInfoVerb(input); ok {
+		idx := pickFromList(rest, len(cls), func(i int) string { return cls[i].ID })
+		if idx < 0 {
+			return s.WriteRaw([]byte("Unknown class. Type the id or list number.\r\n"))
+		}
+		return m.writeClassInfo(s, cls[idx])
+	}
 	idx := pickFromList(input, len(cls), func(i int) string { return cls[i].ID })
 	if idx < 0 {
-		return s.WriteRaw([]byte("Unknown class. Type the id or list number.\r\n"))
+		return s.WriteRaw([]byte("Unknown class. Type the id or list number, or 'info <id|#>'.\r\n"))
 	}
 	m.draft.ClassID = cls[idx].ID
 	m.step = chargenStepAbilities
 	m.initAbilitiesIfNeeded()
 	return m.writeAbilitiesMenu(s)
+}
+
+// writeClassInfo renders the full descriptor block: HD / BAB / saves,
+// per-level skill points, key abilities, channeler source, class
+// skills, and the narrative blurb.
+func (m *CharacterCreate) writeClassInfo(s *telnet.Session, cl *chargen.Class) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%s)\r\n", cl.Name, cl.ID)
+	fmt.Fprintf(&b, "  Hit die:        d%d\r\n", cl.HitDie)
+	fmt.Fprintf(&b, "  BAB:            %s\r\n", cl.BAB)
+	fmt.Fprintf(&b, "  Saves:          fort=%s ref=%s will=%s\r\n",
+		cl.SaveFort, cl.SaveRef, cl.SaveWill)
+	fmt.Fprintf(&b, "  Skill points:   %d/lvl (×4 at 1st)\r\n", cl.SkillPoints)
+	if len(cl.KeyAbilities) > 0 {
+		fmt.Fprintf(&b, "  Key abilities:  %s\r\n", strings.Join(cl.KeyAbilities, ", "))
+	}
+	if cl.Channeler {
+		fmt.Fprintf(&b, "  Channeler:      yes (source: %s)\r\n", cl.ChannelSource)
+	}
+	if len(cl.ClassSkills) > 0 {
+		fmt.Fprintf(&b, "  Class skills:   %s\r\n", strings.Join(cl.ClassSkills, ", "))
+	}
+	if cl.Description != "" {
+		b.WriteString("\r\n")
+		b.WriteString(strings.TrimRight(cl.Description, "\n"))
+		b.WriteString("\r\n")
+	}
+	return s.WriteRaw([]byte(b.String()))
 }
 
 // initAbilitiesIfNeeded primes every slot to the point-buy floor on
@@ -395,8 +553,9 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 		if m.pointBuySpent() > pointBuyBudget {
 			return s.WriteRaw([]byte("You're over budget; reduce a score or 'reset'.\r\n"))
 		}
-		m.step = chargenStepReview
-		return m.writeReview(s)
+		m.step = chargenStepIdentity
+		m.initIdentityIfNeeded()
+		return m.writeIdentityMenu(s)
 	}
 
 	// Allow either "set <abil> <n>" or "<abil> <n>".
@@ -485,12 +644,31 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 		fmt.Fprintf(&b, "%s %d", strings.ToUpper(key), m.draft.Abilities[i])
 	}
 	b.WriteString("\r\n")
+	if m.draft.IdentitySet {
+		fmt.Fprintf(&b, "  Gender:     %s\r\n", genderLabel(m.draft.Gender))
+		fmt.Fprintf(&b, "  Age:        %d\r\n", m.draft.Age)
+		fmt.Fprintf(&b, "  Height:     %s\r\n", renderHeight(m.draft.HeightCm))
+		fmt.Fprintf(&b, "  Weight:     %s\r\n", renderWeight(m.draft.WeightKg))
+		fmt.Fprintf(&b, "  Handed:     %s\r\n", handLabel(m.draft.Handedness))
+		fmt.Fprintf(&b, "  Alignment:  %s\r\n", postureLabel(m.draft.Alignment))
+	}
 	return s.WriteRaw([]byte(b.String()))
 }
 
 func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, input string) error {
 	if !strings.EqualFold(input, "yes") && !strings.EqualFold(input, "y") {
 		return s.WriteRaw([]byte("Type 'yes' to confirm, 'back' to revise, or 'cancel' to abort.\r\n"))
+	}
+
+	// Identity must be stamped before commit — otherwise GenderNone /
+	// zero height/weight would persist. The flow forces the player
+	// through chargenStepIdentity, but a future refactor that adds a
+	// shortcut into review would silently corrupt the row without
+	// this guard. Bump back to identity rather than committing.
+	if !m.draft.IdentitySet {
+		m.step = chargenStepIdentity
+		m.initIdentityIfNeeded()
+		return m.writeIdentityMenu(s)
 	}
 
 	bg, _ := m.catalog.Background(m.draft.BackgroundID)
@@ -510,6 +688,8 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 
 	core := creature.Core{}
 	core.Abilities = m.buildAbilities()
+	core.Gender = m.draft.Gender
+	core.Alignment = m.draft.Alignment
 
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID:   s.AccountID,
@@ -519,6 +699,10 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		Background:  bg.Enum,
 		ClassLevels: map[creature.Class]int8{cl.Enum: 1},
 		Core:        core,
+		HeightCm:    m.draft.HeightCm,
+		WeightKg:    m.draft.WeightKg,
+		Age:         m.draft.Age,
+		Handedness:  m.draft.Handedness,
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):
