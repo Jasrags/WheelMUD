@@ -190,7 +190,7 @@ func TestGive_TargetNotInRoom(t *testing.T) {
 func TestGive_CoinTransfersBothPurses(t *testing.T) {
 	f := newInvFixture(t)
 	// Seed Alice with 1gc 5sp = 1050 cp.
-	if err := f.characters.RecordCoin(context.Background(), f.alice.CharacterID, currency.MustNew(1, 0, 5, 0), 0); err != nil {
+	if err := f.characters.RecordCoin(context.Background(), f.alice.CharacterID, currency.MustNew(1, 0, 5, 0), 0, 0); err != nil {
 		t.Fatalf("seed coin: %v", err)
 	}
 

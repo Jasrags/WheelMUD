@@ -402,19 +402,87 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 	})
 }
 
-func TestMemoryCharacterRepo(t *testing.T) {
-	runCharacterRepoTests(t, "memory", func(t *testing.T) (CharacterRepo, AccountRepo) {
-		return NewMemoryCharacterRepo(), NewMemoryAccountRepo()
+// runRecordCoinVersionTests exercises the optimistic-concurrency
+// contract on RecordCoin: success bumps the version, mismatched
+// versions return ErrCoinConflict without mutating the row, and a
+// missing id still returns ErrCharacterNotFound.
+func runRecordCoinVersionTests(t *testing.T, name string, newRepos func(t *testing.T) (CharacterRepo, AccountRepo)) {
+	t.Helper()
+
+	t.Run(name+"/record_coin_bumps_version", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepos(t)
+		acc, _ := ar.Create(ctx, Account{Username: "u1", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Alpha"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if c.CoinVersion != 0 {
+			t.Fatalf("fresh character coin_version = %d, want 0", c.CoinVersion)
+		}
+		if err := cr.RecordCoin(ctx, c.ID, 100, 0, c.CoinVersion); err != nil {
+			t.Fatalf("first RecordCoin: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Alpha")
+		if got.CoinVersion != 1 {
+			t.Fatalf("after first write coin_version = %d, want 1", got.CoinVersion)
+		}
+		if int64(got.Coin) != 100 {
+			t.Fatalf("coin = %d, want 100", int64(got.Coin))
+		}
+	})
+
+	t.Run(name+"/record_coin_stale_version_refuses", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepos(t)
+		acc, _ := ar.Create(ctx, Account{Username: "u2", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Beta"})
+		// First write succeeds with version 0.
+		if err := cr.RecordCoin(ctx, c.ID, 50, 0, 0); err != nil {
+			t.Fatalf("first write: %v", err)
+		}
+		// Second write with stale version 0 must fail; row is now at 1.
+		err := cr.RecordCoin(ctx, c.ID, 999, 0, 0)
+		if !errors.Is(err, ErrCoinConflict) {
+			t.Fatalf("err = %v, want ErrCoinConflict", err)
+		}
+		// Verify the row didn't budge.
+		got, _ := cr.FindByName(ctx, "Beta")
+		if int64(got.Coin) != 50 {
+			t.Fatalf("conflict mutated coin: %d", int64(got.Coin))
+		}
+		if got.CoinVersion != 1 {
+			t.Fatalf("conflict bumped version: %d", got.CoinVersion)
+		}
+	})
+
+	t.Run(name+"/record_coin_missing_id_returns_not_found", func(t *testing.T) {
+		ctx := context.Background()
+		cr, _ := newRepos(t)
+		err := cr.RecordCoin(ctx, 9999, 1, 0, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
 	})
 }
 
+func TestMemoryCharacterRepo(t *testing.T) {
+	mk := func(t *testing.T) (CharacterRepo, AccountRepo) {
+		return NewMemoryCharacterRepo(), NewMemoryAccountRepo()
+	}
+	runCharacterRepoTests(t, "memory", mk)
+	runRecordCoinVersionTests(t, "memory", mk)
+}
+
 func TestSQLiteCharacterRepo(t *testing.T) {
-	runCharacterRepoTests(t, "sqlite", func(t *testing.T) (CharacterRepo, AccountRepo) {
+	mk := func(t *testing.T) (CharacterRepo, AccountRepo) {
 		conn, err := db.Open(context.Background(), ":memory:")
 		if err != nil {
 			t.Fatalf("open db: %v", err)
 		}
 		t.Cleanup(func() { conn.Close() })
 		return NewSQLiteCharacterRepo(conn), NewSQLiteAccountRepo(conn)
-	})
+	}
+	runCharacterRepoTests(t, "sqlite", mk)
+	runRecordCoinVersionTests(t, "sqlite", mk)
 }

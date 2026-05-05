@@ -197,18 +197,37 @@ func (r *SQLiteCharacterRepo) RecordEquipment(ctx context.Context, id int64, eq 
 	return nil
 }
 
-func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error {
+func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE characters SET coin_cp = ?, bank_cp = ? WHERE id = ?`,
-		int64(coin), int64(bank), id,
+		`UPDATE characters
+		 SET coin_cp = ?, bank_cp = ?, coin_version = coin_version + 1
+		 WHERE id = ? AND coin_version = ?`,
+		int64(coin), int64(bank), id, expectedVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("record coin: %w", err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("record coin rows: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	// Zero rows affected. Distinguish "row missing" from "version
+	// moved on" so the caller can react differently — a missing
+	// character row is a programmer bug, a version conflict is a
+	// race the verb can refuse cleanly.
+	var dummy int
+	err = r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM characters WHERE id = ?`, id).Scan(&dummy)
+	if errors.Is(err, sql.ErrNoRows) {
 		return ErrCharacterNotFound
 	}
-	return nil
+	if err != nil {
+		return fmt.Errorf("record coin existence check: %w", err)
+	}
+	return ErrCoinConflict
 }
 
 func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error {

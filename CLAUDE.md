@@ -99,7 +99,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   (`balance`/`deposit`/`withdraw` — resolve a banker from
   `mobs.ListInRoom` + `bankers.GetByMobTemplateID`, gate on
   `Banker.IsOpenAt(clock.HourOfDay())`, move coin via
-  `CharacterRepo.RecordCoin(coin, bank)`; deposit/withdraw audit
+  `CharacterRepo.RecordCoin(coin, bank, expectedVersion)`; deposit/withdraw audit
   on success — refusals do not), the BFS
   minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
   the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
@@ -164,7 +164,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   — keyed 1:1 to a mob_template (UNIQUE on `mob_template_id`),
   carrying operating hours only. V1 has no fees, no min-deposit,
   and no item vault; coin moves between `characters.coin` and
-  `characters.bank_balance` via `CharacterRepo.RecordCoin`.
+  `characters.bank_balance` via `CharacterRepo.RecordCoin`. 0032
+  added `characters.coin_version` — an optimistic-lock token bumped
+  on every `RecordCoin`. Coin-mutating verbs pass the
+  `Character.CoinVersion` they computed against; the repo refuses
+  the UPDATE on mismatch with `ErrCoinConflict`, mirroring the
+  `ItemRepo.Transfer*` / `ErrItemMoved` pattern. Verbs surface this
+  as "your balance/purse just changed — try again" (sell, deposit,
+  withdraw, give); `buy` logs-and-accepts because the item already
+  shipped.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
@@ -322,7 +330,8 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
 alias table, every repo (memory + sqlite, including ZoneRepo,
-MobTemplateRepo, mob_trails, news, ShopRepo, BankerRepo), the world
+MobTemplateRepo, mob_trails, news, ShopRepo, BankerRepo,
+CharacterRepo's coin_version optimistic-lock contract), the world
 loader (zone metadata, room.zone_id linkage, item taxonomy, container
 fixtures, dark-room fixtures, shop round-trip + invalid-stock-item
 rejection, banker round-trip + bad-hour rejection), the session

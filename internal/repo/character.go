@@ -56,6 +56,14 @@ type Character struct {
 	Coin        currency.Amount
 	BankBalance currency.Amount
 
+	// CoinVersion is the optimistic-concurrency token for
+	// (Coin, BankBalance). Every successful RecordCoin bumps it by 1.
+	// Coin-mutating verbs read this on the snapshot they computed
+	// against and pass it as the expected version to RecordCoin; the
+	// repo refuses the UPDATE when the row's version has moved on
+	// (ErrCoinConflict). Same shape as ErrItemMoved on items.
+	CoinVersion int64
+
 	Encumbrance  creature.Load
 	FatigueUntil time.Time
 	Position     creature.Stance // standing/sitting/sleeping/fighting
@@ -163,8 +171,13 @@ type CharacterRepo interface {
 	// ErrCharacterNotFound when no row matches id.
 	RecordEquipment(ctx context.Context, id int64, eq creature.Equipment) error
 	// RecordCoin persists carried + bank wealth after a transfer or
-	// shop transaction.
-	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount) error
+	// shop transaction. expectedVersion must match the row's current
+	// coin_version (typically the CoinVersion off the Character
+	// snapshot the caller computed against). The repo bumps the
+	// version on success and returns ErrCoinConflict on mismatch —
+	// the caller should refuse the verb with "your balance changed".
+	// ErrCharacterNotFound is returned when the row is missing.
+	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error
 	// RecordPromptTemplate persists the per-character prompt override.
 	// Empty tmpl means "fall back to the server default". Returns
 	// ErrCharacterNotFound when no row matches id.
@@ -179,4 +192,12 @@ type CharacterRepo interface {
 var (
 	ErrCharacterNotFound      = errors.New("repo: character not found")
 	ErrDuplicateCharacterName = errors.New("repo: character name already taken")
+
+	// ErrCoinConflict is returned by RecordCoin when the row's
+	// coin_version no longer matches the caller's expected version.
+	// This means another path (another session, a parallel verb, a
+	// background tick) bumped the row between the caller's read and
+	// write. Verbs surface this as "your balance changed, try again"
+	// and let the player re-issue the command.
+	ErrCoinConflict = errors.New("repo: coin version conflict")
 )

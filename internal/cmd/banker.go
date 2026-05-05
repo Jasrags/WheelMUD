@@ -173,7 +173,10 @@ func NewDeposit(characters repo.CharacterRepo,
 				return s.WriteString("{{Your account can't hold any more.}}::yellow\r\n")
 			}
 
-			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, newBank); err != nil {
+			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, newBank, char.CoinVersion); err != nil {
+				if errors.Is(err, repo.ErrCoinConflict) {
+					return s.WriteString("{{Your balance just changed — try again.}}::yellow\r\n")
+				}
 				slog.Error("deposit: record coin", "char", char.ID, "error", err)
 				return s.WriteString("{{The banker fumbles the deposit.}}::red\r\n")
 			}
@@ -234,7 +237,10 @@ func NewWithdraw(characters repo.CharacterRepo,
 				return s.WriteString("{{You can't carry any more coin.}}::yellow\r\n")
 			}
 
-			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, newBank); err != nil {
+			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, newBank, char.CoinVersion); err != nil {
+				if errors.Is(err, repo.ErrCoinConflict) {
+					return s.WriteString("{{Your balance just changed — try again.}}::yellow\r\n")
+				}
 				slog.Error("withdraw: record coin", "char", char.ID, "error", err)
 				return s.WriteString("{{The banker fumbles the withdrawal.}}::red\r\n")
 			}

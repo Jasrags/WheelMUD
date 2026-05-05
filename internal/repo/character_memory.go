@@ -189,13 +189,17 @@ func (r *MemoryCharacterRepo) RecordEquipment(_ context.Context, id int64, eq cr
 	return ErrCharacterNotFound
 }
 
-func (r *MemoryCharacterRepo) RecordCoin(_ context.Context, id int64, coin, bank currency.Amount) error {
+func (r *MemoryCharacterRepo) RecordCoin(_ context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, c := range r.byLower {
 		if c.ID == id {
+			if c.CoinVersion != expectedVersion {
+				return ErrCoinConflict
+			}
 			c.Coin = coin
 			c.BankBalance = bank
+			c.CoinVersion++
 			return nil
 		}
 	}

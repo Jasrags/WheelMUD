@@ -1,0 +1,22 @@
+-- 0032_character_coin_version.sql
+--
+-- Coin TOCTOU guard. Adds a per-character monotonic version counter
+-- bumped on every CharacterRepo.RecordCoin write. Verbs that mutate
+-- coin (deposit/withdraw/buy/sell/give) read the current version off
+-- the character row, perform their compute, and pass that expected
+-- version to RecordCoin — which UPDATEs only when the row's version
+-- still matches. On mismatch the repo returns ErrCoinConflict; the
+-- verb refuses with "your balance changed, try again."
+--
+-- Why: today single-session-per-account makes this race latent
+-- (Bind kicks the prior session before a second connect can
+-- transact), but the invariant is policy-level not enforced by the
+-- DB. As soon as multi-session lands or a future verb forks coin
+-- mutation off the dispatcher goroutine, two concurrent reads of
+-- coin_cp would each compute a delta against the same baseline and
+-- both UPDATE — duplicating or destroying coin. The version column
+-- mirrors the optimistic-lock pattern items use via ErrItemMoved.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+
+ALTER TABLE characters ADD COLUMN coin_version INTEGER NOT NULL DEFAULT 0;

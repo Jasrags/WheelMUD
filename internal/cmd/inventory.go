@@ -275,11 +275,14 @@ func giveCoin(c *telnet.Context, characters repo.CharacterRepo, s, peer *telnet.
 	if err != nil {
 		return s.WriteString("{{They can't carry that much coin.}}::yellow\r\n")
 	}
-	if err := characters.RecordCoin(c.Ctx, actor.ID, newActor, actor.BankBalance); err != nil {
+	if err := characters.RecordCoin(c.Ctx, actor.ID, newActor, actor.BankBalance, actor.CoinVersion); err != nil {
+		if errors.Is(err, repo.ErrCoinConflict) {
+			return s.WriteString("{{Your purse just changed — try again.}}::yellow\r\n")
+		}
 		slog.Warn("give: record actor coin failed", "char", actor.ID, "error", err)
 		return s.WriteString("{{The coin slips from your fingers.}}::red\r\n")
 	}
-	if err := characters.RecordCoin(c.Ctx, target.ID, newTarget, target.BankBalance); err != nil {
+	if err := characters.RecordCoin(c.Ctx, target.ID, newTarget, target.BankBalance, target.CoinVersion); err != nil {
 		slog.Warn("give: record target coin failed", "char", target.ID, "error", err)
 		// Compensating write must NOT use c.Ctx — if the player
 		// disconnected mid-command it is already cancelled, and a
@@ -287,9 +290,11 @@ func giveCoin(c *telnet.Context, characters repo.CharacterRepo, s, peer *telnet.
 		// actor permanently debited. Fresh background ctx with a tight
 		// timeout keeps the rollback bounded but reachable. Errors are
 		// loud — a swallowed rollback failure is real player coin lost.
+		// Rollback uses actor.CoinVersion+1 because the first
+		// RecordCoin succeeded and bumped the version.
 		rbCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if rbErr := characters.RecordCoin(rbCtx, actor.ID, actor.Coin, actor.BankBalance); rbErr != nil {
+		if rbErr := characters.RecordCoin(rbCtx, actor.ID, actor.Coin, actor.BankBalance, actor.CoinVersion+1); rbErr != nil {
 			slog.Error("give: ROLLBACK FAILED — actor permanently debited",
 				"char", actor.ID, "amount_cp", int64(amount),
 				"original_error", err, "rollback_error", rbErr)

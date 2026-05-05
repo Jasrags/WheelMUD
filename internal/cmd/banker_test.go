@@ -83,7 +83,7 @@ func (f *bankerFixture) setWealth(t *testing.T, coinCP, bankCP int64) {
 		t.Fatalf("find alice: %v", err)
 	}
 	if err := f.characters.RecordCoin(context.Background(), c.ID,
-		currency.Amount(coinCP), currency.Amount(bankCP)); err != nil {
+		currency.Amount(coinCP), currency.Amount(bankCP), c.CoinVersion); err != nil {
 		t.Fatalf("record coin: %v", err)
 	}
 }

@@ -302,7 +302,11 @@ func NewBuy(items repo.ItemRepo, characters repo.CharacterRepo,
 			// Debit coin. If this fails after the item exists, the
 			// buyer keeps the item with a full purse — log and accept
 			// the lost revenue rather than risk losing the item too.
-			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, char.BankBalance); err != nil {
+			// ErrCoinConflict here is a true race (another path bumped
+			// coin between FindByName and now) — accept the same way:
+			// the item already shipped, refunding it isn't worth the
+			// extra failure modes.
+			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, char.BankBalance, char.CoinVersion); err != nil {
 				slog.Error("buy: record coin", "char", char.ID, "error", err)
 			}
 
@@ -374,8 +378,12 @@ func NewSell(items repo.ItemRepo, characters repo.CharacterRepo,
 			// Credit coin first. If this fails, the player keeps the
 			// item — better UX than the inverse (deleting first would
 			// lose the item if credit then fails, with no rollback path
-			// since Delete is destructive).
-			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, char.BankBalance); err != nil {
+			// since Delete is destructive). ErrCoinConflict refuses
+			// cleanly: item not yet deleted, no coin credited.
+			if err := characters.RecordCoin(c.Ctx, char.ID, newCoin, char.BankBalance, char.CoinVersion); err != nil {
+				if errors.Is(err, repo.ErrCoinConflict) {
+					return s.WriteString("{{Your purse just changed — try again.}}::yellow\r\n")
+				}
 				slog.Error("sell: record coin", "char", char.ID, "error", err)
 				return s.WriteString("{{The shopkeeper fumbles the change.}}::red\r\n")
 			}

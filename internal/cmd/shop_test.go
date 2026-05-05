@@ -102,7 +102,7 @@ func (f *shopFixture) giveAliceCoin(t *testing.T, cp int64) {
 		t.Fatalf("find alice: %v", err)
 	}
 	if err := f.characters.RecordCoin(context.Background(), c.ID,
-		currency.Amount(cp), c.BankBalance); err != nil {
+		currency.Amount(cp), c.BankBalance, c.CoinVersion); err != nil {
 		t.Fatalf("record coin: %v", err)
 	}
 }
