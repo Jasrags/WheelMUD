@@ -210,6 +210,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - Logging uses `slog`; level is set in `main.go` from `LOG_LEVEL`.
 - Spawn long-lived goroutines via `safego.Go("name", fn)` so panics
   surface as warnings instead of taking down the process.
+- The `shutdown` / `reboot` admin verbs (cmd/server/main.go::Request*)
+  drive teardown by calling the same `stop` cancel that
+  `signal.NotifyContext` returns; the existing shutdown-watcher
+  goroutine then closes the listener and `srv.shutdown()` runs the
+  drain + `persist.FlushAll`. `reboot` flips `srv.rebootOnExit`
+  before triggering, and `main()` ends with `syscall.Exec(os.Args[0],
+  os.Args, os.Environ())` — POSIX-only. The countdown goroutine
+  broadcasts via `Session.WriteAsync` (cross-session output rule)
+  and is interruptible via `RequestAbort`.
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
   (`internal/repo/character_sql.go`); ordering is load-bearing. The

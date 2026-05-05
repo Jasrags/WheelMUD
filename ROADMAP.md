@@ -977,19 +977,27 @@ will need on top of those tables.
 
 ## 17. Admin & moderation
 
-- [ ] `goto`, `transfer`, `summon`, `wizinvis`, `snoop` — `goto
-      <room|mob|player>` teleports the admin; `transfer <player>
-      [room]` pulls a player to admin's room or named room; `summon
-      <player>` is the polite variant that prompts the target.
-      `wizinvis [level]` hides from `who`/room listings below
-      level. `snoop <player>` mirrors that session's I/O to the
-      admin via a fan-out on `Session.WriteRaw`; logged + audited.
-- [ ] `shutdown` / `reboot` — `shutdown <seconds> [reason]`
-      broadcasts countdown messages on a scheduler timer, flushes
-      autosave, then exits. `reboot` is a copyover: serialize FD
-      table + minimal session state, `exec` the new binary, restore
-      sessions in-process so connections aren't dropped. v1 ships
-      `shutdown`; copyover is a stretch goal.
+- [~] `goto`, `transfer`, `summon`, `wizinvis`, `snoop` — `goto
+      <player|room>`, `transfer <player> [<room>]`, `summon
+      <player>`, and `wizinvis` (zero-arg toggle) all landed for
+      AuthAdmin; player-name lookup wins on conflict in `goto`,
+      NoTeleport rooms still resist, target gets the same async
+      "world ripples" notice as `tp <user> <room>`. Wizinvis flag
+      is session-scoped (no schema) and currently hides from `who`
+      and `tell`-name completion / lookup; admins still see hidden
+      peers with a `*` marker. Still pending: `wizinvis [level]`,
+      "polite summon" prompt, and `snoop` with audited fan-out.
+- [x] `shutdown` / `reboot` — both verbs accept
+      `[<delay>] [<reason>]` (default 30s, clamped 0..1h) or
+      `cancel`/`abort` to interrupt an in-flight countdown. Countdown
+      broadcasts at T-{60,30,10,5..0}s via `Session.WriteAsync` to
+      every live session, then closes the listener through the
+      existing `signal.NotifyContext` cancel — same teardown path as
+      SIGTERM (drain `wg`, run `persist.Manager.FlushAll`, stop
+      buckets/scheduler/bus). `reboot` flips an `atomic.Bool` so
+      `main()` `syscall.Exec`s the binary after `srv.shutdown()`
+      returns; in-process FD/session restore (true copyover) is still
+      a stretch goal. AuthAdmin only.
 - [ ] `ban` / `siteban` / `kick` / `mute` — `bans` table (`pattern`,
       `kind` in `account|ip|cidr`, `reason`, `expires_at`,
       `created_by`). Login mode + accept loop both consult; CIDR

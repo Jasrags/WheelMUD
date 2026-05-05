@@ -23,11 +23,20 @@ Cheap, low-risk, makes every later phase faster to test.
 2. **Pager mode** (§2 / §5). Push a pager mode when output exceeds
    `Session.Height`. Immediately benefits `who`, `news`, `help`,
    future `score` / `equipment`.
-3. **`goto` / `transfer` / `summon` / `wizinvis`** (§17). Thin wrappers
-   over `teleport` + the session registry. No schema changes.
-4. **`shutdown` / `reboot`** (§17). Drain inputs, flush
+3. ~~**`goto` / `transfer` / `summon` / `wizinvis`** (§17). Thin
+   wrappers over `teleport` + the session registry. No schema
+   changes.~~ Landed 2026-05-04. `goto <player|room>`, `transfer
+   <player> [<room>]`, `summon <player>`, and `wizinvis` toggle —
+   all gated AuthAdmin. Wizinvis is session-scoped (no schema) and
+   filters from `who` + tell-name completion / lookup.
+4. ~~**`shutdown` / `reboot`** (§17). Drain inputs, flush
    `persist.Manager`, close the listener. Removes the
-   "kill -TERM and pray" workflow.
+   "kill -TERM and pray" workflow.~~ Landed 2026-05-04. Both verbs
+   accept `[<delay>] [<reason>]` (default 30s, clamped to ≤1h) or
+   `cancel`/`abort` to interrupt an in-flight countdown. Countdown
+   broadcasts at T-{60,30,10,5..0}s. `reboot` re-execs via
+   `syscall.Exec` after the existing drain + persist.FlushAll.
+   AuthAdmin only.
 5. **Admin audit log** (§17). `admin_audit` table + a single
    `Audit(ctx, actor, verb, target)` helper. Wires retroactively into
    `spawn`, `teleport`, future `goto` / `shutdown`. Closes the spawn-

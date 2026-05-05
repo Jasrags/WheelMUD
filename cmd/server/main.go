@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -61,6 +62,24 @@ type server struct {
 
 	wg     sync.WaitGroup
 	closed chan struct{}
+
+	// stopSignal cancels the root signal-context used by the
+	// shutdown-watcher; it is the same callback returned by
+	// signal.NotifyContext (also fires on SIGINT/SIGTERM). The
+	// shutdown / reboot admin commands invoke it through
+	// RequestShutdown so the in-game path takes the same teardown
+	// route as a kill -TERM.
+	stopSignal context.CancelFunc
+
+	// rebootOnExit, when true, causes main() to syscall.Exec itself
+	// after srv.shutdown() returns. Set by RequestReboot.
+	rebootOnExit atomic.Bool
+
+	// shutdown coordinator state. shutdownCancel is closed by
+	// RequestAbort to interrupt an in-flight countdown.
+	shutdownMu      sync.Mutex
+	shutdownPending bool
+	shutdownCancel  chan struct{}
 }
 
 func main() {
@@ -146,12 +165,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog, helpCatalog)
-	if err != nil {
-		slog.Error("Failed to build command registry", "error", err)
-		os.Exit(1)
-	}
-
 	scheduler := tick.New()
 	buckets := tick.NewBuckets(scheduler)
 
@@ -172,7 +185,10 @@ func main() {
 	phaseAmbients := world.NewPhaseAmbientWatcher(clock, rooms, sessions)
 	buckets.Phase.Subscribe(phaseAmbients.Tick)
 
-	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
+	// srv is constructed before buildRegistry so the shutdown / reboot
+	// admin commands can wire to srv as a ShutdownController. newInitial
+	// is filled in below once gameMode (which depends on the registry)
+	// exists.
 	srv := &server{
 		accounts:   accounts,
 		characters: characters,
@@ -187,17 +203,26 @@ func main() {
 		saves:      saves,
 		news:       newsCatalog,
 		closed:     make(chan struct{}),
-		newInitial: func() telnet.Mode {
-			login := mode.NewLogin(accounts, characters, sessions, gameMode)
-			login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
-				return newsCatalog.WriteMOTDBlock(s, lastSeen)
-			})
-			return login
-		},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	srv.stopSignal = stop
+
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog, helpCatalog, srv)
+	if err != nil {
+		slog.Error("Failed to build command registry", "error", err)
+		os.Exit(1)
+	}
+
+	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
+	srv.newInitial = func() telnet.Mode {
+		login := mode.NewLogin(accounts, characters, sessions, gameMode)
+		login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
+			return newsCatalog.WriteMOTDBlock(s, lastSeen)
+		})
+		return login
+	}
 
 	scheduler.Start(ctx)
 
@@ -218,6 +243,29 @@ func main() {
 
 	srv.acceptLoop(ln)
 	srv.shutdown()
+
+	// Reboot path: re-exec ourselves so a `reboot` admin command
+	// brings the server back up without operator intervention. The
+	// listener is already closed (free port), DB connections were
+	// closed by the deferred closeDB, and the persist manager has
+	// flushed. POSIX-only — Windows admins use `shutdown` with an
+	// external supervisor.
+	if srv.rebootOnExit.Load() {
+		bin, err := os.Executable()
+		if err != nil {
+			// A silent fallback to os.Args[0] would re-exec a path
+			// that may no longer resolve (relative path + cwd
+			// change, replaced symlink). Fail loud so the operator
+			// can diagnose; supervisord/systemd will restart us.
+			slog.Error("Reboot: cannot resolve executable; aborting re-exec", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Re-execing for reboot", "bin", bin, "args", os.Args)
+		if err := syscall.Exec(bin, os.Args, os.Environ()); err != nil {
+			slog.Error("Re-exec failed", "error", err)
+			os.Exit(1)
+		}
+	}
 }
 
 func (srv *server) acceptLoop(ln net.Listener) {
@@ -341,7 +389,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -392,6 +440,16 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions, clock)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		cmd.NewGoto(rooms, exits, items, mobs, characters, sessions, clock),
+		cmd.NewTransfer(rooms, exits, items, mobs, characters, sessions, clock),
+		cmd.NewSummon(rooms, exits, items, mobs, characters, sessions, clock),
+		cmd.NewWizinvis(),
+		cmd.NewShutdown(shutdownCtl),
+		cmd.NewReboot(shutdownCtl),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
@@ -462,5 +520,150 @@ func (srv *server) handleConnection(s *telnet.Session) {
 		slog.Debug("Session ended", "remote", s.RemoteAddress, "error", err)
 	}
 	slog.Info("Client disconnected", "remote", s.RemoteAddress)
+}
+
+// RequestShutdown schedules a graceful shutdown after delay, with an
+// optional reason broadcast to all sessions during the countdown.
+// Returns cmd.ErrShutdownPending if a countdown is already in flight.
+//
+// Implements cmd.ShutdownController.
+func (srv *server) RequestShutdown(reason string, delay time.Duration) error {
+	return srv.scheduleStop(reason, delay, false)
+}
+
+// RequestReboot is RequestShutdown plus rebootOnExit, so main()
+// re-execs the binary after the drain/flush sequence.
+//
+// Implements cmd.ShutdownController.
+func (srv *server) RequestReboot(reason string, delay time.Duration) error {
+	return srv.scheduleStop(reason, delay, true)
+}
+
+// RequestAbort cancels an in-flight countdown. Returns an error
+// (not nil-terminated) if no countdown is pending so the operator
+// gets explicit feedback rather than silent acceptance.
+//
+// Implements cmd.ShutdownController.
+func (srv *server) RequestAbort() error {
+	srv.shutdownMu.Lock()
+	if !srv.shutdownPending {
+		srv.shutdownMu.Unlock()
+		return errors.New("no shutdown pending")
+	}
+	cancel := srv.shutdownCancel
+	srv.shutdownPending = false
+	srv.shutdownCancel = nil
+	srv.rebootOnExit.Store(false)
+	srv.shutdownMu.Unlock()
+
+	close(cancel)
+	srv.broadcast("{{*** Shutdown cancelled. ***}}::green")
+	return nil
+}
+
+func (srv *server) scheduleStop(reason string, delay time.Duration, reboot bool) error {
+	srv.shutdownMu.Lock()
+	if srv.shutdownPending {
+		srv.shutdownMu.Unlock()
+		return cmd.ErrShutdownPending
+	}
+	cancel := make(chan struct{})
+	srv.shutdownPending = true
+	srv.shutdownCancel = cancel
+	// Stamp rebootOnExit while still holding shutdownMu so a racing
+	// RequestAbort that runs between this unlock and the goroutine
+	// spawn cannot leave a stale `true` set after the abort cleared
+	// it.
+	if reboot {
+		srv.rebootOnExit.Store(true)
+	}
+	srv.shutdownMu.Unlock()
+
+	verb := "Shutdown"
+	if reboot {
+		verb = "Reboot"
+	}
+	srv.announceCountdownStart(verb, reason, delay)
+
+	safego.Go("shutdown-countdown", func() {
+		srv.runCountdown(verb, reason, delay, cancel)
+	})
+	return nil
+}
+
+func (srv *server) announceCountdownStart(verb, reason string, delay time.Duration) {
+	msg := verb + " in " + delay.Round(time.Second).String() + "."
+	if reason != "" {
+		msg = verb + " in " + delay.Round(time.Second).String() + ": " + reason
+	}
+	srv.broadcast("{{*** " + msg + " ***}}::yellow")
+}
+
+// runCountdown sleeps the remaining delay in chunks, broadcasting at
+// the standard {60,30,10,5..0}s marks. Returns early if cancel fires.
+// On natural completion it triggers stopSignal, which feeds into the
+// existing shutdown-watcher path.
+func (srv *server) runCountdown(verb, reason string, delay time.Duration, cancel <-chan struct{}) {
+	marks := []time.Duration{
+		60 * time.Second, 30 * time.Second, 10 * time.Second,
+		5 * time.Second, 4 * time.Second, 3 * time.Second,
+		2 * time.Second, 1 * time.Second,
+	}
+	deadline := time.Now().Add(delay)
+
+	for _, m := range marks {
+		if m >= delay {
+			continue
+		}
+		wait := time.Until(deadline.Add(-m))
+		if wait <= 0 {
+			continue
+		}
+		select {
+		case <-time.After(wait):
+		case <-cancel:
+			return
+		}
+		tag := verb + " in " + m.String() + "."
+		if reason != "" {
+			tag = verb + " in " + m.String() + ": " + reason
+		}
+		srv.broadcast("{{*** " + tag + " ***}}::yellow")
+	}
+
+	// Sleep any remaining tail to the deadline.
+	if rem := time.Until(deadline); rem > 0 {
+		select {
+		case <-time.After(rem):
+		case <-cancel:
+			return
+		}
+	}
+
+	srv.broadcast("{{*** " + verb + " now. ***}}::red")
+
+	// Mark the request as no longer pending before triggering the
+	// stop signal. The pending guard is only there to reject a
+	// second concurrent shutdown, not to gate teardown.
+	srv.shutdownMu.Lock()
+	srv.shutdownPending = false
+	srv.shutdownCancel = nil
+	srv.shutdownMu.Unlock()
+
+	if srv.stopSignal != nil {
+		srv.stopSignal()
+	}
+}
+
+// broadcast sends msg to every live session via WriteAsync (the only
+// safe cross-session write path; see CLAUDE.md). Failures are logged
+// at Debug — a closed connection is not a coordinator-level error.
+func (srv *server) broadcast(msg string) {
+	for _, s := range srv.sessions.Snapshot() {
+		if err := s.WriteAsync(msg); err != nil {
+			slog.Debug("shutdown broadcast: write failed",
+				"session", s.RemoteAddress, "error", err)
+		}
+	}
 }
 
