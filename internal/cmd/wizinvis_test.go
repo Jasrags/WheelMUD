@@ -10,7 +10,7 @@ import (
 func TestWizinvis_TogglesHiddenAndAcks(t *testing.T) {
 	s, conn := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
-	wi := NewWizinvis()
+	wi := NewWizinvis(nil)
 
 	runCmd(t, wi, s, "wizinvis")
 	if !s.IsHidden() {

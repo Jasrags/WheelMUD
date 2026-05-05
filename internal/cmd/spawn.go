@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -36,7 +37,7 @@ const (
 //
 // AuthAdmin gated. Count defaults to 1, capped at spawnCountMax to
 // keep a fat-finger spawn from flooding the room.
-func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
+func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "spawn",
 		Help:    "Spawn a mob or item from a template",
@@ -60,9 +61,9 @@ func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.
 
 			switch kind {
 			case spawnKindMob:
-				return spawnMobs(c, mobTemplates, mobs, sessions, ext, count)
+				return spawnMobs(c, mobTemplates, mobs, sessions, ext, count, audits)
 			case spawnKindItem:
-				return spawnItems(c, items, sessions, ext, count)
+				return spawnItems(c, items, sessions, ext, count, audits)
 			default:
 				return s.WriteString("{{First argument must be 'mob' or 'item'.}}::yellow\r\n")
 			}
@@ -91,7 +92,7 @@ func parseSpawnCount(args []string) (int, string, bool) {
 // the admin's current room. Stops on the first per-iteration error
 // and reports how many landed before the failure so the admin knows
 // the partial state.
-func spawnMobs(c *telnet.Context, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, sessions *session.Registry, ext string, count int) error {
+func spawnMobs(c *telnet.Context, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, sessions *session.Registry, ext string, count int, audits repo.AdminAuditRepo) error {
 	s := c.Session
 	tpl, err := mobTemplates.GetByExternalID(c.Ctx, ext)
 	if errors.Is(err, repo.ErrTemplateNotFound) {
@@ -120,6 +121,10 @@ func spawnMobs(c *telnet.Context, mobTemplates repo.MobTemplateRepo, mobs repo.M
 	slog.Info("admin: spawn",
 		"actor", s.CharacterID, "kind", "mob", "ext", ext,
 		"count", created, "room", s.CurrentRoomID)
+	if created > 0 {
+		audit.Record(c.Ctx, audits, s, "spawn", ext,
+			fmt.Sprintf("mob %s %d room=%d", ext, created, s.CurrentRoomID))
+	}
 
 	return announceSpawn(s, sessions, tpl.Core.Name, created)
 }
@@ -127,7 +132,7 @@ func spawnMobs(c *telnet.Context, mobTemplates repo.MobTemplateRepo, mobs repo.M
 // spawnItems uses the YAML-seeded item with the given external_id as
 // a template: copy its typed fields, deep-copy Stats, and persist a
 // fresh row with a unique external_id. The seed row stays put.
-func spawnItems(c *telnet.Context, items repo.ItemRepo, sessions *session.Registry, ext string, count int) error {
+func spawnItems(c *telnet.Context, items repo.ItemRepo, sessions *session.Registry, ext string, count int, audits repo.AdminAuditRepo) error {
 	s := c.Session
 	template, err := items.FindByExternalID(c.Ctx, ext)
 	if errors.Is(err, repo.ErrItemNotFound) {
@@ -163,6 +168,10 @@ func spawnItems(c *telnet.Context, items repo.ItemRepo, sessions *session.Regist
 	slog.Info("admin: spawn",
 		"actor", s.CharacterID, "kind", "item", "ext", ext,
 		"count", created, "room", s.CurrentRoomID)
+	if created > 0 {
+		audit.Record(c.Ctx, audits, s, "spawn", ext,
+			fmt.Sprintf("item %s %d room=%d", ext, created, s.CurrentRoomID))
+	}
 
 	return announceSpawn(s, sessions, template.Name, created)
 }

@@ -37,10 +37,15 @@ Cheap, low-risk, makes every later phase faster to test.
    broadcasts at T-{60,30,10,5..0}s. `reboot` re-execs via
    `syscall.Exec` after the existing drain + persist.FlushAll.
    AuthAdmin only.
-5. **Admin audit log** (§17). `admin_audit` table + a single
+5. ~~**Admin audit log** (§17). `admin_audit` table + a single
    `Audit(ctx, actor, verb, target)` helper. Wires retroactively into
    `spawn`, `teleport`, future `goto` / `shutdown`. Closes the spawn-
-   audit gap noted in `spawn_followups.md`.
+   audit gap noted in `spawn_followups.md`.~~ Landed 2026-05-04.
+   Migration 0029 + `repo.AdminAuditRepo` (memory + sqlite) +
+   `internal/audit.Record` helper. Wired into `spawn`, `teleport`,
+   `goto`, `transfer`, `summon`, `wizinvis`, `shutdown`, `reboot`
+   (and `shutdown:cancel`). Synchronous write so `shutdown` flushes
+   the row before drain begins. Read-side viewer verb deferred.
 6. **Macro / multi-command lines (`;` separator)** (§4). Tokenizer-side
    split with bounded recursion depth so `;` inside `say` text doesn't
    recurse.

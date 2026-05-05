@@ -1,6 +1,10 @@
 package cmd
 
-import "github.com/Jasrags/WheelMUD/telnet"
+import (
+	"github.com/Jasrags/WheelMUD/internal/audit"
+	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/telnet"
+)
 
 // NewWizinvis builds the wizinvis admin toggle. Flips the session's
 // hidden bit (Session.ToggleHidden); other commands query
@@ -11,13 +15,19 @@ import "github.com/Jasrags/WheelMUD/telnet"
 // Session-scoped: the bit is dropped on disconnect by design. No
 // schema change. Persisting wizinvis across reconnect is tracked as
 // a follow-up.
-func NewWizinvis() *telnet.Command {
+func NewWizinvis(audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "wizinvis",
 		Help: "wizinvis — toggle admin invisibility (per session)",
 		Auth: telnet.AuthAdmin,
 		Run: func(c *telnet.Context) error {
-			if c.Session.ToggleHidden() {
+			hidden := c.Session.ToggleHidden()
+			state := "off"
+			if hidden {
+				state = "on"
+			}
+			audit.Record(c.Ctx, audits, c.Session, "wizinvis", state, "")
+			if hidden {
 				return c.Session.WriteString("{{You fade from sight.}}::magenta\r\n")
 			}
 			return c.Session.WriteString("{{You return to view.}}::cyan\r\n")

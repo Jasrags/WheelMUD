@@ -60,7 +60,7 @@ func newSpawnFixture(t *testing.T) *spawnFixture {
 	admin.AuthLevel = telnet.AuthAdmin
 	admin.CharacterName = "Admin"
 
-	cmd := NewSpawn(items, mobTemplates, mobs, characters, sessions)
+	cmd := NewSpawn(items, mobTemplates, mobs, characters, sessions, nil)
 	return &spawnFixture{
 		cmd: cmd, items: items, mobTemplates: mobTemplates, mobs: mobs,
 		admin: admin, other: other, adminOut: aOut, otherOut: oOut,

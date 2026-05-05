@@ -77,7 +77,7 @@ func TestShutdown_NoArgsUsesDefault(t *testing.T) {
 	s, _ := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{}
-	cmd := NewShutdown(ctl)
+	cmd := NewShutdown(ctl, nil)
 
 	runCmd(t, cmd, s, "")
 
@@ -93,7 +93,7 @@ func TestShutdown_DelayAndReason(t *testing.T) {
 	s, out := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{}
-	cmd := NewShutdown(ctl)
+	cmd := NewShutdown(ctl, nil)
 
 	runCmd(t, cmd, s, "2m maintenance window")
 
@@ -119,7 +119,7 @@ func TestShutdown_Cancel(t *testing.T) {
 	s, out := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{}
-	cmd := NewShutdown(ctl)
+	cmd := NewShutdown(ctl, nil)
 
 	runCmd(t, cmd, s, "cancel")
 	runCmd(t, cmd, s, "abort")
@@ -139,7 +139,7 @@ func TestReboot_DelayAndReason(t *testing.T) {
 	s, out := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{}
-	cmd := NewReboot(ctl)
+	cmd := NewReboot(ctl, nil)
 
 	runCmd(t, cmd, s, "5m upgrades")
 
@@ -158,7 +158,7 @@ func TestShutdown_PendingErrorSurfaces(t *testing.T) {
 	s, out := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{err: ErrShutdownPending}
-	cmd := NewShutdown(ctl)
+	cmd := NewShutdown(ctl, nil)
 
 	runCmd(t, cmd, s, "60")
 
@@ -171,7 +171,7 @@ func TestShutdown_AbortErrorSurfaces(t *testing.T) {
 	s, out := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	ctl := &fakeShutdownCtl{err: errors.New("nothing pending")}
-	cmd := NewShutdown(ctl)
+	cmd := NewShutdown(ctl, nil)
 
 	runCmd(t, cmd, s, "cancel")
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/world"
@@ -30,7 +31,7 @@ import (
 // current single-tier auth model. This is a builder/admin tool and
 // should be promoted to AuthAdmin as soon as an admin role exists on
 // accounts. See world_aggregates_followups.md.
-func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) *telnet.Command {
+func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "teleport",
 		Aliases: []string{"tp"},
@@ -45,9 +46,9 @@ func NewTeleport(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 		Run: func(c *telnet.Context) error {
 			switch len(c.Args) {
 			case 1:
-				return tpSelf(c, c.Args[0], rooms, exits, items, mobs, characters, clock)
+				return tpSelf(c, c.Args[0], rooms, exits, items, mobs, characters, clock, audits, "teleport")
 			case 2:
-				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions, clock)
+				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions, clock, audits, "teleport")
 			default:
 				return c.Session.WriteRaw([]byte("Usage: tp <room>   or   tp <user> <room>\r\n"))
 			}
@@ -103,8 +104,11 @@ func roomIDCandidates(ctx context.Context, rooms repo.RoomRepo, partial string) 
 
 // tpSelf teleports the calling session to the resolved room and
 // re-renders it. Persistence and session.CurrentRoomID update mirror
-// what the move family does on a successful step.
-func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, clock *world.Clock) error {
+// what the move family does on a successful step. auditVerb names
+// the dispatched verb for the admin_audit row ("teleport" or "goto");
+// pass "" to skip the audit (e.g. internal redirects that shouldn't
+// stack a second row).
+func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, clock *world.Clock, audits repo.AdminAuditRepo, auditVerb string) error {
 	room, err := resolveRoom(c.Ctx, rooms, roomArg)
 	if errors.Is(err, repo.ErrRoomNotFound) {
 		return c.Session.WriteString("{{No such room: " + sanitizeArg(roomArg) + "}}::red\r\n")
@@ -117,13 +121,20 @@ func tpSelf(c *telnet.Context, roomArg string, rooms repo.RoomRepo, exits repo.E
 		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, c.Session, room.ID, characters)
+	// Audit before render: the teleport already happened (room id and
+	// CharacterRepo are updated). A render failure is a presentation
+	// problem, not a teleport rollback — the audit row reflects what
+	// the world actually did.
+	if auditVerb != "" {
+		audit.Record(c.Ctx, audits, c.Session, auditVerb, room.ExternalID, strings.Join(c.Args, " "))
+	}
 	return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs, clock)
 }
 
 // tpOther teleports another live session by character name. The caller
 // gets a confirmation; the target gets a "world ripples" notice plus
 // the new room rendered into their own connection.
-func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) error {
+func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo, auditVerb string) error {
 	target := lookupByCharacter(sessions, username)
 	if target == nil {
 		return c.Session.WriteString("{{No such player online: " + sanitizeArg(username) + "}}::red\r\n")
@@ -140,6 +151,9 @@ func tpOther(c *telnet.Context, username, roomArg string, rooms repo.RoomRepo, e
 		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, target, room.ID, characters)
+	if auditVerb != "" {
+		audit.Record(c.Ctx, audits, c.Session, auditVerb, target.CharacterName, strings.Join(c.Args, " "))
+	}
 	// Defang both spliced fields: CharacterName is player-supplied at
 	// character-create, and room.Name is builder-authored — neither is
 	// safe to splice raw into a cfmt template.

@@ -7,6 +7,10 @@ import (
 	"log/slog"
 	"time"
 
+	"strconv"
+	"strings"
+
+	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/world"
@@ -22,7 +26,7 @@ import (
 //
 // Auth: AuthAdmin. The dispatcher rejects lower tiers silently
 // (telnet/command.go), so the command does not enumerate.
-func NewGoto(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) *telnet.Command {
+func NewGoto(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "goto",
 		Help: "goto <player|room> — teleport yourself to a player or room",
@@ -46,9 +50,9 @@ func NewGoto(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 				if peer.CurrentRoomID == 0 {
 					return c.Session.WriteString("{{" + sanitizeArg(peer.CharacterName) + " is not in the world yet.}}::yellow\r\n")
 				}
-				return gotoRoomID(c, peer.CurrentRoomID, rooms, exits, items, mobs, characters, clock)
+				return gotoRoomID(c, peer.CurrentRoomID, rooms, exits, items, mobs, characters, clock, audits, peer.CharacterName)
 			}
-			return tpSelf(c, arg, rooms, exits, items, mobs, characters, clock)
+			return tpSelf(c, arg, rooms, exits, items, mobs, characters, clock, audits, "goto")
 		},
 	}
 }
@@ -56,7 +60,7 @@ func NewGoto(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs
 // gotoRoomID is the room-id-known branch of `goto`. Mirrors tpSelf's
 // no-teleport gate + relocate + render but skips the room arg parsing
 // since the id is already in hand.
-func gotoRoomID(c *telnet.Context, roomID int64, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, clock *world.Clock) error {
+func gotoRoomID(c *telnet.Context, roomID int64, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, clock *world.Clock, audits repo.AdminAuditRepo, targetPlayerName string) error {
 	room, err := rooms.FindByID(c.Ctx, roomID)
 	if errors.Is(err, repo.ErrRoomNotFound) {
 		return c.Session.WriteString("{{That room no longer exists.}}::red\r\n")
@@ -69,6 +73,11 @@ func gotoRoomID(c *telnet.Context, roomID int64, rooms repo.RoomRepo, exits repo
 		return c.Session.WriteString("{{The Pattern resists — that destination cannot be reached by weave.}}::red\r\n")
 	}
 	relocate(c.Ctx, c.Session, room.ID, characters)
+	target := targetPlayerName
+	if target == "" {
+		target = strconv.FormatInt(room.ID, 10)
+	}
+	audit.Record(c.Ctx, audits, c.Session, "goto", target, strings.Join(c.Args, " "))
 	return RenderRoom(c.Ctx, c.Session, rooms, exits, items, mobs, clock)
 }
 
@@ -76,7 +85,7 @@ func gotoRoomID(c *telnet.Context, roomID int64, rooms repo.RoomRepo, exits repo
 // player to the caller's current room (1-arg form) or to an arbitrary
 // room (2-arg form, equivalent to `tp <user> <room>` but kept as its
 // own verb for ergonomics + audit clarity).
-func NewTransfer(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) *telnet.Command {
+func NewTransfer(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "transfer",
 		Help: "transfer <player> [<room>] — pull a player to you (or to a room)",
@@ -101,9 +110,9 @@ func NewTransfer(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 		Run: func(c *telnet.Context) error {
 			switch len(c.Args) {
 			case 1:
-				return transferToCaller(c, c.Args[0], rooms, exits, items, mobs, characters, sessions, clock)
+				return transferToCaller(c, c.Args[0], rooms, exits, items, mobs, characters, sessions, clock, audits, "transfer")
 			case 2:
-				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions, clock)
+				return tpOther(c, c.Args[0], c.Args[1], rooms, exits, items, mobs, characters, sessions, clock, audits, "transfer")
 			default:
 				return c.Session.WriteRaw([]byte("Usage: transfer <player> [<room>]\r\n"))
 			}
@@ -114,7 +123,7 @@ func NewTransfer(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, 
 // NewSummon builds the `summon` admin verb — strictly the 1-arg
 // "pull player to me" form. Kept distinct from `transfer` so audit
 // logs (Phase A 5) record the intent unambiguously.
-func NewSummon(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) *telnet.Command {
+func NewSummon(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name:    "summon",
 		Help:    "summon <player> — pull a player to your current room",
@@ -129,7 +138,7 @@ func NewSummon(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mo
 			return onlineNameCandidates(s, sessions, partial)
 		},
 		Run: func(c *telnet.Context) error {
-			return transferToCaller(c, c.Args[0], rooms, exits, items, mobs, characters, sessions, clock)
+			return transferToCaller(c, c.Args[0], rooms, exits, items, mobs, characters, sessions, clock, audits, "summon")
 		},
 	}
 }
@@ -139,7 +148,7 @@ func NewSummon(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mo
 // targeting and the caller's own location, validates NoTeleport on
 // the destination, then mirrors tpOther's notify pattern (caller ack
 // + target async ripple + detached-context render).
-func transferToCaller(c *telnet.Context, username string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock) error {
+func transferToCaller(c *telnet.Context, username string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, clock *world.Clock, audits repo.AdminAuditRepo, auditVerb string) error {
 	target := lookupByCharacter(sessions, username)
 	if target == nil {
 		return c.Session.WriteString("{{No such player online: " + sanitizeArg(username) + "}}::red\r\n")
@@ -162,6 +171,9 @@ func transferToCaller(c *telnet.Context, username string, rooms repo.RoomRepo, e
 		return c.Session.WriteString("{{The Pattern resists — none may be drawn to this place.}}::red\r\n")
 	}
 	relocate(c.Ctx, target, room.ID, characters)
+	if auditVerb != "" {
+		audit.Record(c.Ctx, audits, c.Session, auditVerb, target.CharacterName, strings.Join(c.Args, " "))
+	}
 	// Defang both spliced fields: CharacterName is player-supplied at
 	// character-create, and room.Name is builder-authored — neither is
 	// safe to splice raw into a cfmt template.

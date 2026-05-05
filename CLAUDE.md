@@ -106,7 +106,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0028. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0029. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -133,7 +133,10 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `characters.last_news_seen_at` for the MOTD/news gate; 0028 added
   `items.parent_item_id` (nullable, soft self-FK) so an item can
   live inside another item, completing the location invariant
-  (room ⊕ owner ⊕ parent).
+  (room ⊕ owner ⊕ parent). 0029 added the `admin_audit` table —
+  append-only forensic log for privileged-verb invocations,
+  populated by `internal/audit.Record` from every admin verb's
+  success path.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances).
@@ -219,6 +222,18 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   os.Args, os.Environ())` — POSIX-only. The countdown goroutine
   broadcasts via `Session.WriteAsync` (cross-session output rule)
   and is interruptible via `RequestAbort`.
+- Privileged verbs (`spawn`, `teleport`, `goto`, `transfer`,
+  `summon`, `wizinvis`, `shutdown`, `reboot`) record one
+  `admin_audit` row per successful invocation via
+  `internal/audit.Record(c.Ctx, audits, c.Session, verb, target,
+  args)`. Refusal paths (auth denied, bad target, NoTeleport,
+  controller error, unknown template) MUST NOT audit — the row
+  represents "this side effect actually happened." Synchronous
+  by design so a `shutdown` row commits before drain begins. New
+  admin verbs follow the same pattern: thread `audits
+  repo.AdminAuditRepo` into the factory, call `audit.Record`
+  immediately after the side effect lands, and pass `nil` from
+  tests that don't care about the audit assertion.
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
   (`internal/repo/character_sql.go`); ordering is load-bearing. The

@@ -15,7 +15,7 @@ func newTeleportCmd(t *testing.T, sessions *session.Registry) (*telnet.Command, 
 	t.Helper()
 	rooms, exits, items, mobs := seedWorld(t)
 	chars := repo.NewMemoryCharacterRepo()
-	return NewTeleport(rooms, exits, items, mobs, chars, sessions, noonClock(t)), chars, rooms, exits, items, mobs
+	return NewTeleport(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil), chars, rooms, exits, items, mobs
 }
 
 func TestTeleport_SelfByExternalID(t *testing.T) {

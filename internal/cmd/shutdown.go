@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/audit"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -36,7 +38,7 @@ const (
 //	shutdown <delay> <reason...>   — delay + reason
 //	shutdown <reason...>           — 30s, reason
 //	shutdown cancel | abort        — cancel an in-flight countdown
-func NewShutdown(ctrl ShutdownController) *telnet.Command {
+func NewShutdown(ctrl ShutdownController, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "shutdown",
 		Help: "shutdown [<delay>] [<reason>] | shutdown cancel — bring the server down",
@@ -49,7 +51,7 @@ func NewShutdown(ctrl ShutdownController) *telnet.Command {
 			"Delay is clamped to [0, 1h].",
 		Auth: telnet.AuthAdmin,
 		Run: func(c *telnet.Context) error {
-			return runShutdownLike(c, ctrl, false)
+			return runShutdownLike(c, ctrl, false, audits)
 		},
 	}
 }
@@ -57,7 +59,7 @@ func NewShutdown(ctrl ShutdownController) *telnet.Command {
 // NewReboot builds the `reboot` admin verb. Same arg shape as
 // `shutdown`; on a Linux/macOS host the server re-execs itself after
 // drain + flush.
-func NewReboot(ctrl ShutdownController) *telnet.Command {
+func NewReboot(ctrl ShutdownController, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "reboot",
 		Help: "reboot [<delay>] [<reason>] | reboot cancel — bring the server down and re-launch",
@@ -70,12 +72,12 @@ func NewReboot(ctrl ShutdownController) *telnet.Command {
 			"Delay is clamped to [0, 1h]. Re-exec is POSIX-only.",
 		Auth: telnet.AuthAdmin,
 		Run: func(c *telnet.Context) error {
-			return runShutdownLike(c, ctrl, true)
+			return runShutdownLike(c, ctrl, true, audits)
 		},
 	}
 }
 
-func runShutdownLike(c *telnet.Context, ctrl ShutdownController, reboot bool) error {
+func runShutdownLike(c *telnet.Context, ctrl ShutdownController, reboot bool, audits repo.AdminAuditRepo) error {
 	verb := "shutdown"
 	if reboot {
 		verb = "reboot"
@@ -86,6 +88,7 @@ func runShutdownLike(c *telnet.Context, ctrl ShutdownController, reboot bool) er
 			if err := ctrl.RequestAbort(); err != nil {
 				return c.Session.WriteString("{{" + verb + ": " + sanitizeArg(err.Error()) + "}}::yellow\r\n")
 			}
+			audit.Record(c.Ctx, audits, c.Session, verb+":cancel", "", "")
 			return c.Session.WriteString("{{" + verb + " cancelled.}}::green\r\n")
 		}
 	}
@@ -105,6 +108,7 @@ func runShutdownLike(c *telnet.Context, ctrl ShutdownController, reboot bool) er
 	if err != nil {
 		return c.Session.WriteString("{{" + verb + ": " + sanitizeArg(err.Error()) + "}}::red\r\n")
 	}
+	audit.Record(c.Ctx, audits, c.Session, verb, formatDelay(delay), reason)
 
 	msg := fmt.Sprintf("{{%s scheduled in %s.}}::green\r\n", verb, formatDelay(delay))
 	if reason != "" {

@@ -52,6 +52,7 @@ type server struct {
 	exits      repo.ExitRepo
 	items      repo.ItemRepo
 	mobs       repo.MobInstanceRepo
+	audits     repo.AdminAuditRepo
 	sessions   *session.Registry
 	scheduler  *tick.Scheduler
 	buckets    *tick.Buckets
@@ -120,6 +121,7 @@ func main() {
 		os.Exit(1)
 	}
 	worldState := repo.NewSQLiteWorldStateRepo(conn)
+	audits := repo.NewSQLiteAdminAuditRepo(conn)
 
 	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
 		slog.Error("World load failed", "error", err)
@@ -196,6 +198,7 @@ func main() {
 		exits:      exits,
 		items:      items,
 		mobs:       mobs,
+		audits:     audits,
 		sessions:   sessions,
 		scheduler:  scheduler,
 		buckets:    buckets,
@@ -209,7 +212,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, sessions, bus, channels, clock, newsCatalog, helpCatalog, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, sessions, bus, channels, clock, newsCatalog, helpCatalog, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -389,7 +392,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -439,16 +442,16 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions, clock)); err != nil {
+	if err := r.Register(cmd.NewTeleport(rooms, exits, items, mobs, characters, sessions, clock, audits)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
-		cmd.NewGoto(rooms, exits, items, mobs, characters, sessions, clock),
-		cmd.NewTransfer(rooms, exits, items, mobs, characters, sessions, clock),
-		cmd.NewSummon(rooms, exits, items, mobs, characters, sessions, clock),
-		cmd.NewWizinvis(),
-		cmd.NewShutdown(shutdownCtl),
-		cmd.NewReboot(shutdownCtl),
+		cmd.NewGoto(rooms, exits, items, mobs, characters, sessions, clock, audits),
+		cmd.NewTransfer(rooms, exits, items, mobs, characters, sessions, clock, audits),
+		cmd.NewSummon(rooms, exits, items, mobs, characters, sessions, clock, audits),
+		cmd.NewWizinvis(audits),
+		cmd.NewShutdown(shutdownCtl, audits),
+		cmd.NewReboot(shutdownCtl, audits),
 	); err != nil {
 		return nil, err
 	}
@@ -458,7 +461,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewDrop(items, characters, sessions),
 		cmd.NewGive(items, characters, sessions),
 		cmd.NewPut(items, characters, sessions),
-		cmd.NewSpawn(items, mobTemplates, mobs, characters, sessions),
+		cmd.NewSpawn(items, mobTemplates, mobs, characters, sessions, audits),
 	); err != nil {
 		return nil, err
 	}

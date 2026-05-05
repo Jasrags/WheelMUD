@@ -50,7 +50,7 @@ func adminPair(t *testing.T) (
 
 func TestGoto_ToOnlinePlayer(t *testing.T) {
 	sessions, admin, player, _, _, rooms, exits, items, mobs, chars := adminPair(t)
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	if admin.CurrentRoomID == player.CurrentRoomID {
 		t.Fatalf("test setup: admin and player should start apart")
@@ -66,7 +66,7 @@ func TestGoto_PlayerNameWinsOverRoom(t *testing.T) {
 	// If a player's name happens to match a room id/external id, the
 	// player lookup wins (per command's documented contract).
 	sessions, admin, player, _, _, rooms, exits, items, mobs, chars := adminPair(t)
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	// Move player to a freshly-inserted room, then create a room whose
 	// external id matches the player's name. Goto should still land in
@@ -83,7 +83,7 @@ func TestGoto_PlayerNameWinsOverRoom(t *testing.T) {
 
 func TestGoto_RoomFallback(t *testing.T) {
 	sessions, admin, _, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, g, admin, "2")
 	if admin.CurrentRoomID != 2 {
@@ -96,7 +96,7 @@ func TestGoto_RoomFallback(t *testing.T) {
 
 func TestGoto_SelfTargetIsFriendly(t *testing.T) {
 	sessions, admin, _, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, g, admin, "Admin")
 	if !strings.Contains(aOut.String(), "already there") {
@@ -106,7 +106,7 @@ func TestGoto_SelfTargetIsFriendly(t *testing.T) {
 
 func TestGoto_PlayerNotInWorldYet(t *testing.T) {
 	sessions, admin, player, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	// Player is bound to the registry but has no room (e.g. still in
 	// character-select). Goto should refuse rather than teleport admin
@@ -127,7 +127,7 @@ func TestGoto_NoTeleportRoomBlocks(t *testing.T) {
 	sessions, admin, player, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
 	rooms.Insert(repo.Room{ID: 99, Name: "Sealed Vault", Flags: repo.RoomFlags{NoTeleport: true}})
 	player.CurrentRoomID = 99
-	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	g := NewGoto(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, g, admin, "Player")
 	if admin.CurrentRoomID == 99 {
@@ -140,7 +140,7 @@ func TestGoto_NoTeleportRoomBlocks(t *testing.T) {
 
 func TestTransfer_OneArgPullsToCallerRoom(t *testing.T) {
 	sessions, admin, player, aOut, pOut, rooms, exits, items, mobs, chars := adminPair(t)
-	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, tr, admin, "Player")
 
@@ -157,7 +157,7 @@ func TestTransfer_OneArgPullsToCallerRoom(t *testing.T) {
 
 func TestTransfer_TwoArgSendsToRoom(t *testing.T) {
 	sessions, admin, player, _, _, rooms, exits, items, mobs, chars := adminPair(t)
-	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	player.CurrentRoomID = 1
 	runCmd(t, tr, admin, "Player 2")
@@ -168,7 +168,7 @@ func TestTransfer_TwoArgSendsToRoom(t *testing.T) {
 
 func TestTransfer_UnknownPlayerFriendly(t *testing.T) {
 	sessions, admin, _, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
-	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	tr := NewTransfer(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, tr, admin, "Ghost")
 	if !strings.Contains(aOut.String(), "No such player online") {
@@ -178,7 +178,7 @@ func TestTransfer_UnknownPlayerFriendly(t *testing.T) {
 
 func TestSummon_PullsToCallerRoom(t *testing.T) {
 	sessions, admin, player, aOut, pOut, rooms, exits, items, mobs, chars := adminPair(t)
-	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, s, admin, "Player")
 
@@ -197,7 +197,7 @@ func TestSummon_NoTeleportRoomBlocks(t *testing.T) {
 	sessions, admin, _, aOut, _, rooms, exits, items, mobs, chars := adminPair(t)
 	rooms.Insert(repo.Room{ID: 50, Name: "Warded Sanctum", Flags: repo.RoomFlags{NoTeleport: true}})
 	admin.CurrentRoomID = 50
-	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 
 	runCmd(t, s, admin, "Player")
 	if !strings.Contains(aOut.String(), "Pattern resists") {
@@ -212,7 +212,7 @@ func TestSummon_PersistsRoomViaCharacterRepo(t *testing.T) {
 	c, _ := chars.Create(context.Background(), repo.Character{AccountID: 200, Name: "Player"})
 	player.CharacterID = c.ID
 
-	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t))
+	s := NewSummon(rooms, exits, items, mobs, chars, sessions, noonClock(t), nil)
 	runCmd(t, s, admin, "Player")
 
 	loaded, err := chars.FindByName(context.Background(), c.Name)

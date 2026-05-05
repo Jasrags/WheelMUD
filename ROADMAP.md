@@ -1013,15 +1013,23 @@ will need on top of those tables.
       and a unique runtime external_id is minted (`<ext>#sp-<nanos>-
       <i>`) so the UNIQUE index holds. Default count = 1, capped at
       20. Tab completion offers `mob` / `item` then the matching
-      template ids. `slog.Info("admin: spawn", ...)` until the
-      `admin_audit` table lands. Pending: `spawn item <ext> in
+      template ids. Both `slog.Info("admin: spawn", ...)` and an
+      `admin_audit` row land per successful spawn (Phase A 5).
+      Pending: `spawn item <ext> in
       <container_keyword>`, `spawn mob <ext> at <room_id>`,
       reverse `despawn` / `purge`, dedicated item-template repo
       (split from item-instance repo when the world grows).
-- [ ] Audit log of admin actions — `admin_audit` table (`actor_id`,
-      `verb`, `target`, `args`, `at`). Wrap admin commands at
-      dispatch with a logger middleware; queryable via `audit
-      <name|verb> [since]`.
+- [x] Audit log of admin actions — `admin_audit` table (migration
+      0029) with `actor_character_id` / `actor_name` snapshot,
+      `verb`, `target`, `args`, `ts`. `repo.AdminAuditRepo`
+      (memory + sqlite, shared test suite) + the
+      `internal/audit.Record(ctx, repo, session, verb, target,
+      args)` helper. Wired into `spawn`, `teleport`, `goto`,
+      `transfer`, `summon`, `wizinvis`, `shutdown`,
+      `shutdown:cancel`, `reboot`. Synchronous write so the row
+      commits before the verb's side effect (notably `shutdown`
+      drain). The read-side `audit <name|verb> [since]` viewer
+      verb is deferred (List API exists; no UX layer yet).
 - [ ] Wizlist / staff hierarchy — `wizlist` command renders staff
       grouped by `AuthLevel` from accounts.auth_level. Title field
       ("Builder of the Plains") shown next to name.
