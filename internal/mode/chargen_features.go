@@ -353,14 +353,69 @@ func (m *CharacterCreate) writeSkillsMenu(s *telnet.Session) error {
 	fmt.Fprintf(&b,
 		"  Budget {{%d}}::yellow|bold · Spent {{%d}}::yellow · Remaining {{%d}}::%s\r\n",
 		m.draft.SkillBudget, spent, remaining, remTag)
-	b.WriteString("\r\n  Pick a number then {{+}}::green|bold or {{-}}::red|bold to adjust  ·  {{[R]}}::yellow eset  ·  {{[D]}}::green|bold one\r\n")
+	b.WriteString("\r\n  Pick a number then {{+}}::green|bold or {{-}}::red|bold to adjust  ·  {{[I]}}::yellow nfo <#>  ·  {{[R]}}::yellow eset  ·  {{[D]}}::green|bold one\r\n")
 	return s.WriteString(b.String())
+}
+
+// writeSkillInfo renders the per-skill detail screen — name, key
+// ability spelled out, and the YAML description (or a placeholder
+// when not yet authored). Used by the slice-C `i <#>` info shorthand.
+func (m *CharacterCreate) writeSkillInfo(s *telnet.Session, sk *chargen.Skill) error {
+	if err := s.WriteString(fmt.Sprintf(
+		"{{%s (%s)}}::cyan|bold\r\n",
+		defangChargenField(sk.Name), defangChargenField(sk.ID),
+	)); err != nil {
+		return err
+	}
+	if err := writeFieldRow(s, "Key ability", abilityDisplayName(sk.Ability)); err != nil {
+		return err
+	}
+	if sk.Description != "" {
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
+		if err := s.WriteWrapped(strings.TrimRight(sk.Description, "\n")); err != nil {
+			return err
+		}
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
+	} else {
+		if err := s.WriteString(
+			"\r\n  {{(no description authored yet)}}::gray\r\n",
+		); err != nil {
+			return err
+		}
+	}
+	return writeRule(s)
+}
+
+// abilityDisplayName expands the YAML 3-letter ability token into
+// its full word for the skill info screen — players new to d20
+// may not recognise "Wis" or "Cha" on sight.
+func abilityDisplayName(token string) string {
+	switch strings.ToLower(token) {
+	case "str":
+		return "Strength"
+	case "dex":
+		return "Dexterity"
+	case "con":
+		return "Constitution"
+	case "int":
+		return "Intelligence"
+	case "wis":
+		return "Wisdom"
+	case "cha":
+		return "Charisma"
+	}
+	return token
 }
 
 // applySkills accepts:
 //
 //	<n>+ / <n>-          shorthand: bump skill <n>'s rank up or down by 1
 //	<n> +  / <n> -       same, with an explicit space
+//	i <#> / info <id>    show the skill's description (key ability + flavor)
 //	rank <id|#> <n>      power-user form: set ranks directly to 0..4
 //	r / reset            zero every skill
 //	d / done             return to the hub
@@ -371,6 +426,24 @@ func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
 		return m.writeSkillsMenu(s)
 	}
 	skills := m.allowedSkillIDs()
+
+	// Info shorthand handled first so it doesn't shadow a numeric
+	// rank-bump. stripInfoVerb accepts "info <id|#>" and "i <id|#>".
+	if rest, ok := stripInfoVerb(input); ok {
+		if rest == "" {
+			return writeError(s, "Type 'i <#>' or 'info <id>' for details.")
+		}
+		idx := pickFromList(rest, len(skills), func(i int) string { return skills[i] })
+		if idx < 0 {
+			return writeError(s, "Unknown skill. Type the id or list number.")
+		}
+		sk, _ := m.catalog.Skill(skills[idx])
+		if sk == nil {
+			return writeError(s, "Internal catalog error; skill missing.")
+		}
+		return m.writeSkillInfo(s, sk)
+	}
+
 	verb := strings.ToLower(fields[0])
 
 	switch verb {

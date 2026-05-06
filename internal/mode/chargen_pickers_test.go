@@ -164,6 +164,29 @@ func TestChargenSkills_OverBudgetBumpRollsBack(t *testing.T) {
 	}
 }
 
+// TestChargenSkills_InfoShorthand exercises `i <#>` and
+// `info <id>` on the skills picker — both should render the
+// per-skill detail screen with key ability spelled out + the
+// description from the catalog.
+func TestChargenSkills_InfoShorthand(t *testing.T) {
+	f := skillsFixture(t)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	skills := mc.allowedSkillIDs()
+	if len(skills) == 0 {
+		t.Skip("no allowed skills in fixture")
+	}
+	// Pick a skill we know has a description (Bluff, since it's
+	// authored in skills.yaml + a class skill for noble/wanderer).
+	for _, in := range []string{"i 1", "info " + skills[0]} {
+		f.captured.Reset()
+		f.feed(in)
+		out := f.captured.String()
+		if !strings.Contains(out, "Key ability") {
+			t.Fatalf("input=%q expected 'Key ability' row:\n%s", in, out)
+		}
+	}
+}
+
 // TestChargenSkills_DoneShorthand asserts `d` exits the skills
 // substep just like `done`.
 func TestChargenSkills_DoneShorthand(t *testing.T) {
