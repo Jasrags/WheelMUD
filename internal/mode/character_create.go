@@ -154,7 +154,6 @@ type CharacterCreate struct {
 	repo    repo.CharacterRepo
 	catalog *chargen.Catalog
 	game    telnet.Mode
-	motd    MOTDFunc
 	shown   bool
 
 	step  chargenStep
@@ -181,10 +180,6 @@ func (m *CharacterCreate) randSource() *rand.Rand {
 	}
 	return m.rng
 }
-
-// SetMOTD wires the MOTD hook fired by promoteToGame after the
-// character is created. nil disables it.
-func (m *CharacterCreate) SetMOTD(f MOTDFunc) { m.motd = f }
 
 // SetCatalog enables the multi-step chargen flow. Passing nil keeps
 // the legacy single-name flow.
@@ -265,7 +260,7 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 	case err != nil:
 		return writeError(s, "Character creation failed. Try again later.")
 	}
-	return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
+	return promoteToGame(ctx, s, c, m.repo, m.game)
 }
 
 // handleMulti drives the substep state machine. `back` pops to the
@@ -1009,7 +1004,7 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 	}
 
 	m.step = chargenStepDone
-	return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
+	return promoteToGame(ctx, s, c, m.repo, m.game)
 }
 
 // pickFromList resolves an input that's either a 1-based list number

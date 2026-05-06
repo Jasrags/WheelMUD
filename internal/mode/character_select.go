@@ -10,15 +10,14 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// CharacterSelect lets a multi-character account pick which character
-// to play. Single-character and zero-character accounts skip this mode
-// entirely (postAuth promotes them straight to game or character-
-// create). The mode therefore always has 2+ entries to render.
+// CharacterSelect is the legacy multi-character picker. Post-§6
+// AccountMenu replaces it as the post-login routing target; this mode
+// is preserved only for any direct callers / tests that still push it
+// explicitly. New code should prefer AccountMenu.
 type CharacterSelect struct {
 	chars     []repo.Character
 	repo      repo.CharacterRepo
 	game      telnet.Mode
-	motd      MOTDFunc
 	catalog   *chargen.Catalog
 	listShown bool
 }
@@ -26,9 +25,6 @@ type CharacterSelect struct {
 func NewCharacterSelect(chars []repo.Character, characters repo.CharacterRepo, game telnet.Mode) *CharacterSelect {
 	return &CharacterSelect{chars: chars, repo: characters, game: game}
 }
-
-// SetMOTD wires the MOTD hook fired by promoteToGame on selection.
-func (m *CharacterSelect) SetMOTD(f MOTDFunc) { m.motd = f }
 
 // SetCatalog forwards the chargen catalog to a CharacterCreate
 // spawned by the user typing 'create'.
@@ -69,7 +65,6 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 		return telnet.ErrSessionEnded
 	case strings.EqualFold(choice, "create"):
 		create := NewCharacterCreate(m.repo, m.game)
-		create.SetMOTD(m.motd)
 		create.SetCatalog(m.catalog)
 		return s.ReplaceMode(create)
 	}
@@ -79,7 +74,7 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 	// know its name.
 	for _, c := range m.chars {
 		if strings.EqualFold(c.Name, choice) {
-			return promoteToGame(ctx, s, c, m.repo, m.motd, m.game)
+			return promoteToGame(ctx, s, c, m.repo, m.game)
 		}
 	}
 

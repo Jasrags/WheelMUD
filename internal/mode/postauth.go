@@ -10,56 +10,77 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// MOTDFunc is the hook promoteToGame calls right before replacing
-// into game mode. It receives the character's last_news_seen
-// watermark so it can render an unread-count line. nil = skip.
+// MOTDFunc is the hook fired once per successful login (immediately
+// after Login.handlePassword / Create.handleConfirm succeed) by
+// postAuth. It receives the watermark used to compute the unread
+// count — the most-recently-played character's last_news_seen, or the
+// zero time for fresh accounts. nil = skip.
 //
 // Lives on this package as a function type so internal/news (which
 // imports telnet) can satisfy it without internal/mode taking a
 // dependency on internal/news.
+//
+// Per the §6 ordering note in ROADMAP.md, the news block now fires
+// before the AccountMenu is pushed (replacing the old in-game-promote
+// firing) so players see news once per login regardless of which
+// character they pick. The AccountMenu's `news` verb re-fires this
+// hook on demand without advancing the watermark.
 type MOTDFunc func(s *telnet.Session, lastSeen time.Time) error
 
 // postAuth replaces the current mode with the appropriate
 // post-authentication mode for the given account:
 //
-//	0 characters     → CharacterCreate (forced)
-//	1 character      → game mode directly (auto-promote)
-//	2+ characters    → CharacterSelect (lets the user pick)
+//	0 characters     → CharacterCreate (forced; menu has nothing to manage)
+//	1+ characters    → AccountMenu (single hub, no auto-promote)
 //
-// Called only after Login or Create has set s.AccountID and bumped
-// AuthLevel. The character list is fetched from the repo, so a DB
-// failure surfaces a generic error and leaves the session in its
-// current mode for the user to retry.
+// Called only after Login or Create has set s.AccountID. The character
+// list is fetched from the repo so a DB failure surfaces a generic
+// error and leaves the session in its current mode for the user to
+// retry. catalog is forwarded so the multi-step chargen flow is offered
+// when content is available; nil preserves the legacy single-name flow.
 //
-// catalog is forwarded to CharacterCreate / CharacterSelect so the
-// multi-step chargen flow is offered when content is available; nil
-// preserves the legacy single-name flow.
+// MOTD/news fires here once per login — before the menu lands, before
+// any character is selected. The watermark used is chars[0].LastNewsSeen
+// (most recently played, since ListByAccount orders by last_played_at
+// desc) so a returning player sees only what's truly new since their
+// last session on any character. Zero-character accounts pass the zero
+// time which renders the full unread block.
 func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, catalog *chargen.Catalog, game telnet.Mode) error {
 	chars, err := characters.ListByAccount(ctx, s.AccountID)
 	if err != nil {
 		slog.Warn("postAuth: list characters failed", "remote", s.RemoteAddress, "account", s.AccountID, "error", err)
 		return s.WriteRaw([]byte("Could not load characters. Try again later.\r\n"))
 	}
-	switch len(chars) {
-	case 0:
+	// Fire MOTD/news once per successful login, before routing to a
+	// post-auth mode. Errors here are surfaced — a write failure
+	// almost certainly means the connection is dead and pushing a
+	// mode after would do nothing useful.
+	if motd != nil {
+		var lastSeen time.Time
+		if len(chars) > 0 {
+			lastSeen = chars[0].LastNewsSeen
+		}
+		if err := motd(s, lastSeen); err != nil {
+			return err
+		}
+	}
+	if len(chars) == 0 {
 		create := NewCharacterCreate(characters, game)
-		create.SetMOTD(motd)
 		create.SetCatalog(catalog)
 		return s.ReplaceMode(create)
-	case 1:
-		return promoteToGame(ctx, s, chars[0], characters, motd, game)
-	default:
-		sel := NewCharacterSelect(chars, characters, game)
-		sel.SetMOTD(motd)
-		sel.SetCatalog(catalog)
-		return s.ReplaceMode(sel)
 	}
+	menu := NewAccountMenu(chars, characters, game)
+	menu.SetMOTD(motd)
+	menu.SetCatalog(catalog)
+	return s.ReplaceMode(menu)
 }
 
 // promoteToGame stamps the character onto the session, records play
-// time (best-effort), runs the optional MOTD hook, and replaces the
-// mode with game.
-func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, motd MOTDFunc, game telnet.Mode) error {
+// time (best-effort), and replaces the mode with game. The MOTD hook
+// no longer fires here — postAuth runs it once per login before the
+// AccountMenu lands, so re-selecting a character via `play` inside the
+// menu does not re-render news.
+func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, game telnet.Mode) error {
 	roomID := c.CurrentRoomID
 	if roomID == 0 {
 		// Defensive: a character row missing a room id (e.g. created
@@ -99,11 +120,6 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	}
 	if err := s.WriteRaw([]byte("Playing as " + c.Name + ".\r\n")); err != nil {
 		return err
-	}
-	if motd != nil {
-		if err := motd(s, c.LastNewsSeen); err != nil {
-			return err
-		}
 	}
 	return s.ReplaceMode(game)
 }

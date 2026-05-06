@@ -257,12 +257,12 @@ func TestCharacterCreate_DuplicateNameStays(t *testing.T) {
 // the existing TestLogin_HappyPath uses a single-character account. Add
 // the multi-character case here.
 
-func TestLogin_MultiCharacterRoutesToCharacterSelect(t *testing.T) {
+func TestLogin_MultiCharacterRoutesToAccountMenu(t *testing.T) {
 	f := newLoginFixtureChars(t, []string{"Alpha", "Beta"})
 	f.feed("alice")
 	f.feed("correct-horse")
-	if _, ok := f.session.CurrentMode().(*CharacterSelect); !ok {
-		t.Fatalf("CurrentMode = %T, want *CharacterSelect (account has 2 chars)", f.session.CurrentMode())
+	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
+		t.Fatalf("CurrentMode = %T, want *AccountMenu (account has 2 chars)", f.session.CurrentMode())
 	}
 }
 

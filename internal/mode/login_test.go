@@ -111,11 +111,23 @@ func TestLogin_HappyPath(t *testing.T) {
 
 	f.feed("correct-horse")
 
-	if f.session.AuthLevel != telnet.AuthPlayer {
-		t.Fatalf("AuthLevel = %d, want AuthPlayer", f.session.AuthLevel)
-	}
+	// Post-§6: a successful login lands on the AccountMenu, not in
+	// game. AuthLevel is stamped from the character row only when
+	// the player picks a character (`play`).
 	if f.session.InPasswordMode {
 		t.Fatal("password mode must clear after auth")
+	}
+	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
+		t.Fatalf("CurrentMode = %T, want *AccountMenu", f.session.CurrentMode())
+	}
+	// `play` with no arg auto-picks the only character (the
+	// "one keystroke into the world" affordance the menu preserves).
+	menu := f.session.CurrentMode().(*AccountMenu)
+	if err := menu.Handle(context.Background(), f.session, "play"); err != nil {
+		t.Fatalf("play: %v", err)
+	}
+	if f.session.AuthLevel != telnet.AuthPlayer {
+		t.Fatalf("AuthLevel = %d, want AuthPlayer after play", f.session.AuthLevel)
 	}
 	if f.session.CurrentMode() != f.game {
 		t.Fatalf("CurrentMode = %v, want gameMode", f.session.CurrentMode())
@@ -165,6 +177,15 @@ func TestPostAuth_AdminFromCharacter(t *testing.T) {
 		t.Fatalf("password step: %v", err)
 	}
 
+	// AccountMenu is the post-login landing; AuthLevel is stamped
+	// when the menu's `play` verb runs promoteToGame.
+	menu, ok := s.CurrentMode().(*AccountMenu)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *AccountMenu", s.CurrentMode())
+	}
+	if err := menu.Handle(context.Background(), s, "play"); err != nil {
+		t.Fatalf("play: %v", err)
+	}
 	if s.AuthLevel != telnet.AuthAdmin {
 		t.Fatalf("AuthLevel = %d, want AuthAdmin (character-level admin should restore via postauth)", s.AuthLevel)
 	}
@@ -259,8 +280,9 @@ func TestLogin_LockoutExpires(t *testing.T) {
 
 	f.feed("alice")
 	f.feed("correct-horse")
-	if f.session.AuthLevel != telnet.AuthPlayer {
-		t.Fatal("expired lockout should not block valid login")
+	// Login lands on AccountMenu; auth lift happens on `play`.
+	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
+		t.Fatalf("expired lockout should not block valid login: CurrentMode = %T", f.session.CurrentMode())
 	}
 }
 
@@ -312,8 +334,8 @@ func TestLogin_KicksPriorSessionForSameAccount(t *testing.T) {
 	// Log in on session 1.
 	f1.feed("alice")
 	f1.feed("correct-horse")
-	if f1.session.AuthLevel != telnet.AuthPlayer {
-		t.Fatal("first login did not authenticate")
+	if _, ok := f1.session.CurrentMode().(*AccountMenu); !ok {
+		t.Fatalf("first login did not authenticate: CurrentMode = %T", f1.session.CurrentMode())
 	}
 	if f1.sessions.Lookup(f1.session.AccountID) != f1.session {
 		t.Fatal("registry did not bind first session")
@@ -342,8 +364,8 @@ func TestLogin_FailedLoginDoesNotDisturbExistingSession(t *testing.T) {
 	f1 := newLoginFixture(t)
 	f1.feed("alice")
 	f1.feed("correct-horse")
-	if f1.session.AuthLevel != telnet.AuthPlayer {
-		t.Fatal("first login did not authenticate")
+	if _, ok := f1.session.CurrentMode().(*AccountMenu); !ok {
+		t.Fatalf("first login did not authenticate: CurrentMode = %T", f1.session.CurrentMode())
 	}
 	priorBaseline := f1.captured.String()
 
