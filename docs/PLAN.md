@@ -240,12 +240,30 @@ characteristics,feats,equipment,the-one-power}.md`.
     - Persists via `CharacterRepo.Create` — the existing
       `feats_json` / `skills_json` columns already handle the
       round trip, no migration needed.
+    **SLICE 2 LANDED 2026-05-05.** New `chargenStepChanneling`
+    substep slots in between skills and review for classes whose
+    YAML declares `channeler: true` (Initiate, Wilder); non-
+    channeler classes skip silently.
+    - **Source:** auto-derived from gender — Saidin if Male,
+      Saidar if Female. No prompt today (both eligible classes
+      use `channel_source: either`); the substep displays the
+      inferred source as a confirmation row.
+    - **Affinities:** exactly 2 of 5 (Air/Earth/Fire/Water/
+      Spirit). Stored as a `creature.PowerSet` bitmask.
+    - **Starting weaves:** exactly 3 from the level-0 catalog
+      filtered to weaves whose `Power` matches at least one
+      selected affinity. Switching affinities drops the prior
+      weave selection because the eligibility filter shifted.
+    - Persists via the new `channeling_json` column on
+      `characters` (migration 0033). Non-channelers persist
+      `'null'`; channelers persist a JSON-encoded
+      `*creature.Channeling` carrying GenderSource,
+      ChannelerType (Initiate/Wilder), Affinities bitmask, and
+      `WeavesKnownIDs []string` (transitional sibling to the
+      int32-keyed `WeavesKnown` until §12 authors a numeric
+      weave table).
     **Stubbed for follow-ups** (see
     `chargen_features_followups.md`):
-    - Channeler branch (Source by gender, 1-2 affinities,
-      level-0 weaves filtered by affinity) — blocked on a
-      `channeling_json` column on `characters` since
-      `Character.Channeling` isn't currently persisted.
     - Starting-equipment bundle spawning + auto-equip of the
       free outfit — blocked on aligning the chargen YAML
       `items: [...]` labels with world `external_id`s; most of

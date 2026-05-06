@@ -46,7 +46,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		encumbrance, fatigue_until, position, idle_since,
 		bound_room_id, played_seconds, last_login,
 		quest_log_json, dialogue_state_json, equipment_json, inventory_json,
-		channel_settings_json,
+		channel_settings_json, channeling_json,
 		prompt_template,
 		last_news_seen,
 		auth_level`
@@ -102,7 +102,8 @@ func charCoreScanDest(c *Character, drJSON, resistsJSON, affectsJSON *string) []
 // FatigueUntil / IdleSince / LastLogin maps to NULL rather than
 // the zero time.
 func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON,
-	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON string,
+	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON,
+	channelingJSON string,
 ) []any {
 	return []any{
 		c.Race, c.Background, classLevelsJSON,
@@ -113,7 +114,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		c.Encumbrance, nullTime(c.FatigueUntil), c.Position, nullTime(c.IdleSince),
 		c.BoundRoomID, c.PlayedSeconds, nullTime(c.LastLogin),
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
-		channelSettingsJSON,
+		channelSettingsJSON, channelingJSON,
 		c.PromptTemplate,
 		newsSeenSeconds(c.LastNewsSeen),
 		c.AuthLevel,
@@ -137,7 +138,8 @@ func charPlayerScanDest(c *Character,
 	classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON *string,
 	coinCP, bankCP *int64,
 	fatigueUntil, idleSince, lastLogin *sql.NullTime,
-	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON *string,
+	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON,
+	channelingJSON *string,
 	lastNewsSeenSec *int64,
 ) []any {
 	return []any{
@@ -149,7 +151,7 @@ func charPlayerScanDest(c *Character,
 		&c.Encumbrance, fatigueUntil, &c.Position, idleSince,
 		&c.BoundRoomID, &c.PlayedSeconds, lastLogin,
 		questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON,
-		channelSettingsJSON,
+		channelSettingsJSON, channelingJSON,
 		&c.PromptTemplate,
 		lastNewsSeenSec,
 		&c.AuthLevel,

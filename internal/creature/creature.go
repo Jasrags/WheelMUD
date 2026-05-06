@@ -446,7 +446,14 @@ type Channeling struct {
 	Affinities    PowerSet
 	Talents       []TalentID
 	WeavesKnown   []WeaveRef
-	Slots         [10]SlotPool // index = weave level
+	// WeavesKnownIDs is a transitional sibling carrying chargen-
+	// catalog string ids ("spark", "steady_hand", …) until §12
+	// authors a numeric weave table that lets WeavesKnown []WeaveRef
+	// carry the same data as int32 ids. Both fields stay populated
+	// once the catalog lands — chargen commits write only the
+	// string list, §12 reconciliation will fill WeavesKnown.
+	WeavesKnownIDs []string
+	Slots          [10]SlotPool // index = weave level
 
 	Embraced      bool
 	EmbracedSince time.Time

@@ -322,6 +322,14 @@ func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
 		// Spending fewer than the budget is OK — extra points are
 		// forfeit at level 1 (V1 simplification; level-up code in
 		// Phase E will let players bank points).
+		//
+		// Channelers branch into the channeling substep (#15 slice 2)
+		// before review; non-channeler classes skip silently.
+		if m.classIsChanneler() {
+			m.step = chargenStepChanneling
+			m.initChannelingStepIfNeeded()
+			return m.writeChannelingMenu(s)
+		}
 		m.step = chargenStepReview
 		return m.writeReview(s)
 	case "rank":

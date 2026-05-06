@@ -126,7 +126,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0030. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0033. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -173,7 +173,16 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `ItemRepo.Transfer*` / `ErrItemMoved` pattern. Verbs surface this
   as "your balance/purse just changed — try again" (sell, deposit,
   withdraw, give); `buy` logs-and-accepts because the item already
-  shipped.
+  shipped. 0033 added `characters.channeling_json` (TEXT NOT NULL
+  DEFAULT 'null') backing the §C #15 slice 2 channeler-branch
+  chargen substep — non-channeler classes round-trip 'null', the
+  two channeler classes (Initiate, Wilder) write a JSON-encoded
+  `*creature.Channeling` carrying GenderSource (auto-derived from
+  Gender), Affinities (PowerSet bitmask, exactly 2 picks at
+  chargen), and `WeavesKnownIDs []string` (3 picks from the level-
+  0 catalog filtered by affinity). The transitional string-id list
+  is a sibling to `WeavesKnown []WeaveRef`; §12 will reconcile the
+  two when the numeric weave table lands.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
@@ -301,8 +310,14 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   tests that don't care about the audit assertion.
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
-  (`internal/repo/character_sql.go`); ordering is load-bearing. The
-  `auth_level` column is the most recent example — see 0019.
+  (`internal/repo/character_sql.go`); ordering is load-bearing.
+  `channeling_json` (0033) is the most recent example. JSON columns
+  also need a `characterJSON` field plus marshal/unmarshal lines in
+  `character_sqlite.go::marshalCharacterJSON` /
+  `(characterJSON).unmarshalInto`. The `auth_level` column MUST stay
+  the very last entry in all three lists — the SQLite first-character
+  bootstrap CASE expression in `Create` consumes it as the trailing
+  placeholder; new columns belong before it.
 - AuthLevel lives on the character row, not the account. The session
   stays at AuthGuest through login + account-create; it's stamped by
   `mode/postauth.promoteToGame` from `Character.AuthLevel` once a

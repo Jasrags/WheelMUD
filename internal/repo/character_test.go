@@ -220,6 +220,71 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/channeling_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+
+		// Channeler — non-nil pointer with affinity bitmask + weave ids.
+		ch := Character{
+			AccountID:   acc.ID,
+			Name:        "Egwene",
+			Race:        creature.RaceHuman,
+			Background:  creature.BackgroundMidlander,
+			ClassLevels: map[creature.Class]int8{creature.ClassInitiate: 1},
+			Channeling: &creature.Channeling{
+				GenderSource:   creature.SourceSaidar,
+				ChannelerType:  creature.ChannelerInitiate,
+				Affinities:     1<<uint(creature.PowerFire) | 1<<uint(creature.PowerSpirit),
+				WeavesKnownIDs: []string{"spark", "warmth", "steady_hand"},
+			},
+		}
+		if _, err := cr.Create(ctx, ch); err != nil {
+			t.Fatalf("create channeler: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Egwene")
+		if err != nil {
+			t.Fatalf("find channeler: %v", err)
+		}
+		if got.Channeling == nil {
+			t.Fatalf("expected non-nil Channeling on channeler row")
+		}
+		if got.Channeling.GenderSource != creature.SourceSaidar {
+			t.Fatalf("source mismatch: %v", got.Channeling.GenderSource)
+		}
+		if got.Channeling.ChannelerType != creature.ChannelerInitiate {
+			t.Fatalf("type mismatch: %v", got.Channeling.ChannelerType)
+		}
+		if got.Channeling.Affinities != ch.Channeling.Affinities {
+			t.Fatalf("affinities mismatch: got %b want %b",
+				got.Channeling.Affinities, ch.Channeling.Affinities)
+		}
+		if !reflect.DeepEqual(got.Channeling.WeavesKnownIDs, ch.Channeling.WeavesKnownIDs) {
+			t.Fatalf("weave ids mismatch: %+v", got.Channeling.WeavesKnownIDs)
+		}
+
+		// Non-channeler — nil pointer. Default 'null' on the column
+		// must round-trip back as nil, not a zero-value struct.
+		nonCh := Character{
+			AccountID:   acc.ID,
+			Name:        "Lan",
+			Race:        creature.RaceHuman,
+			Background:  creature.BackgroundBorderlander,
+			ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1},
+			// Channeling left nil
+		}
+		if _, err := cr.Create(ctx, nonCh); err != nil {
+			t.Fatalf("create non-channeler: %v", err)
+		}
+		got2, err := cr.FindByName(ctx, "Lan")
+		if err != nil {
+			t.Fatalf("find non-channeler: %v", err)
+		}
+		if got2.Channeling != nil {
+			t.Fatalf("expected nil Channeling on non-channeler; got %+v", got2.Channeling)
+		}
+	})
+
 	t.Run(name+"/record_core_persists", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

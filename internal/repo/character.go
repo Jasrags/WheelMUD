@@ -107,6 +107,14 @@ type Character struct {
 	// JSON column stays small for the common (all-defaults) case.
 	ChannelSettings map[string]bool
 
+	// Channeling is the optional channeler sub-record. nil for
+	// non-channeler classes (Armsman, Woodsman, etc.); non-nil for
+	// Initiate / Wilder. Populated by chargen at commit time and
+	// persisted via channeling_json (migration 0033). The pointer
+	// is reconstructed on every load — it is the source of truth
+	// for the character's One Power affiliation.
+	Channeling *creature.Channeling
+
 	// AuthLevel mirrors telnet.AuthLevel as a plain uint8 to avoid
 	// coupling the repo package to telnet. Use the AuthLevel*
 	// constants below. postauth.promoteToGame copies this onto

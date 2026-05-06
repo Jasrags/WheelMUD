@@ -50,6 +50,7 @@ const (
 	chargenStepIdentity
 	chargenStepFeat
 	chargenStepSkills
+	chargenStepChanneling
 	chargenStepReview
 	chargenStepDone
 )
@@ -127,6 +128,15 @@ type chargenDraft struct {
 	SkillRanks  map[string]int8
 	SkillBudget int8
 	SkillsInit  bool
+
+	// Channeler branch (#15 slice 2). Only populated when
+	// catalog.Class(ClassID).Channeler is true. Source defaults from
+	// Gender on first entry; affinities + starting weaves are
+	// player-picked. ChannelingInit guards the gender→source default.
+	ChannelSource  creature.Source
+	Affinities     creature.PowerSet
+	StartingWeaves []string
+	ChannelingInit bool
 }
 
 // CharacterCreate prompts for a new character. With a chargen catalog
@@ -201,6 +211,8 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 		return "Feat (pick <id|#> | info <id|#> | done) [back/cancel]: "
 	case chargenStepSkills:
 		return "Skills (rank <id|#> <n> | reset | done) [back/cancel]: "
+	case chargenStepChanneling:
+		return "Channeling (affinities … | weaves … | done) [back/cancel]: "
 	case chargenStepReview:
 		return "Confirm? (yes / back / cancel): "
 	}
@@ -273,6 +285,12 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		if m.step == chargenStepName {
 			return writeError(s, "Already at the first step.")
 		}
+		// Back from review for a non-channeler skips the channeling
+		// substep (which never rendered for them on the way forward).
+		if m.step == chargenStepReview && !m.classIsChanneler() {
+			m.step = chargenStepSkills
+			return nil
+		}
 		m.step--
 		return nil
 	}
@@ -294,6 +312,8 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applyFeat(s, trimmed)
 	case chargenStepSkills:
 		return m.applySkills(s, trimmed)
+	case chargenStepChanneling:
+		return m.applyChanneling(s, trimmed)
 	case chargenStepReview:
 		return m.applyReview(ctx, s, trimmed)
 	}
@@ -876,6 +896,45 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 		}
 	}
 
+	// Channeler picks. Only renders when the chosen class is a
+	// channeler — the substep is silently skipped otherwise.
+	if m.classIsChanneler() {
+		if err := s.WriteString("\r\n{{Channeling}}::cyan|bold\r\n"); err != nil {
+			return err
+		}
+		source := "saidar"
+		if m.draft.ChannelSource == creature.SourceSaidin {
+			source = "saidin"
+		}
+		if err := writeFieldRow(s, "Source", source); err != nil {
+			return err
+		}
+		if picked := powerSetFlags(m.draft.Affinities); len(picked) > 0 {
+			labels := make([]string, 0, len(picked))
+			for _, p := range picked {
+				labels = append(labels, powerNames[int(p)])
+			}
+			if err := writeFieldRow(s, "Affinities",
+				strings.Join(labels, ", ")); err != nil {
+				return err
+			}
+		}
+		if len(m.draft.StartingWeaves) > 0 {
+			weaveLabels := make([]string, 0, len(m.draft.StartingWeaves))
+			for _, id := range m.draft.StartingWeaves {
+				name := id
+				if w, ok := m.catalog.Weave(id); ok {
+					name = w.Name
+				}
+				weaveLabels = append(weaveLabels, name)
+			}
+			if err := writeFieldRow(s, "Weaves",
+				strings.Join(weaveLabels, ", ")); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := writeRule(s); err != nil {
 		return err
 	}
@@ -936,6 +995,7 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 		Handedness:  m.draft.Handedness,
 		Feats:       m.buildFeatIDs(),
 		Skills:      m.buildSkills(),
+		Channeling:  m.buildChanneling(),
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):

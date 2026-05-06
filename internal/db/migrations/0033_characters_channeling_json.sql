@@ -1,0 +1,21 @@
+-- 0033_characters_channeling_json.sql
+--
+-- Chargen §C #15 slice 2: persist the channeler-branch picks
+-- (Source / Affinities / starting weaves) made at character create.
+--
+-- Stored as JSON-encoded *creature.Channeling. Non-channeler classes
+-- (Armsman, Woodsman, Wanderer, Noble, Algai'd'Siswai) write the
+-- literal "null" so the in-memory Character.Channeling stays nil
+-- after a round-trip; channelers (Initiate, Wilder) write the full
+-- struct on chargen commit. The column is the source of truth
+-- across reconnects; the in-memory Character.Channeling pointer is
+-- reconstructed from it on character-select.
+--
+-- NOT NULL DEFAULT 'null' mirrors the other *_json columns on this
+-- table (which use '[]' / '{}' for their respective zero values).
+-- "null" is what encoding/json emits for a nil pointer, and
+-- jsonUnmarshalString treats it as a no-op — so a default-stamped
+-- existing row scans into Channeling=nil without extra ceremony.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+ALTER TABLE characters ADD COLUMN channeling_json TEXT NOT NULL DEFAULT 'null';

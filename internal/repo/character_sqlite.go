@@ -44,7 +44,7 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	args = append(args, charPlayerValues(c,
 		jsons.classLevels, jsons.feats, jsons.skills, jsons.classFeatures,
 		jsons.questLog, jsons.dialogueState, jsons.equipment, jsons.inventory,
-		jsons.channelSettings)...)
+		jsons.channelSettings, jsons.channeling)...)
 
 	// Atomic first-character bootstrap: replace the trailing
 	// auth_level placeholder with a CASE expression that consults
@@ -313,7 +313,7 @@ func scanCharacter(s scanner) (Character, error) {
 		&coinCP, &bankCP,
 		&fatigue, &idle, &login,
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
-		&j.channelSettings,
+		&j.channelSettings, &j.channeling,
 		&newsSeenSecs)...)
 
 	if err := s.Scan(dest...); err != nil {
@@ -357,6 +357,7 @@ type characterJSON struct {
 	classLevels, feats, skills, classFeatures     string
 	questLog, dialogueState, equipment, inventory string
 	channelSettings                               string
+	channeling                                    string
 }
 
 func marshalCharacterJSON(c Character) (characterJSON, error) {
@@ -398,6 +399,9 @@ func marshalCharacterJSON(c Character) (characterJSON, error) {
 	if j.channelSettings, err = jsonMarshalString(c.ChannelSettings); err != nil {
 		return j, err
 	}
+	if j.channeling, err = jsonMarshalString(c.Channeling); err != nil {
+		return j, err
+	}
 	return j, nil
 }
 
@@ -436,6 +440,9 @@ func (j characterJSON) unmarshalInto(c *Character) error {
 		return err
 	}
 	if err := jsonUnmarshalString(j.channelSettings, &c.ChannelSettings); err != nil {
+		return err
+	}
+	if err := jsonUnmarshalString(j.channeling, &c.Channeling); err != nil {
 		return err
 	}
 	return nil
