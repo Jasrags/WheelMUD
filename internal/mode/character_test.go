@@ -543,7 +543,7 @@ func TestCharacterCreate_Multi_ClassInfo(t *testing.T) {
 	f.captured.Reset()
 	f.feed("info armsman")
 	out := f.captured.String()
-	for _, want := range []string{"Armsman", "Hit die", "BAB", "Saves", "Class skills"} {
+	for _, want := range []string{"Armsman", "Toughness", "sturdy", "Combat", "expert fighter", "Saves", "Fortitude", "Class skills"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("class info missing %q: %q", want, out)
 		}

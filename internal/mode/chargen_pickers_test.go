@@ -28,6 +28,36 @@ func TestChargenPicker_BackgroundInfoShorthand(t *testing.T) {
 	}
 }
 
+// TestChargenPicker_ClassRowPlainEnglish asserts the class picker
+// rows render the plain-English summary (toughness · combat label)
+// rather than the d20 shorthand the player may not understand.
+func TestChargenPicker_ClassRowPlainEnglish(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1")
+	f.feed("midlander")
+	f.captured.Reset()
+	f.feed("2") // hub → class picker
+	out := f.captured.String()
+	for _, want := range []string{"sturdy", "expert fighter"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("class picker missing %q (jargon should be hidden):\n%s",
+				want, out)
+		}
+	}
+	for _, banned := range []string{"d10 HD", "high BAB"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("class picker still shows d20 jargon %q:\n%s",
+				banned, out)
+		}
+	}
+	// Channeler classes should still surface their "channeler" tag.
+	if !strings.Contains(out, "channeler") {
+		t.Fatalf("class picker missing channeler tag:\n%s", out)
+	}
+}
+
 // TestChargenPicker_ClassInfoShorthand covers `i <#>` on the class
 // picker.
 func TestChargenPicker_ClassInfoShorthand(t *testing.T) {
@@ -39,7 +69,7 @@ func TestChargenPicker_ClassInfoShorthand(t *testing.T) {
 	f.feed("2") // hub → class
 	f.captured.Reset()
 	f.feed("i 1")
-	if !strings.Contains(f.captured.String(), "Hit die") {
+	if !strings.Contains(f.captured.String(), "Toughness") {
 		t.Fatalf("expected class info block:\n%s", f.captured.String())
 	}
 }

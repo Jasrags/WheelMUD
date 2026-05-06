@@ -705,14 +705,65 @@ func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
 	return s.WriteString(b.String())
 }
 
-// classSummary renders the one-line menu hint: hit die, BAB
-// progression, and (when relevant) the channeler tag.
+// classSummary renders the one-line menu hint in plain English:
+// toughness, fighting progression, and (when relevant) channeler.
+// The d20 tokens (d10 / high BAB) are reserved for the info detail
+// screen so the picker stays readable to a player who has never
+// touched a d20 sheet.
 func classSummary(cl *chargen.Class) string {
-	tag := ""
+	parts := []string{hdLabel(cl.HitDie), babLabel(cl.BAB)}
 	if cl.Channeler {
-		tag = " channeler"
+		parts = append(parts, "channeler")
 	}
-	return fmt.Sprintf("d%d HD, %s BAB%s", cl.HitDie, cl.BAB, tag)
+	return strings.Join(parts, " · ")
+}
+
+// hdLabel maps a hit-die value to a plain-English toughness label.
+// d4=frail, d6=average, d8=hardy, d10=sturdy, d12=tough; unknown
+// dice fall through to a stringified form so a future YAML edit
+// renders something rather than nothing.
+func hdLabel(d int) string {
+	switch d {
+	case 4:
+		return "frail"
+	case 6:
+		return "average"
+	case 8:
+		return "hardy"
+	case 10:
+		return "sturdy"
+	case 12:
+		return "tough"
+	}
+	return fmt.Sprintf("d%d", d)
+}
+
+// babLabel maps a base-attack-bonus progression to a plain-English
+// combat label. high=expert fighter, medium=trained fighter,
+// low=novice fighter.
+func babLabel(b chargen.BABProgression) string {
+	switch b {
+	case chargen.BABHigh:
+		return "expert fighter"
+	case chargen.BABMedium:
+		return "trained fighter"
+	case chargen.BABLow:
+		return "novice fighter"
+	}
+	return string(b)
+}
+
+// saveLabel maps a save progression to a plain-English defensive
+// label (used on the class info screen for Fortitude / Reflex /
+// Will saves).
+func saveLabel(s chargen.SaveProgression) string {
+	switch s {
+	case chargen.SaveHigh:
+		return "expert"
+	case chargen.SaveLow:
+		return "novice"
+	}
+	return string(s)
 }
 
 func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
@@ -753,14 +804,19 @@ func (m *CharacterCreate) writeClassInfo(s *telnet.Session, cl *chargen.Class) e
 	)); err != nil {
 		return err
 	}
-	if err := writeFieldRow(s, "Hit die", fmt.Sprintf("d%d", cl.HitDie)); err != nil {
+	if err := writeFieldRow(s, "Toughness", fmt.Sprintf(
+		"%s (d%d hit die per level)", hdLabel(cl.HitDie), cl.HitDie,
+	)); err != nil {
 		return err
 	}
-	if err := writeFieldRow(s, "BAB", string(cl.BAB)); err != nil {
+	if err := writeFieldRow(s, "Combat", fmt.Sprintf(
+		"%s (%s BAB)", babLabel(cl.BAB), cl.BAB,
+	)); err != nil {
 		return err
 	}
 	if err := writeFieldRow(s, "Saves", fmt.Sprintf(
-		"fort=%s ref=%s will=%s", cl.SaveFort, cl.SaveRef, cl.SaveWill,
+		"Fortitude %s · Reflex %s · Will %s",
+		saveLabel(cl.SaveFort), saveLabel(cl.SaveRef), saveLabel(cl.SaveWill),
 	)); err != nil {
 		return err
 	}
