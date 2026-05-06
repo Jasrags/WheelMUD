@@ -53,6 +53,8 @@ type Login struct {
 	account  *repo.Account // resolved after step 1; nil when no such user
 	motd     MOTDFunc      // optional MOTD/news hook fired by promoteToGame
 	catalog  *chargen.Catalog
+	items    repo.ItemRepo      // wired via SetItems; threaded to AccountMenu
+	audits   repo.AdminAuditRepo // wired via SetAudits; threaded to AccountMenu
 }
 
 // SetMOTD wires an optional MOTD hook that promoteToGame fires on
@@ -64,6 +66,16 @@ func (l *Login) SetMOTD(f MOTDFunc) { l.motd = f }
 // route 0-character accounts into the multi-step chargen flow. nil
 // keeps the legacy single-name flow.
 func (l *Login) SetCatalog(c *chargen.Catalog) { l.catalog = c }
+
+// SetItems forwards the item repo to the post-login AccountMenu so
+// destructive actions (delete-character) can cascade owned items.
+// nil keeps the menu functional but no-ops the cascade.
+func (l *Login) SetItems(r repo.ItemRepo) { l.items = r }
+
+// SetAudits forwards the admin_audit repo to the post-login
+// AccountMenu so destructive actions land an account-mode audit row.
+// nil silently skips the audit write.
+func (l *Login) SetAudits(r repo.AdminAuditRepo) { l.audits = r }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
 // sessions enforces the single-session-per-account policy: a successful
@@ -127,6 +139,8 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 		create := NewCreate(l.accounts, l.characters, l.sessions, l.game)
 		create.SetMOTD(l.motd)
 		create.SetCatalog(l.catalog)
+		create.SetItems(l.items)
+		create.SetAudits(l.audits)
 		return s.ReplaceMode(create)
 	}
 
@@ -220,7 +234,12 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game)
+	return postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game, postAuthDeps{
+		items:           l.items,
+		audits:          l.audits,
+		sessions:        l.sessions,
+		accountUsername: l.account.Username,
+	})
 }
 
 // fail resets to the username step and writes a uniform failure

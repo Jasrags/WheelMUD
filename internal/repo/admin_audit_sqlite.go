@@ -23,10 +23,14 @@ func (r *SQLiteAdminAuditRepo) Record(ctx context.Context, e AdminAuditEntry) er
 	if e.TS.IsZero() {
 		e.TS = time.Now().UTC()
 	}
+	if e.ActorType == "" {
+		e.ActorType = ActorTypeCharacter
+	}
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO admin_audit(ts, actor_character_id, actor_name, verb, target, args)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		e.TS.Unix(), e.ActorCharacterID, e.ActorName, e.Verb, e.Target, e.Args,
+		`INSERT INTO admin_audit(ts, actor_character_id, actor_account_id, actor_type, actor_name, verb, target, args)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.TS.Unix(), e.ActorCharacterID, e.ActorAccountID, e.ActorType,
+		e.ActorName, e.Verb, e.Target, e.Args,
 	); err != nil {
 		return fmt.Errorf("insert admin_audit: %w", err)
 	}
@@ -46,6 +50,10 @@ func (r *SQLiteAdminAuditRepo) List(ctx context.Context, f AdminAuditFilter) ([]
 		clauses = append(clauses, "actor_character_id = ?")
 		args = append(args, f.Actor)
 	}
+	if f.ActorAccount != 0 {
+		clauses = append(clauses, "actor_account_id = ?")
+		args = append(args, f.ActorAccount)
+	}
 	if len(f.Verbs) > 0 {
 		placeholders := strings.Repeat("?,", len(f.Verbs))
 		placeholders = placeholders[:len(placeholders)-1]
@@ -61,7 +69,7 @@ func (r *SQLiteAdminAuditRepo) List(ctx context.Context, f AdminAuditFilter) ([]
 	}
 	args = append(args, limit)
 
-	q := `SELECT id, ts, actor_character_id, actor_name, verb, target, args
+	q := `SELECT id, ts, actor_character_id, actor_account_id, actor_type, actor_name, verb, target, args
 	      FROM admin_audit`
 	if len(clauses) > 0 {
 		q += " WHERE " + strings.Join(clauses, " AND ")
@@ -80,8 +88,8 @@ func (r *SQLiteAdminAuditRepo) List(ctx context.Context, f AdminAuditFilter) ([]
 			e  AdminAuditEntry
 			ts int64
 		)
-		if err := rows.Scan(&e.ID, &ts, &e.ActorCharacterID, &e.ActorName,
-			&e.Verb, &e.Target, &e.Args); err != nil {
+		if err := rows.Scan(&e.ID, &ts, &e.ActorCharacterID, &e.ActorAccountID,
+			&e.ActorType, &e.ActorName, &e.Verb, &e.Target, &e.Args); err != nil {
 			return nil, fmt.Errorf("scan admin_audit: %w", err)
 		}
 		e.TS = time.Unix(ts, 0).UTC()

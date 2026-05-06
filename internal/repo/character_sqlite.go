@@ -286,6 +286,17 @@ func (r *SQLiteCharacterRepo) RecordChannelSettings(ctx context.Context, id int6
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) Delete(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM characters WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete character: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 // characterSelect is the canonical SELECT used by FindByName /
 // ListByAccount. Columns ordered: identity → CurrentRoomID → Core
 // block → player block. scanCharacter mirrors the order.

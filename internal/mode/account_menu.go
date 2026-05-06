@@ -4,20 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 // AccountMenu is the post-authentication hub. Login / Create push it
 // after firing the once-per-login MOTD/news block, so character
 // management lives behind a stable set of verbs rather than the legacy
-// auto-skip-to-select shortcut. Slice 1 verbs:
+// auto-skip-to-select shortcut.
+//
+// Slice 1 verbs:
 //
 //	list           — re-display the character roster
 //	play [name]    — promote into game; no-arg auto-picks when there's
@@ -29,22 +34,53 @@ import (
 //	help           — list verbs
 //	quit           — close the connection
 //
-// Subsequent slices add password change (1b), account settings,
-// security, email/recovery, and character delete (which needs cascade
-// plumbing not in this slice).
+// Slice 1b adds:
+//
+//	delete <n|#>   — destroy a character on this account. Requires
+//	                 typed-name confirmation; cascades owned items
+//	                 (recursively, including container contents) and
+//	                 records an account-mode admin_audit row. Wiring
+//	                 the new soft-FK cleanup is application-level —
+//	                 items.owner_character_id is a soft FK by design.
+//
+// Subsequent slices add password change (2), account settings (3),
+// security/login audit (4), and email/recovery (5).
 type AccountMenu struct {
 	chars   []repo.Character
 	repo    repo.CharacterRepo
+	items   repo.ItemRepo
+	audits  repo.AdminAuditRepo
+	session *session.Registry
 	game    telnet.Mode
 	motd    MOTDFunc
 	catalog *chargen.Catalog
+	// accountUsername snapshots the authed username at menu construction
+	// time so audit rows attribute to a name without a per-action repo
+	// lookup. Mirrors how AdminAuditEntry.ActorName snapshots names.
+	accountUsername string
 	// lastSeen feeds the `news` replay verb so re-rendering shows the
 	// same unseen entries the post-login block did. Sourced from the
 	// most-recently-played character (chars[0] under ListByAccount's
 	// ordering), or the zero value when the account has no characters.
 	lastSeen  time.Time
 	listShown bool
+
+	// Substep state. accountStepRoot dispatches verbs; child steps
+	// own a focused prompt (today only the typed-name delete confirm).
+	step          accountStep
+	pendingDelete *repo.Character
 }
+
+// accountStep is the post-auth menu's substep enum. Mirrors the
+// chargenStep pattern in character_create.go: a single Handle entry
+// point branches on step, child steps capture in-progress state on
+// the AccountMenu struct.
+type accountStep int
+
+const (
+	accountStepRoot accountStep = iota
+	accountStepConfirmDelete
+)
 
 // NewAccountMenu returns an AccountMenu over the given character list.
 // chars must be the account's roster as returned by
@@ -65,7 +101,29 @@ func (m *AccountMenu) SetMOTD(f MOTDFunc) { m.motd = f }
 // spawned by the `new` verb.
 func (m *AccountMenu) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 
+// SetItems wires the item repo used by the delete-character cascade.
+// nil keeps the verb available but reports a generic failure if the
+// owner has any items at delete time.
+func (m *AccountMenu) SetItems(r repo.ItemRepo) { m.items = r }
+
+// SetAudits wires the admin_audit repo used to record destructive
+// account-menu actions. nil silently skips the audit row.
+func (m *AccountMenu) SetAudits(r repo.AdminAuditRepo) { m.audits = r }
+
+// SetSessions wires the session registry for the live-session check
+// when deleting a character. nil disables the check (acceptable for
+// tests; production wiring always supplies it).
+func (m *AccountMenu) SetSessions(r *session.Registry) { m.session = r }
+
+// SetAccountUsername stamps the audit-row actor name. Empty falls back
+// to a generic placeholder when an audit row is written.
+func (m *AccountMenu) SetAccountUsername(name string) { m.accountUsername = name }
+
 func (m *AccountMenu) Prompt(_ context.Context, _ *telnet.Session) string {
+	switch m.step {
+	case accountStepConfirmDelete:
+		return "[delete] "
+	}
 	return "[account] "
 }
 
@@ -80,6 +138,9 @@ func (m *AccountMenu) OnEnter(s *telnet.Session) error {
 func (m *AccountMenu) OnExit(_ *telnet.Session) error { return nil }
 
 func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string) error {
+	if m.step == accountStepConfirmDelete {
+		return m.handleConfirmDelete(ctx, s, line)
+	}
 	fields := strings.Fields(strings.TrimSpace(line))
 	if len(fields) == 0 {
 		return nil
@@ -93,6 +154,8 @@ func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string
 		return m.handlePlay(ctx, s, args)
 	case "new", "create":
 		return m.handleNew(s)
+	case "delete", "del", "remove":
+		return m.handleDelete(s, args)
 	case "news", "motd":
 		return m.handleNews(s)
 	case "help", "?":
@@ -171,7 +234,183 @@ func (m *AccountMenu) handleNew(s *telnet.Session) error {
 	// MOTD intentionally not threaded into CharacterCreate: the news
 	// block fires once per login in postAuth, before the menu lands.
 	// promoteToGame downstream is now MOTD-free for the same reason.
+	//
+	// Slice 1b deps (items / audits / sessions / accountUsername) are
+	// intentionally NOT forwarded here: CharacterCreate ends with
+	// promoteToGame, not a postAuth round-trip, so it never re-enters
+	// this menu and never needs the destructive-action plumbing. If a
+	// future refactor adds a "back to account menu" path off
+	// CharacterCreate, the deps would need to be threaded through —
+	// at which point this should be hoisted onto a shared deps
+	// builder rather than copied.
 	return s.ReplaceMode(create)
+}
+
+// handleDelete resolves the target character (by 1-based index or
+// case-insensitive name) and pushes the typed-name confirm substep.
+// Resolution is constrained to m.chars so a player can't see whether a
+// foreign name exists. A defensive live-session check refuses deletion
+// of a currently-online character even though the session registry's
+// one-session-per-account policy means that character isn't this
+// session's deleter; future multi-session work would lean on this
+// check.
+func (m *AccountMenu) handleDelete(s *telnet.Session, args []string) error {
+	if len(m.chars) == 0 {
+		return writeError(s, "No characters on this account.")
+	}
+	if len(args) == 0 {
+		return writeError(s, "Usage: delete <name|#>")
+	}
+	target := m.resolveOwned(args[0])
+	if target == nil {
+		return writeError(s, "No such character on this account.")
+	}
+	if m.session != nil {
+		if active := m.session.FindByCharacterName(target.Name); active != nil {
+			return writeError(s, "That character is currently logged in. Try again later.")
+		}
+	}
+	m.pendingDelete = target
+	m.step = accountStepConfirmDelete
+	last := "never"
+	if target.LastPlayedAt != nil && !target.LastPlayedAt.IsZero() {
+		last = target.LastPlayedAt.Format("2006-01-02")
+	}
+	var b strings.Builder
+	b.WriteString("\r\nDelete this character?\r\n")
+	fmt.Fprintf(&b, "  %s  lvl %d  last %s\r\n",
+		target.Name, totalClassLevels(target.ClassLevels), last)
+	b.WriteString("\r\nThis cannot be undone. All carried items, equipment,\r\n")
+	b.WriteString("and bank balance will be destroyed.\r\n")
+	b.WriteString("\r\nType the character's name exactly (case-sensitive) to confirm, or 'cancel' to abort.\r\n")
+	return s.WriteRaw([]byte(b.String()))
+}
+
+// handleConfirmDelete runs at accountStepConfirmDelete. cancel/blank
+// returns to root; an exact (case-sensitive) name match executes the
+// cascade. Mismatches repeat the prompt rather than auto-aborting so
+// a typo doesn't lose progress, and so the deletion stays explicit.
+func (m *AccountMenu) handleConfirmDelete(ctx context.Context, s *telnet.Session, line string) error {
+	in := strings.TrimSpace(line)
+	if in == "" || strings.EqualFold(in, "cancel") || strings.EqualFold(in, "abort") {
+		m.pendingDelete = nil
+		m.step = accountStepRoot
+		if err := s.WriteRaw([]byte("Cancelled.\r\n")); err != nil {
+			return err
+		}
+		return m.writeList(s)
+	}
+	target := m.pendingDelete
+	if target == nil {
+		// Defensive: confirm step entered without a pending target
+		// (shouldn't happen, but keep it deterministic).
+		m.step = accountStepRoot
+		return writeError(s, "Nothing to confirm. Type 'help' for the menu.")
+	}
+	if in != target.Name {
+		return writeError(s, "Names did not match. Type the character's name exactly, or 'cancel'.")
+	}
+	if err := m.executeDelete(ctx, s, *target); err != nil {
+		// Per-step state is reset so the user can retry without being
+		// stuck in the confirm prompt with a stale target.
+		m.pendingDelete = nil
+		m.step = accountStepRoot
+		slog.Warn("account_menu: delete cascade failed",
+			"account", s.AccountID, "character", target.ID, "err", err)
+		return writeError(s, "Could not delete that character. Try again later.")
+	}
+	m.pendingDelete = nil
+	m.step = accountStepRoot
+	if err := s.WriteRaw([]byte("Character deleted.\r\n")); err != nil {
+		return err
+	}
+	return m.refreshAndList(ctx, s, target.ID)
+}
+
+// executeDelete performs the application-level cascade for a character
+// row: every owned item (top-level inventory plus everything nested
+// inside containers they own) is deleted, then the character row
+// itself, then an account-mode audit row is written. Order matters —
+// ListAllOwnedTransitive before character.Delete keeps the BFS through
+// items.parent_item_id valid; character.Delete is the last destructive
+// step so a partial item failure leaves a deletable character.
+//
+// Refuses if m.items is nil (the items repo wasn't wired). The
+// alternative — silently skipping the cascade and deleting the row —
+// would orphan items.owner_character_id references, which is the
+// invariant slice 1b exists to enforce. Production wiring always
+// supplies items; this guard catches misconfiguration loudly.
+//
+// The live-session check is re-run here (in addition to handleDelete)
+// to close the TOCTOU window between confirm prompt and execute. Single-
+// session-per-account makes this almost impossible today, but cheap.
+func (m *AccountMenu) executeDelete(ctx context.Context, s *telnet.Session, target repo.Character) error {
+	if m.items == nil {
+		return errors.New("item repo not wired; refusing to delete character without item cascade")
+	}
+	if m.session != nil {
+		if active := m.session.FindByCharacterName(target.Name); active != nil {
+			return fmt.Errorf("character %q is logged in", target.Name)
+		}
+	}
+	owned, err := m.items.ListAllOwnedTransitive(ctx, target.ID)
+	if err != nil {
+		return fmt.Errorf("list owned items: %w", err)
+	}
+	for _, it := range owned {
+		if err := m.items.Delete(ctx, it.ID); err != nil {
+			return fmt.Errorf("delete item %d: %w", it.ID, err)
+		}
+	}
+	if err := m.repo.Delete(ctx, target.ID); err != nil {
+		return fmt.Errorf("delete character row: %w", err)
+	}
+	audit.RecordAccount(ctx, m.audits, s.AccountID, m.accountUsername,
+		"delete-character", target.Name,
+		fmt.Sprintf("id=%d level=%d", target.ID, totalClassLevels(target.ClassLevels)))
+	return nil
+}
+
+// refreshAndList reloads the character roster from the repo so the
+// post-delete list reflects state-of-the-world, then renders it.
+// deletedID is dropped from the cached roster on repo failure so the
+// fallback render doesn't show the just-deleted character (which would
+// be very confusing right after a "Character deleted." line).
+func (m *AccountMenu) refreshAndList(ctx context.Context, s *telnet.Session, deletedID int64) error {
+	chars, err := m.repo.ListByAccount(ctx, s.AccountID)
+	if err != nil {
+		slog.Warn("account_menu: refresh ListByAccount failed",
+			"account", s.AccountID, "err", err)
+		// Drop the deleted entry from the cached roster so the user
+		// doesn't see it in the fallback list.
+		filtered := m.chars[:0]
+		for _, c := range m.chars {
+			if c.ID != deletedID {
+				filtered = append(filtered, c)
+			}
+		}
+		m.chars = filtered
+	} else {
+		m.chars = chars
+	}
+	return m.writeList(s)
+}
+
+// resolveOwned looks up a character in the cached roster by 1-based
+// list index or case-insensitive name. Returns nil for misses; never
+// hits the repo so a foreign name leaks no information.
+func (m *AccountMenu) resolveOwned(arg string) *repo.Character {
+	if i, err := parsePositiveIndex(arg, len(m.chars)); err == nil {
+		c := m.chars[i]
+		return &c
+	}
+	for i := range m.chars {
+		if strings.EqualFold(m.chars[i].Name, arg) {
+			c := m.chars[i]
+			return &c
+		}
+	}
+	return nil
 }
 
 func (m *AccountMenu) handleNews(s *telnet.Session) error {
@@ -187,6 +426,7 @@ func (m *AccountMenu) writeHelp(s *telnet.Session) error {
 		"  list              show your characters\r\n" +
 		"  play [name|#]     enter the world (no-arg picks the only character)\r\n" +
 		"  new               create a new character\r\n" +
+		"  delete <name|#>   permanently destroy a character (typed-name confirm)\r\n" +
 		"  news              re-display the unread-news block\r\n" +
 		"  help              this list\r\n" +
 		"  quit              disconnect\r\n"

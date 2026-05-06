@@ -7,8 +7,24 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
+
+// postAuthDeps bundles the optional dependencies the AccountMenu
+// needs for slice 1b+ (item cascade, audit row, live-session check,
+// account username for audit attribution). Login + Create build it
+// once and forward by value. Zero-value fields disable the
+// corresponding feature gracefully — items=nil skips the cascade
+// loop, audits=nil skips the audit row, sessions=nil skips the
+// live-session check, accountUsername="" leaves the audit row's
+// actor name empty.
+type postAuthDeps struct {
+	items           repo.ItemRepo
+	audits          repo.AdminAuditRepo
+	sessions        *session.Registry
+	accountUsername string
+}
 
 // MOTDFunc is the hook fired once per successful login (immediately
 // after Login.handlePassword / Create.handleConfirm succeed) by
@@ -45,7 +61,7 @@ type MOTDFunc func(s *telnet.Session, lastSeen time.Time) error
 // desc) so a returning player sees only what's truly new since their
 // last session on any character. Zero-character accounts pass the zero
 // time which renders the full unread block.
-func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, catalog *chargen.Catalog, game telnet.Mode) error {
+func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterRepo, motd MOTDFunc, catalog *chargen.Catalog, game telnet.Mode, deps postAuthDeps) error {
 	chars, err := characters.ListByAccount(ctx, s.AccountID)
 	if err != nil {
 		slog.Warn("postAuth: list characters failed", "remote", s.RemoteAddress, "account", s.AccountID, "error", err)
@@ -72,6 +88,10 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	menu := NewAccountMenu(chars, characters, game)
 	menu.SetMOTD(motd)
 	menu.SetCatalog(catalog)
+	menu.SetItems(deps.items)
+	menu.SetAudits(deps.audits)
+	menu.SetSessions(deps.sessions)
+	menu.SetAccountUsername(deps.accountUsername)
 	return s.ReplaceMode(menu)
 }
 

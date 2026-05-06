@@ -195,6 +195,16 @@ type CharacterRepo interface {
 	// ignored so reading an old entry can't unread newer ones.
 	// Returns ErrCharacterNotFound when no row matches id.
 	MarkNewsSeen(ctx context.Context, id int64, when time.Time) error
+	// Delete removes the character row identified by id. Caller is
+	// responsible for cleaning up soft-FK references first
+	// (items.owner_character_id in particular — items belonging to
+	// the deleted character must be deleted or relocated before this
+	// call so the location invariant on items.owner_character_id is
+	// not left dangling). Columns that live on the character row
+	// (equipment_json, inventory_json, coin, bank_balance,
+	// channeling_json, last_news_seen, …) are removed with the row.
+	// Returns ErrCharacterNotFound when no row matches id.
+	Delete(ctx context.Context, id int64) error
 }
 
 var (

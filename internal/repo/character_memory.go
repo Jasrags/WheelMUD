@@ -218,6 +218,18 @@ func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, 
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) Delete(_ context.Context, id int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k, c := range r.byLower {
+		if c.ID == id {
+			delete(r.byLower, k)
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) MarkNewsSeen(_ context.Context, id int64, when time.Time) error {
 	if when.IsZero() {
 		return nil

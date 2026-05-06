@@ -126,7 +126,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0033. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0034. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -182,7 +182,14 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   chargen), and `WeavesKnownIDs []string` (3 picks from the level-
   0 catalog filtered by affinity). The transitional string-id list
   is a sibling to `WeavesKnown []WeaveRef`; §12 will reconcile the
-  two when the numeric weave table lands.
+  two when the numeric weave table lands. 0034 extended `admin_audit`
+  with `actor_account_id INTEGER NOT NULL DEFAULT 0` and `actor_type
+  TEXT NOT NULL DEFAULT 'character'` so the post-login account menu
+  (slice 1b: delete-character; slices 2+ password / settings /
+  security) can record account-mode rows. Existing rows backfill
+  to ('character', 0); `audit.RecordAccount(ctx, repo, accountID,
+  accountUsername, verb, target, args)` writes the new row shape.
+  `audit.Record` (character-mode) keeps its existing call sites.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/

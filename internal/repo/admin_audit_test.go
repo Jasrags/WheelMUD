@@ -108,6 +108,65 @@ func runAdminAuditRepoTests(t *testing.T, name string, newRepo func(t *testing.T
 		}
 	})
 
+	t.Run(name+"/account_actor_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		// Account-mode row (slice 1b: account-menu delete-character).
+		if err := r.Record(ctx, AdminAuditEntry{
+			ActorAccountID: 42,
+			ActorType:      ActorTypeAccount,
+			ActorName:      "rangerbob",
+			Verb:           "delete-character",
+			Target:         "DoomedHero",
+			Args:           "id=7 level=3",
+		}); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+		// Character-mode row (legacy admin verb) — ActorType defaults
+		// to "character" for callers that don't set it.
+		if err := r.Record(ctx, AdminAuditEntry{
+			ActorCharacterID: 1,
+			ActorName:        "Admin",
+			Verb:             "spawn",
+			Target:           "tr.lantern",
+		}); err != nil {
+			t.Fatalf("record character: %v", err)
+		}
+		got, err := r.List(ctx, AdminAuditFilter{})
+		if err != nil || len(got) != 2 {
+			t.Fatalf("list: got %d (err=%v), want 2", len(got), err)
+		}
+		var acc, char *AdminAuditEntry
+		for i := range got {
+			switch got[i].Verb {
+			case "delete-character":
+				acc = &got[i]
+			case "spawn":
+				char = &got[i]
+			}
+		}
+		if acc == nil || char == nil {
+			t.Fatalf("entries missing: %+v", got)
+		}
+		if acc.ActorType != ActorTypeAccount || acc.ActorAccountID != 42 || acc.ActorCharacterID != 0 {
+			t.Fatalf("account row mismatch: %+v", acc)
+		}
+		if char.ActorType != ActorTypeCharacter || char.ActorCharacterID != 1 || char.ActorAccountID != 0 {
+			t.Fatalf("character row mismatch: %+v", char)
+		}
+
+		// ActorAccount filter pulls the account-mode row only.
+		got2, err := r.List(ctx, AdminAuditFilter{ActorAccount: 42})
+		if err != nil || len(got2) != 1 || got2[0].Verb != "delete-character" {
+			t.Fatalf("ActorAccount filter: got %+v (err=%v)", got2, err)
+		}
+		// Actor filter still scopes to character-mode rows.
+		got3, err := r.List(ctx, AdminAuditFilter{Actor: 1})
+		if err != nil || len(got3) != 1 || got3[0].Verb != "spawn" {
+			t.Fatalf("Actor filter: got %+v (err=%v)", got3, err)
+		}
+	})
+
 	t.Run(name+"/list_limit", func(t *testing.T) {
 		ctx := context.Background()
 		r := newRepo(t)

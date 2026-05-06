@@ -252,6 +252,13 @@ func main() {
 			return newsCatalog.WriteMOTDBlock(s, lastSeen)
 		})
 		login.SetCatalog(chargenCatalog)
+		// Slice 1b: account-menu needs item + audit repos to cascade
+		// owned items on character delete and to record an
+		// account-mode audit row. sessions is already on Login for the
+		// single-session policy; AccountMenu reuses it for the
+		// live-session check.
+		login.SetItems(items)
+		login.SetAudits(audits)
 		return login
 	}
 

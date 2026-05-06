@@ -45,11 +45,34 @@ func Record(ctx context.Context, r repo.AdminAuditRepo, s *telnet.Session, verb,
 	}
 	if err := r.Record(ctx, repo.AdminAuditEntry{
 		ActorCharacterID: actorID,
+		ActorType:        repo.ActorTypeCharacter,
 		ActorName:        actorName,
 		Verb:             verb,
 		Target:           target,
 		Args:             args,
 	}); err != nil {
 		slog.Warn("audit: record failed", "verb", verb, "actor", actorID, "err", err)
+	}
+}
+
+// RecordAccount writes an admin_audit row attributed to an account
+// rather than a character. Used by the post-login account menu, where
+// the session has AccountID set but no CharacterID. accountName is a
+// snapshot at write time (matches how Record snapshots ActorName).
+//
+// A nil repo is a no-op (memory-only test paths).
+func RecordAccount(ctx context.Context, r repo.AdminAuditRepo, accountID int64, accountName, verb, target, args string) {
+	if r == nil {
+		return
+	}
+	if err := r.Record(ctx, repo.AdminAuditEntry{
+		ActorAccountID: accountID,
+		ActorType:      repo.ActorTypeAccount,
+		ActorName:      accountName,
+		Verb:           verb,
+		Target:         target,
+		Args:           args,
+	}); err != nil {
+		slog.Warn("audit: record failed", "verb", verb, "account", accountID, "err", err)
 	}
 }

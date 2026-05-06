@@ -27,6 +27,9 @@ func (r *MemoryAdminAuditRepo) Record(_ context.Context, e AdminAuditEntry) erro
 	if e.TS.IsZero() {
 		e.TS = time.Now().UTC()
 	}
+	if e.ActorType == "" {
+		e.ActorType = ActorTypeCharacter
+	}
 	r.entries = append(r.entries, e)
 	return nil
 }
@@ -46,6 +49,9 @@ func (r *MemoryAdminAuditRepo) List(_ context.Context, f AdminAuditFilter) ([]Ad
 			continue
 		}
 		if f.Actor != 0 && e.ActorCharacterID != f.Actor {
+			continue
+		}
+		if f.ActorAccount != 0 && e.ActorAccountID != f.ActorAccount {
 			continue
 		}
 		if len(verbSet) > 0 {

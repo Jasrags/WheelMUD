@@ -45,6 +45,8 @@ type Create struct {
 	hash     string
 	motd     MOTDFunc
 	catalog  *chargen.Catalog
+	items    repo.ItemRepo
+	audits   repo.AdminAuditRepo
 }
 
 // SetMOTD propagates the MOTD/news hook from Login through Create →
@@ -55,6 +57,14 @@ func (c *Create) SetMOTD(f MOTDFunc) { c.motd = f }
 // postAuth → CharacterCreate so newly-created accounts land in the
 // multi-step chargen flow when content is available.
 func (c *Create) SetCatalog(cat *chargen.Catalog) { c.catalog = cat }
+
+// SetItems forwards the item repo through to the post-auth AccountMenu
+// for slice 1b's delete-character cascade. nil is a no-op.
+func (c *Create) SetItems(r repo.ItemRepo) { c.items = r }
+
+// SetAudits forwards the admin_audit repo through to the post-auth
+// AccountMenu for account-mode audit rows. nil is a no-op.
+func (c *Create) SetAudits(r repo.AdminAuditRepo) { c.audits = r }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
 // to postAuth after the account is persisted; sessions enforces the
@@ -165,7 +175,12 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game)
+	return postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game, postAuthDeps{
+		items:           c.items,
+		audits:          c.audits,
+		sessions:        c.sessions,
+		accountUsername: a.Username,
+	})
 }
 
 // reservedUsernames are case-insensitively forbidden. "new" routes to

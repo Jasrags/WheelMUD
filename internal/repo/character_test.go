@@ -453,6 +453,49 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/delete_removes_row", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Doomed"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if err := cr.Delete(ctx, c.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		if _, err := cr.FindByName(ctx, "Doomed"); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("post-delete FindByName err = %v, want ErrCharacterNotFound", err)
+		}
+		got, _ := cr.ListByAccount(ctx, acc.ID)
+		for _, lc := range got {
+			if lc.ID == c.ID {
+				t.Fatalf("deleted character still appears in ListByAccount: %+v", got)
+			}
+		}
+	})
+
+	t.Run(name+"/delete_missing_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		if err := cr.Delete(context.Background(), 9999); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/delete_frees_name", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Reborn"})
+		if err := cr.Delete(ctx, c.ID); err != nil {
+			t.Fatalf("delete: %v", err)
+		}
+		// Same name must be reusable post-delete.
+		if _, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Reborn"}); err != nil {
+			t.Fatalf("recreate after delete: %v", err)
+		}
+	})
+
 	t.Run(name+"/list_by_account_isolates", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)
