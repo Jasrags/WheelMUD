@@ -2,9 +2,7 @@ package mode
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -353,11 +351,19 @@ func (m *AccountMenu) handleRootChoice(ctx context.Context, s *telnet.Session, l
 
 // handleNew replaces the current mode with chargen. The slice-1b
 // destructive deps are intentionally NOT forwarded — CharacterCreate
-// ends in promoteToGame, never re-enters this menu.
+// ends in promoteToGame, never re-enters this menu. The hub's [Q]uit
+// confirm is wired back through onCancel so an aborted chargen lands
+// back on the account menu rather than disconnecting.
 func (m *AccountMenu) handleNew(s *telnet.Session) error {
 	create := NewCharacterCreate(m.repo, m.game)
 	create.SetCatalog(m.catalog)
 	create.SetSettings(m.settings)
+	create.SetOnCancel(func(s *telnet.Session) error {
+		// Force a repaint when ReplaceMode runs OnEnter on the menu
+		// instance the player came from.
+		m.rootShown = false
+		return s.ReplaceMode(m)
+	})
 	return s.ReplaceMode(create)
 }
 
@@ -466,18 +472,6 @@ func className(c repo.Character) string {
 		return "Woodsman"
 	}
 	return "—"
-}
-
-// parsePositiveIndex interprets `s` as a 1-based list index in
-// [1, n] and returns the 0-based slot. Anything non-numeric or out of
-// range returns an error so the caller can render a "bad choice"
-// message and re-prompt.
-func parsePositiveIndex(s string, n int) (int, error) {
-	v, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil || v < 1 || v > n {
-		return 0, errors.New("out of range")
-	}
-	return v - 1, nil
 }
 
 // isBack returns true when the line is a blank, "b", or "back". The

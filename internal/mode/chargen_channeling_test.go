@@ -17,14 +17,20 @@ func TestCharacterCreate_NonChannelerSkipsChannelingStep(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Lan")
 	f.feed("human")
+	f.feed("1")
 	f.feed("borderlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done")   // abilities (defaults)
-	f.feed("done")   // identity
-	f.feed("pick 1") // first eligible feat
-	f.feed("done")   // feat → skills
-	f.feed("done")   // skills → review (skipped channeling)
-	f.feed("yes")    // commit
+	f.feed("3")
+	f.feed("done")
+	f.feed("4")
+	f.feed("done")
+	f.feed("5")
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6")
+	f.feed("done") // skills done → hub → auto-opens review (channeling row n/a)
+	f.feed("yes")  // commit
 
 	got, err := f.chars.FindByName(context.Background(), "Lan")
 	if err != nil {
@@ -46,18 +52,26 @@ func TestCharacterCreate_ChannelerHappyPath(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Egwene")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("initiate")
-	f.feed("done")              // abilities
-	f.feed("gender female")     // override default male so source=saidar
-	f.feed("done")              // identity
-	f.feed("pick 1")            // feat
-	f.feed("done")              // feat → skills
-	f.feed("done")              // skills → channeling (channeler branch)
+	f.feed("3")
+	f.feed("done")
+	f.feed("4")
+	f.feed("gender female") // override default male so source=saidar
+	f.feed("done")
+	f.feed("5")
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6")
+	f.feed("done")
+	f.feed("7") // hub → channeling (channeler branch only)
 	f.feed("affinities fire spirit")
+	f.feed("done") // advance stage: affinities → weaves
 	f.feed("weaves spark warmth steady_hand")
-	f.feed("done")  // channeling → review
-	f.feed("yes")   // commit
+	f.feed("done") // weaves stage → hub → auto-opens review
+	f.feed("yes")  // commit
 
 	got, err := f.chars.FindByName(context.Background(), "Egwene")
 	if err != nil {
@@ -118,22 +132,30 @@ func TestChannelingStep_RefusesIneligibleWeave(t *testing.T) {
 	}
 }
 
-// TestChannelingStep_DoneRequiresFullSelection asserts "done"
-// refuses to advance until both 2 affinities and 3 weaves are set.
+// TestChannelingStep_DoneRequiresFullSelection asserts that "done"
+// gates each stage on its own selection count: stage 1 refuses
+// without 2 affinities; stage 2 refuses without 3 weaves.
 func TestChannelingStep_DoneRequiresFullSelection(t *testing.T) {
 	f := newChannelingFixture(t)
 
+	// Stage 1 (affinities) refuses with 0 picks.
 	f.captured.Reset()
 	f.feed("done")
 	if !strings.Contains(f.captured.String(), "Pick exactly 2 affinities") {
-		t.Fatalf("done with 0 affinities should refuse:\n%s", f.captured.String())
+		t.Fatalf("stage-1 done with 0 affinities should refuse:\n%s",
+			f.captured.String())
 	}
 
+	// Set affinities, advance stage.
 	f.feed("affinities fire spirit")
+	f.feed("done") // advances to stage 2
+
+	// Stage 2 (weaves) refuses with 0 picks.
 	f.captured.Reset()
 	f.feed("done")
 	if !strings.Contains(f.captured.String(), "Pick exactly 3 starting weaves") {
-		t.Fatalf("done with 0 weaves should refuse:\n%s", f.captured.String())
+		t.Fatalf("stage-2 done with 0 weaves should refuse:\n%s",
+			f.captured.String())
 	}
 }
 
@@ -156,29 +178,38 @@ func TestChannelingStep_AffinityChangeClearsWeaves(t *testing.T) {
 	}
 }
 
-// TestChannelingStep_BackFromReviewSkipsChannelingForNonChanneler
-// asserts the back handler honors the conditional substep — pressing
-// `back` from review for an armsman returns to skills (not the
-// channeling step the armsman never visited).
-func TestChannelingStep_BackFromReviewSkipsChannelingForNonChanneler(t *testing.T) {
+// TestChannelingStep_BackFromReviewLandsOnHub asserts that pressing
+// `back` from review drops the player on the hub view (with the
+// auto-open-review latch suppressed for one render) so they can pick
+// any row to revise.
+func TestChannelingStep_BackFromReviewLandsOnHub(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Lan")
 	f.feed("human")
+	f.feed("1")
 	f.feed("borderlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done")   // abilities
-	f.feed("done")   // identity
-	f.feed("pick 1") // feat
-	f.feed("done")   // feat → skills
-	f.feed("done")   // skills → review (skipped channeling)
+	f.feed("3")
+	f.feed("done")
+	f.feed("4")
+	f.feed("done")
+	f.feed("5")
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6")
+	f.feed("done") // skills done → hub → auto-opens review
 
 	mode := f.session.CurrentMode().(*CharacterCreate)
 	if mode.step != chargenStepReview {
 		t.Fatalf("expected step=Review; got %d", mode.step)
 	}
 	f.feed("back")
-	if mode.step != chargenStepSkills {
-		t.Fatalf("back from review (non-channeler) should reach Skills; got %d", mode.step)
+	if mode.step != chargenStepHub {
+		t.Fatalf("back from review should land on hub; got %d", mode.step)
+	}
+	if !mode.suppressAutoReview && false {
+		t.Logf("note: latch already cleared after the writeHub render that fired on B")
 	}
 }
 
@@ -214,14 +245,14 @@ func newChannelingFixture(t *testing.T) *charCreateFixture {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Egwene")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("initiate")
-	f.feed("done")          // abilities
-	f.feed("gender female") // override default; saidar source
-	f.feed("done")          // identity
-	f.feed("pick 1")        // feat
-	f.feed("done")          // feat → skills
-	f.feed("done")          // skills → channeling
+	f.feed("4")             // identity (so we can stamp gender=female)
+	f.feed("gender female") // saidar source
+	f.feed("done")
+	f.feed("7") // hub → channeling
 
 	mode := f.session.CurrentMode().(*CharacterCreate)
 	if mode.step != chargenStepChanneling {

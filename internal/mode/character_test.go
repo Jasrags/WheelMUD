@@ -309,19 +309,52 @@ func pushCharacterCreateMulti(t *testing.T) *charCreateFixture {
 	return &charCreateFixture{t: t, session: s, peer: client, chars: cr, game: game, captured: captured}
 }
 
+// walkHubToReview drives the build-hub through every required row for
+// a vanilla human / midlander / armsman draft so review auto-opens.
+// Used by tests that don't care about the substep mechanics, only
+// review-screen behaviour.
+func walkHubToReview(t *testing.T, f *charCreateFixture) {
+	t.Helper()
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1")
+	f.feed("midlander")
+	f.feed("2")
+	f.feed("armsman")
+	f.feed("3")
+	f.feed("done")
+	f.feed("4")
+	f.feed("done")
+	f.feed("5")
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6")
+	f.feed("done")
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepReview {
+		t.Fatalf("walkHubToReview: step = %d, want chargenStepReview", mc.step)
+	}
+}
+
 func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1") // hub → background
 	f.feed("midlander")
+	f.feed("2") // hub → class
 	f.feed("armsman")
+	f.feed("3") // hub → abilities
 	f.feed("set str 14")
-	f.feed("done")   // abilities → identity
-	f.feed("done")   // identity → feat (defaults accepted)
-	f.feed("pick 1") // first background-restricted feat
-	f.feed("done")   // feat → skills
-	f.feed("done")   // skills → review (forfeit unspent points)
-	f.feed("yes")
+	f.feed("done")
+	f.feed("4") // hub → identity
+	f.feed("done")
+	f.feed("5") // hub → feat
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6") // hub → skills (last required row → auto-opens review)
+	f.feed("done")
+	f.feed("yes") // confirm review
 
 	if f.session.CurrentMode() != f.game {
 		t.Fatalf("CurrentMode = %T, want game", f.session.CurrentMode())
@@ -363,42 +396,79 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCharacterCreate_Multi_BackRevisesPreviousStep(t *testing.T) {
+func TestCharacterCreate_Multi_BackFromRaceReturnsToName(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
-	f.feed("human")
-	f.feed("back")
-	// Now back at race step; pick ogier.
-	f.feed("ogier")
-	// Background list rendered. Ogier-only entries are not currently
-	// in the catalog, so just go back twice and confirm we don't
-	// crash and end up in name step.
-	f.feed("back")
-	f.feed("back")
-	mc, ok := f.session.CurrentMode().(*CharacterCreate)
-	if !ok {
-		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
-	}
+	f.feed("back") // race → name
+	mc := f.session.CurrentMode().(*CharacterCreate)
 	if mc.step != chargenStepName {
-		t.Fatalf("step = %d after 2x back, want chargenStepName(%d)", mc.step, chargenStepName)
+		t.Fatalf("step = %d after back from race, want chargenStepName", mc.step)
+	}
+	// Repeating back from name surfaces an error rather than escaping
+	// chargen.
+	f.captured.Reset()
+	f.feed("back")
+	if mc.step != chargenStepName {
+		t.Fatalf("step = %d after 2nd back, want chargenStepName", mc.step)
+	}
+	if !strings.Contains(f.captured.String(), "first step") {
+		t.Fatalf("expected first-step hint: %q", f.captured.String())
 	}
 }
 
-func TestCharacterCreate_Multi_CancelResetsDraft(t *testing.T) {
+func TestCharacterCreate_Multi_BackFromSubstepReturnsToHub(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
-	f.feed("midlander")
-	f.feed("cancel")
-	mc, ok := f.session.CurrentMode().(*CharacterCreate)
-	if !ok {
-		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	f.feed("1")    // hub → background
+	f.feed("back") // background → hub (without picking)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d after back from substep, want chargenStepHub", mc.step)
 	}
+	if mc.draft.BackgroundID != "" {
+		t.Fatalf("BackgroundID = %q, expected empty after back without pick",
+			mc.draft.BackgroundID)
+	}
+}
+
+func TestCharacterCreate_Multi_CancelConfirmResetsDraft(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1") // hub → background
+	f.feed("midlander")
+	// At hub. Without an onCancel hook the legacy in-place reset
+	// fires when the player confirms.
+	f.feed("cancel")
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepHubConfirm {
+		t.Fatalf("step = %d after cancel, want chargenStepHubConfirm", mc.step)
+	}
+	f.feed("y")
 	if mc.step != chargenStepName {
-		t.Fatalf("step = %d after cancel, want chargenStepName", mc.step)
+		t.Fatalf("step = %d after confirm, want chargenStepName", mc.step)
 	}
 	if mc.draft.Name != "" || mc.draft.Race != "" || mc.draft.BackgroundID != "" {
 		t.Fatalf("cancel did not clear draft: %+v", mc.draft)
+	}
+}
+
+func TestCharacterCreate_Multi_CancelConfirmDeclinedKeepsDraft(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1")
+	f.feed("midlander")
+	f.feed("cancel")
+	f.feed("n")
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d after declined cancel, want chargenStepHub", mc.step)
+	}
+	if mc.draft.BackgroundID != "midlander" {
+		t.Fatalf("BackgroundID = %q, expected draft preserved on N",
+			mc.draft.BackgroundID)
 	}
 }
 
@@ -422,13 +492,11 @@ func TestCharacterCreate_Multi_BackgroundByListNumber(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1") // hub → background
 	f.feed("1") // first background in catalog
-	mc, ok := f.session.CurrentMode().(*CharacterCreate)
-	if !ok {
-		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
-	}
-	if mc.step != chargenStepClass {
-		t.Fatalf("step = %d, want chargenStepClass after numeric pick", mc.step)
+	mc := f.session.CurrentMode().(*CharacterCreate)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub after pick", mc.step)
 	}
 	if mc.draft.BackgroundID == "" {
 		t.Fatal("BackgroundID empty after numeric pick")
@@ -439,6 +507,7 @@ func TestCharacterCreate_Multi_BackgroundInfo(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1") // hub → background
 	f.captured.Reset()
 	f.feed("info aiel")
 	out := f.captured.String()
@@ -468,7 +537,9 @@ func TestCharacterCreate_Multi_ClassInfo(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1") // hub → background
 	f.feed("midlander")
+	f.feed("2") // hub → class
 	f.captured.Reset()
 	f.feed("info armsman")
 	out := f.captured.String()
@@ -502,16 +573,8 @@ func TestCharacterCreate_Multi_OgierClassesFilterChannelers(t *testing.T) {
 
 func TestCharacterCreate_Multi_ReviewRejectNonYes(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
-	f.feed("Hero")
-	f.feed("human")
-	f.feed("midlander")
-	f.feed("armsman")
-	f.feed("done") // abilities → identity
-	f.feed("done") // identity → feat
-	f.feed("pick 1")
-	f.feed("done")  // feat → skills
-	f.feed("done")  // skills → review
-	f.feed("maybe") // anything other than yes/y/back/cancel
+	walkHubToReview(t, f)
+	f.feed("maybe") // anything other than yes/y/<row#>
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
 		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
@@ -529,15 +592,7 @@ func TestCharacterCreate_Multi_DuplicateNameAtReview(t *testing.T) {
 	if _, err := f.chars.Create(context.Background(), repo.Character{AccountID: 999, Name: "Hero"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	f.feed("Hero")
-	f.feed("human")
-	f.feed("midlander")
-	f.feed("armsman")
-	f.feed("done") // abilities → identity
-	f.feed("done") // identity → feat
-	f.feed("pick 1")
-	f.feed("done") // feat → skills
-	f.feed("done") // skills → review
+	walkHubToReview(t, f)
 	f.feed("yes")
 	mc, ok := f.session.CurrentMode().(*CharacterCreate)
 	if !ok {
@@ -555,12 +610,15 @@ func TestCharacterCreate_Multi_AbilitiesPointBuy(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1") // hub → background
 	f.feed("midlander")
+	f.feed("2") // hub → class
 	f.feed("armsman")
+	f.feed("3") // hub → abilities
 
 	mc := f.session.CurrentMode().(*CharacterCreate)
 	if mc.step != chargenStepAbilities {
-		t.Fatalf("step = %d, want chargenStepAbilities after class", mc.step)
+		t.Fatalf("step = %d, want chargenStepAbilities after entering substep", mc.step)
 	}
 	// Floor is 8 across the board.
 	for i, sc := range mc.draft.Abilities {
@@ -614,8 +672,8 @@ func TestCharacterCreate_Multi_AbilitiesPointBuy(t *testing.T) {
 	}
 
 	f.feed("done")
-	if mc.step != chargenStepIdentity {
-		t.Fatalf("step = %d, want chargenStepIdentity after done", mc.step)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub after done", mc.step)
 	}
 }
 
@@ -623,20 +681,25 @@ func TestCharacterCreate_Multi_AbilitiesBackPreservesScores(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
+	f.feed("3") // → abilities
 	f.feed("set str 14")
-	f.feed("done") // → identity
+	f.feed("done") // → hub
 	mc := f.session.CurrentMode().(*CharacterCreate)
-	if mc.step != chargenStepIdentity {
-		t.Fatalf("step = %d, want chargenStepIdentity", mc.step)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub", mc.step)
 	}
-	f.feed("back")
+	// Re-enter abilities from the hub; the prior assignment must
+	// survive.
+	f.feed("3")
 	if mc.step != chargenStepAbilities {
-		t.Fatalf("step = %d, want chargenStepAbilities after back", mc.step)
+		t.Fatalf("step = %d, want chargenStepAbilities on re-entry", mc.step)
 	}
 	if mc.draft.Abilities[0] != 14 {
-		t.Fatalf("Str = %d after back, want 14 (revisit must preserve)", mc.draft.Abilities[0])
+		t.Fatalf("Str = %d after re-entry, want 14 (revisit must preserve)", mc.draft.Abilities[0])
 	}
 }
 
@@ -647,9 +710,13 @@ func TestCharacterCreate_Multi_IdentityVerbs(t *testing.T) {
 
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done") // abilities → identity (defaults stamped)
+	f.feed("3") // abilities
+	f.feed("done")
+	f.feed("4") // identity (defaults stamped on entry)
 
 	if mc.step != chargenStepIdentity {
 		t.Fatalf("step = %d, want chargenStepIdentity", mc.step)
@@ -691,16 +758,19 @@ func TestCharacterCreate_Multi_IdentityVerbs(t *testing.T) {
 		t.Fatalf("expected age hint: %q", f.captured.String())
 	}
 
-	// done advances to feat (next mandatory step). Walk forward to
-	// review so we can assert the review block reflects identity.
+	// done returns to the hub; walk the remaining substeps so the hub
+	// auto-opens review and we can assert the review block reflects
+	// identity.
 	f.captured.Reset()
 	f.feed("done")
-	if mc.step != chargenStepFeat {
-		t.Fatalf("step = %d, want chargenStepFeat after identity done", mc.step)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub after identity done", mc.step)
 	}
+	f.feed("5") // feat
 	f.feed("pick 1")
-	f.feed("done") // feat → skills
-	f.feed("done") // skills → review
+	f.feed("done")
+	f.feed("6") // skills (last required → auto-opens review)
+	f.feed("done")
 	if mc.step != chargenStepReview {
 		t.Fatalf("step = %d, want chargenStepReview", mc.step)
 	}
@@ -719,9 +789,11 @@ func TestCharacterCreate_Multi_IdentityRollDeterministic(t *testing.T) {
 
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done") // → identity
+	f.feed("4") // hub → identity (defaults stamped on entry)
 
 	h1, w1 := mc.draft.HeightCm, mc.draft.WeightKg
 	// Re-rolling with the same seed twice must change the values
@@ -745,10 +817,11 @@ func TestCharacterCreate_Multi_FeatSubstep(t *testing.T) {
 
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done") // abilities → identity
-	f.feed("done") // identity → feat
+	f.feed("5") // hub → feat
 	if mc.step != chargenStepFeat {
 		t.Fatalf("step = %d, want chargenStepFeat", mc.step)
 	}
@@ -786,8 +859,8 @@ func TestCharacterCreate_Multi_FeatSubstep(t *testing.T) {
 	}
 
 	f.feed("done")
-	if mc.step != chargenStepSkills {
-		t.Fatalf("step = %d, want chargenStepSkills", mc.step)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub after feat done", mc.step)
 	}
 }
 
@@ -797,14 +870,17 @@ func TestCharacterCreate_Multi_SkillsSubstep(t *testing.T) {
 
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
+	f.feed("3") // abilities
 	// Int 14 → +2 mod, armsman skill_points=2 → (2+2)*4 = 16 budget.
 	f.feed("set int 14")
-	f.feed("done")   // abilities → identity
-	f.feed("done")   // identity → feat
-	f.feed("pick 1") // any
-	f.feed("done")   // feat → skills
+	f.feed("done")
+	f.feed("6") // hub → skills (skips identity/feat — they're not
+	// gated; the player can revisit skills any time after bg + class
+	// + abilities are filled)
 
 	if mc.step != chargenStepSkills {
 		t.Fatalf("step = %d, want chargenStepSkills", mc.step)
@@ -859,8 +935,8 @@ func TestCharacterCreate_Multi_SkillsSubstep(t *testing.T) {
 	}
 
 	f.feed("done")
-	if mc.step != chargenStepReview {
-		t.Fatalf("step = %d, want chargenStepReview", mc.step)
+	if mc.step != chargenStepHub {
+		t.Fatalf("step = %d, want chargenStepHub after skills done", mc.step)
 	}
 }
 
@@ -869,14 +945,20 @@ func TestCharacterCreate_Multi_FeatsAndSkillsPersisted(t *testing.T) {
 
 	f.feed("Hero")
 	f.feed("human")
+	f.feed("1")
 	f.feed("midlander")
+	f.feed("2")
 	f.feed("armsman")
-	f.feed("done") // abilities → identity
-	f.feed("done") // identity → feat
+	f.feed("3")
+	f.feed("done") // abilities (defaults: 8 across) → hub
+	f.feed("4")
+	f.feed("done") // identity → hub
+	f.feed("5")
 	f.feed("pick bullheaded")
-	f.feed("done") // feat → skills
+	f.feed("done") // feat → hub
+	f.feed("6")
 	f.feed("rank 1 2")
-	f.feed("done") // skills → review
+	f.feed("done") // skills → hub → auto-opens review
 	f.feed("yes")
 
 	got, err := f.chars.FindByName(context.Background(), "Hero")

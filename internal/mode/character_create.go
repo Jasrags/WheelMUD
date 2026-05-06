@@ -13,6 +13,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -35,15 +36,17 @@ var reservedCharacterNames = map[string]bool{
 }
 
 // chargenStep enumerates the multi-step CharacterCreate substeps. The
-// scaffold (#11) only wires name → race → background → class → review;
-// abilities (#12), identity (#14), and feats/skills/equipment (#15)
-// slot in as additional steps without restructuring this enum — they
-// just bump the constants and the next-step table below.
+// post-name/race flow is hub-driven: every substep returns to
+// chargenStepHub when "done", and the hub auto-opens review once the
+// draft is complete. The legacy linear ordering is preserved as the
+// numeric order of the enum so existing tests and the chargen step
+// banner continue to read 1..8.
 type chargenStep int
 
 const (
 	chargenStepName chargenStep = iota
 	chargenStepRace
+	chargenStepHub
 	chargenStepBackground
 	chargenStepClass
 	chargenStepAbilities
@@ -53,6 +56,20 @@ const (
 	chargenStepChanneling
 	chargenStepReview
 	chargenStepDone
+
+	// Confirm sub-states pivot the hub into a [Y/N] prompt. The
+	// pendingConfirm field on CharacterCreate records *which* confirm
+	// is active so a single applyHubConfirm handler can answer both.
+	chargenStepHubConfirm
+)
+
+// confirmKind tracks which destructive hub action is awaiting [Y/N].
+type confirmKind int
+
+const (
+	confirmNone confirmKind = iota
+	confirmRestart
+	confirmCancel
 )
 
 // Point-buy V1 (#12). Standard d20 cost table; budget is 25 points
@@ -174,7 +191,62 @@ type CharacterCreate struct {
 	// no-op — the per-character column stays empty and the session
 	// keeps its TERM/NAWS-detected values.
 	settings repo.AccountSettings
+
+	// pendingConfirm is non-zero while the hub is awaiting a [Y/N]
+	// answer for a destructive action ([R]estart wipes the draft;
+	// [Q]uit exits chargen via onCancel or, when nil, restarts in
+	// place). Cleared on either answer.
+	pendingConfirm confirmKind
+
+	// suppressAutoReview disables the hub's "all rows filled →
+	// auto-open review" jump for exactly one render. Set when the
+	// player picks [B]ack from the review screen so they can land on
+	// the hub view to make further edits.
+	suppressAutoReview bool
+
+	// onCancel runs when the hub's [Q]uit confirm is answered Y. It
+	// returns the player to whichever mode launched chargen (the
+	// account menu, typically). nil — set when chargen is the
+	// post-auth landing for a fresh account with no characters — falls
+	// back to the legacy in-place "wipe draft, restart" behaviour.
+	onCancel func(s *telnet.Session) error
+
+	// pendingIdentityField is non-zero while the identity substep is
+	// awaiting a value for a specific field (the player picked a
+	// numbered row from the identity sub-hub). Set when the player
+	// picks 1..5 from the identity menu, cleared as soon as the next
+	// line is parsed (or rejected) for that field.
+	pendingIdentityField identityField
+
+	// channelingStage tracks which sub-screen the channeling substep
+	// is currently rendering. Slice 5 splits the channeler picker
+	// into two checklist stages — affinities first, then weaves —
+	// each driven by numbered toggles. enterSubstep resets to
+	// channelingStageAffinities; "done" advances the stage forward
+	// and "prev" rolls it back.
+	channelingStage channelingStage
 }
+
+// channelingStage is the per-screen sub-state for the slice-5
+// channeling picker. Only meaningful while step == chargenStepChanneling.
+type channelingStage int
+
+const (
+	channelingStageAffinities channelingStage = iota
+	channelingStageWeaves
+)
+
+// identityField is the per-row sub-state for the slice-4 identity
+// numbered sub-hub. Only meaningful while step == chargenStepIdentity.
+type identityField int
+
+const (
+	identityFieldNone identityField = iota
+	identityFieldGender
+	identityFieldAge
+	identityFieldHanded
+	identityFieldAlign
+)
 
 func NewCharacterCreate(characters repo.CharacterRepo, game telnet.Mode) *CharacterCreate {
 	return &CharacterCreate{repo: characters, game: game}
@@ -202,6 +274,15 @@ func (m *CharacterCreate) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 // promote time. Zero value is a no-op.
 func (m *CharacterCreate) SetSettings(s repo.AccountSettings) { m.settings = s }
 
+// SetOnCancel wires the action taken when the hub's [Q]uit confirm is
+// answered Y. AccountMenu sets this to a closure that ReplaceMode's
+// itself back onto the session so the player returns to where they
+// came from. Leaving the hook nil keeps the legacy "wipe draft and
+// loop on the name prompt" behaviour, which is the right fallback for
+// the post-auth direct-to-chargen path on accounts with no
+// characters.
+func (m *CharacterCreate) SetOnCancel(f func(*telnet.Session) error) { m.onCancel = f }
+
 func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	if m.catalog == nil {
 		return "Choose a character name: "
@@ -210,23 +291,27 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	case chargenStepName:
 		return "Choose a character name: "
 	case chargenStepRace:
-		return "Race (human / ogier) [back/cancel]: "
+		return "> "
+	case chargenStepHub:
+		return "> "
+	case chargenStepHubConfirm:
+		return "[Y/N] "
 	case chargenStepBackground:
-		return "Background (id, # or 'info <id|#>') [back/cancel]: "
+		return "> "
 	case chargenStepClass:
-		return "Class (id, # or 'info <id|#>') [back/cancel]: "
+		return "> "
 	case chargenStepAbilities:
-		return "Abilities (set <abil> <n> | reset | done) [back/cancel]: "
+		return "> "
 	case chargenStepIdentity:
-		return "Identity (gender/age/handed/align/roll | done) [back/cancel]: "
+		return "Identity (gender/age/handed/align/roll | done) [back]: "
 	case chargenStepFeat:
-		return "Feat (pick <id|#> | info <id|#> | done) [back/cancel]: "
+		return "> "
 	case chargenStepSkills:
-		return "Skills (rank <id|#> <n> | reset | done) [back/cancel]: "
+		return "> "
 	case chargenStepChanneling:
-		return "Channeling (affinities … | weaves … | done) [back/cancel]: "
+		return "> "
 	case chargenStepReview:
-		return "Confirm? (yes / back / cancel): "
+		return "> "
 	}
 	return "> "
 }
@@ -282,31 +367,56 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 	return promoteToGame(ctx, s, c, m.repo, m.game)
 }
 
-// handleMulti drives the substep state machine. `back` pops to the
-// previous step (no-op at step zero); `cancel` resets the flow to
-// the name step with an empty draft.
+// handleMulti drives the substep state machine. The post-name/race
+// flow is hub-driven: typing `back` from any substep (or from review)
+// returns to the hub, where the player can pick a different row, hit
+// [R]estart, or [Q]uit. `back` at the name step still errors out.
 func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, line string) error {
 	trimmed := strings.TrimSpace(line)
-	switch strings.ToLower(trimmed) {
+	lower := strings.ToLower(trimmed)
+
+	// Confirm sub-state owns its own input — answer Y/N; anything else
+	// re-prompts. Routed first so [Y/N] can't be hijacked by the verbs
+	// below.
+	if m.step == chargenStepHubConfirm {
+		return m.applyHubConfirm(s, trimmed)
+	}
+
+	switch lower {
 	case "":
+		// Empty line on the hub or review re-renders so the player
+		// can see the current state without losing context.
+		switch m.step {
+		case chargenStepHub:
+			return m.writeHub(s)
+		case chargenStepReview:
+			return m.writeReview(s)
+		}
 		return nil
-	case "cancel":
-		m.draft = chargenDraft{}
-		m.step = chargenStepName
-		return s.WriteString(
-			"{{Cancelled. Restarting character creation.}}::yellow\r\n")
-	case "back":
-		if m.step == chargenStepName {
+	case "back", "b":
+		switch m.step {
+		case chargenStepName:
 			return writeError(s, "Already at the first step.")
-		}
-		// Back from review for a non-channeler skips the channeling
-		// substep (which never rendered for them on the way forward).
-		if m.step == chargenStepReview && !m.classIsChanneler() {
-			m.step = chargenStepSkills
+		case chargenStepRace:
+			m.step = chargenStepName
 			return nil
+		case chargenStepHub:
+			// [B] from the hub is the same gesture as [Q]: confirm
+			// exit-chargen.
+			return m.beginCancelConfirm(s)
+		case chargenStepReview:
+			// Drop to hub for one render without re-auto-opening
+			// review so the player can pick a different row to edit.
+			m.suppressAutoReview = true
+			m.step = chargenStepHub
+			return m.writeHub(s)
 		}
-		m.step--
-		return nil
+		// Any other substep returns to the hub.
+		m.step = chargenStepHub
+		return m.writeHub(s)
+	case "cancel":
+		// Legacy alias — route through the same confirm as [Q].
+		return m.beginCancelConfirm(s)
 	}
 
 	switch m.step {
@@ -314,6 +424,8 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applyName(s, trimmed)
 	case chargenStepRace:
 		return m.applyRace(s, trimmed)
+	case chargenStepHub:
+		return m.applyHub(s, trimmed)
 	case chargenStepBackground:
 		return m.applyBackground(s, trimmed)
 	case chargenStepClass:
@@ -340,29 +452,74 @@ func (m *CharacterCreate) applyName(s *telnet.Session, input string) error {
 	}
 	m.draft.Name = input
 	m.step = chargenStepRace
-	return nil
+	return m.writeRaceMenu(s)
+}
+
+// raceRows is the slice-6 numbered race picker. The catalog only
+// currently exposes Human and Ogier; future races slot in here
+// without rewiring callers — applyRace consults this table for both
+// the numeric pick and the bare-token pick.
+var raceRows = [...]struct {
+	id    string
+	label string
+	hint  string
+}{
+	{"human", "Human", "Versatile, mid-statured, every class available"},
+	{"ogier", "Ogier", "Tall, deliberate, no channelers"},
+}
+
+func (m *CharacterCreate) writeRaceMenu(s *telnet.Session) error {
+	if err := writeStepHeader(s, chargenStepRace); err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("{{Race:}}::yellow|bold\r\n")
+	for i, r := range raceRows {
+		fmt.Fprintf(&b,
+			"  {{%d)}}::gray {{%-8s}}::yellow|bold %s\r\n",
+			i+1, defangChargenField(r.label), defangChargenField(r.hint))
+	}
+	b.WriteString("\r\n  Pick a number  ·  {{[B]}}::yellow ack to name\r\n")
+	return s.WriteString(b.String())
 }
 
 func (m *CharacterCreate) applyRace(s *telnet.Session, input string) error {
-	race := strings.ToLower(input)
-	switch race {
-	case "human", "ogier":
-	default:
-		return writeError(s, "Race must be 'human' or 'ogier'.")
+	in := strings.ToLower(strings.TrimSpace(input))
+	race := ""
+	// Numeric pick.
+	if idx, err := parsePositiveIndex(in, len(raceRows)); err == nil {
+		race = raceRows[idx].id
+	} else {
+		// Bare token (human / ogier) — preserved so existing tests and
+		// muscle memory keep working.
+		for _, r := range raceRows {
+			if in == r.id {
+				race = r.id
+				break
+			}
+		}
+	}
+	if race == "" {
+		return writeError(s,
+			"Pick a number, or type 'human' or 'ogier'.")
 	}
 	m.draft.Race = race
-	m.step = chargenStepBackground
-	return m.writeBackgroundMenu(s)
+	m.step = chargenStepHub
+	return m.writeHub(s)
 }
 
 func (m *CharacterCreate) writeBackgroundMenu(s *telnet.Session) error {
 	bgs := m.catalog.BackgroundsForRace(m.draft.Race)
 	if len(bgs) == 0 {
-		// Catalog mis-seeded for this race; back the user up so they
-		// don't end up stuck.
-		m.step = chargenStepRace
-		return writeError(s,
-			"No backgrounds available for that race; pick another race.")
+		// Catalog mis-seeded for this race; bounce the player back to
+		// the hub rather than stranding them in a substep with no
+		// choices.
+		m.step = chargenStepHub
+		if err := writeError(s,
+			"No backgrounds available for that race."); err != nil {
+			return err
+		}
+		return m.writeHub(s)
 	}
 	if err := writeStepHeader(s, chargenStepBackground); err != nil {
 		return err
@@ -371,13 +528,12 @@ func (m *CharacterCreate) writeBackgroundMenu(s *telnet.Session) error {
 	b.WriteString("{{Backgrounds:}}::yellow|bold\r\n")
 	for i, bg := range bgs {
 		fmt.Fprintf(&b,
-			"  {{%2d.}}::gray {{%-16s}}::yellow|bold %-22s %s\r\n",
+			"  {{%2d)}}::gray {{%-22s}}::yellow|bold %s\r\n",
 			i+1,
-			defangChargenField(bg.ID),
 			defangChargenField(bg.Name),
 			defangChargenField(backgroundSummary(bg)))
 	}
-	b.WriteString("Type {{info <id|#>}}::yellow for full details.\r\n")
+	b.WriteString("\r\n  Pick a number  {{[I]}}::yellow nfo <#>  {{[B]}}::yellow ack to hub\r\n")
 	return s.WriteString(b.String())
 }
 
@@ -405,8 +561,8 @@ func (m *CharacterCreate) applyBackground(s *telnet.Session, input string) error
 			"Unknown background. Type the id or list number, or 'info <id|#>'.")
 	}
 	m.draft.BackgroundID = bgs[bg].ID
-	m.step = chargenStepClass
-	return m.writeClassMenu(s)
+	m.step = chargenStepHub
+	return m.writeHub(s)
 }
 
 // writeBackgroundInfo renders the full descriptor block: languages,
@@ -494,29 +650,44 @@ func (m *CharacterCreate) writeBackgroundInfo(s *telnet.Session, bg *chargen.Bac
 }
 
 // stripInfoVerb returns the trailing argument when input begins with
-// "info " (case-insensitive), and reports whether the prefix matched.
-// "info" alone with no argument returns ("", true) so callers can
-// surface a usage hint.
+// the info verb (case-insensitive). Accepts the long form "info" /
+// "details" and the single-letter shorthand "i" (matching the
+// numbered-picker footer hint). "info" alone with no argument returns
+// ("", true) so callers can surface a usage hint. The shorthand "i"
+// requires a non-empty argument so a bare "i" doesn't accidentally
+// trigger info — it also doubles as a one-letter token a bg id might
+// start with, but bare-id picks resolve via pickFromList so the
+// branch ordering still picks the right thing.
 func stripInfoVerb(input string) (string, bool) {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
 		return "", false
 	}
-	if !strings.EqualFold(fields[0], "info") && !strings.EqualFold(fields[0], "details") {
-		return "", false
+	verb := strings.ToLower(fields[0])
+	switch verb {
+	case "info", "details":
+		if len(fields) < 2 {
+			return "", true
+		}
+		return strings.Join(fields[1:], " "), true
+	case "i":
+		if len(fields) < 2 {
+			return "", false
+		}
+		return strings.Join(fields[1:], " "), true
 	}
-	if len(fields) < 2 {
-		return "", true
-	}
-	return strings.Join(fields[1:], " "), true
+	return "", false
 }
 
 func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
 	cls := m.catalog.ClassesForRace(m.draft.Race)
 	if len(cls) == 0 {
-		m.step = chargenStepBackground
-		return writeError(s,
-			"No classes available for that race; revise your background.")
+		m.step = chargenStepHub
+		if err := writeError(s,
+			"No classes available for that race."); err != nil {
+			return err
+		}
+		return m.writeHub(s)
 	}
 	if err := writeStepHeader(s, chargenStepClass); err != nil {
 		return err
@@ -525,13 +696,12 @@ func (m *CharacterCreate) writeClassMenu(s *telnet.Session) error {
 	b.WriteString("{{Classes:}}::yellow|bold\r\n")
 	for i, cl := range cls {
 		fmt.Fprintf(&b,
-			"  {{%2d.}}::gray {{%-16s}}::yellow|bold %-18s %s\r\n",
+			"  {{%2d)}}::gray {{%-18s}}::yellow|bold %s\r\n",
 			i+1,
-			defangChargenField(cl.ID),
 			defangChargenField(cl.Name),
 			defangChargenField(classSummary(cl)))
 	}
-	b.WriteString("Type {{info <id|#>}}::yellow for full details.\r\n")
+	b.WriteString("\r\n  Pick a number  {{[I]}}::yellow nfo <#>  {{[B]}}::yellow ack to hub\r\n")
 	return s.WriteString(b.String())
 }
 
@@ -559,10 +729,18 @@ func (m *CharacterCreate) applyClass(s *telnet.Session, input string) error {
 		return writeError(s,
 			"Unknown class. Type the id or list number, or 'info <id|#>'.")
 	}
+	if m.draft.ClassID != cls[idx].ID {
+		// Flipping class can flip channeler status. Clear any prior
+		// channeling state so the hub re-derives the row from the new
+		// class — n/a vs not-chosen — without carrying stale picks.
+		m.draft.ChannelingInit = false
+		m.draft.ChannelSource = 0
+		m.draft.Affinities = 0
+		m.draft.StartingWeaves = nil
+	}
 	m.draft.ClassID = cls[idx].ID
-	m.step = chargenStepAbilities
-	m.initAbilitiesIfNeeded()
-	return m.writeAbilitiesMenu(s)
+	m.step = chargenStepHub
+	return m.writeHub(s)
 }
 
 // writeClassInfo renders the full descriptor block: HD / BAB / saves,
@@ -660,6 +838,10 @@ func (m *CharacterCreate) pointBuySpent() int {
 	return total
 }
 
+// abilityLabels mirrors abilityKeys ordering with the human-readable
+// row label rendered in the picker.
+var abilityLabels = [...]string{"Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"}
+
 func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
 	if err := writeStepHeader(s, chargenStepAbilities); err != nil {
 		return err
@@ -671,9 +853,20 @@ func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
 	for i, key := range abilityKeys {
 		score := int(m.draft.Abilities[i])
 		mod := abilityModifier(score)
-		fmt.Fprintf(&b,
-			"  {{%s}}::yellow|bold {{%2d}}::yellow (mod %+d, cost %d)\r\n",
-			strings.ToUpper(key), score, mod, pointBuyCost(score))
+		// Highlight rows that are above the point-buy floor so the eye
+		// can scan allocations at a glance — same pattern as the
+		// skills picker.
+		if score > pointBuyMinScore {
+			fmt.Fprintf(&b,
+				"  {{%2d)}}::gray {{%-12s}}::yellow|bold ({{%s}}::gray) score {{%2d}}::green|bold  cost %d  mod {{%+d}}::green\r\n",
+				i+1, abilityLabels[i], strings.ToUpper(key),
+				score, pointBuyCost(score), mod)
+		} else {
+			fmt.Fprintf(&b,
+				"  {{%2d)}}::gray {{%-12s}}::yellow ({{%s}}::gray) score {{%2d}}::yellow  cost %d  mod {{%+d}}::gray\r\n",
+				i+1, abilityLabels[i], strings.ToUpper(key),
+				score, pointBuyCost(score), mod)
+		}
 	}
 	// Remaining-points colour rule: green ≥1, yellow at 0, red <0.
 	// The current code rejects on assignment, so the red branch only
@@ -688,9 +881,7 @@ func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
 	fmt.Fprintf(&b,
 		"  Budget {{%d}}::yellow|bold · Spent {{%d}}::yellow · Remaining {{%d}}::%s\r\n",
 		pointBuyBudget, spent, remaining, remTag)
-	b.WriteString("  {{set}}::yellow <abil> <n>   change one score (8..18)\r\n")
-	b.WriteString("  {{reset}}::yellow            send all scores back to 8\r\n")
-	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	b.WriteString("\r\n  Pick a number then {{+}}::green|bold or {{-}}::red|bold to adjust  ·  {{[R]}}::yellow eset  ·  {{[D]}}::green|bold one\r\n")
 	return s.WriteString(b.String())
 }
 
@@ -703,12 +894,17 @@ func abilityModifier(score int) int {
 	return (score - 10) / 2
 }
 
-// applyAbilities parses one of:
+// applyAbilities parses the abilities-substep input. Slice 3 makes
+// the canonical form a numbered +/- adjuster (`1+`, `2 -`, …) so it
+// matches the skills picker shape; the legacy `set <abil> <n>` /
+// `<abil> <n>` forms keep working as a power-user fallback.
 //
-//	show / blank line   → re-render the menu
-//	set <abil> <n>      → assign one score (also accepts "<abil> <n>")
-//	reset               → all back to 8
-//	done                → advance to review
+//	<n>+ / <n>- / <n> + / <n> -   bump score for ability row n by ±1
+//	set <abil> <n>                set one score directly (8..18)
+//	<abil> <n>                    same, without the verb
+//	r / reset                     all back to 8
+//	d / done                      return to the hub
+//	show / blank line             re-render
 func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
@@ -719,18 +915,29 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 	switch verb {
 	case "show":
 		return m.writeAbilitiesMenu(s)
-	case "reset":
+	case "r", "reset":
 		for i := range m.draft.Abilities {
 			m.draft.Abilities[i] = pointBuyMinScore
 		}
 		return m.writeAbilitiesMenu(s)
-	case "done", "next":
+	case "d", "done", "next":
 		if m.pointBuySpent() > pointBuyBudget {
 			return writeError(s, "You're over budget; reduce a score or 'reset'.")
 		}
-		m.step = chargenStepIdentity
-		m.initIdentityIfNeeded()
-		return m.writeIdentityMenu(s)
+		m.step = chargenStepHub
+		return m.writeHub(s)
+	}
+
+	// "<n> +" / "<n> -" with a space.
+	if len(fields) == 2 && (fields[1] == "+" || fields[1] == "-") {
+		return m.applyAbilityBump(s, fields[0], fields[1] == "+")
+	}
+	// "<n>+" / "<n>-" without a space.
+	if len(fields) == 1 {
+		tok := fields[0]
+		if n := len(tok); n >= 2 && (tok[n-1] == '+' || tok[n-1] == '-') {
+			return m.applyAbilityBump(s, tok[:n-1], tok[n-1] == '+')
+		}
 	}
 
 	// Allow either "set <abil> <n>" or "<abil> <n>".
@@ -741,7 +948,8 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 	case len(fields) == 2:
 		abil, scoreStr = verb, fields[1]
 	default:
-		return writeError(s, "Usage: set <abil> <n>  |  reset  |  done")
+		return writeError(s,
+			"Pick a number then '+' or '-', or 'set <abil> <n>' / 'reset' / 'done'.")
 	}
 
 	idx := abilityIndex(abil)
@@ -764,6 +972,42 @@ func (m *CharacterCreate) applyAbilities(s *telnet.Session, input string) error 
 		return writeError(s, fmt.Sprintf(
 			"Not enough points (would cost %d, %d remaining).",
 			pointBuyCost(score)-pointBuyCost(int(prev)),
+			pointBuyBudget-m.pointBuySpent()))
+	}
+	return m.writeAbilitiesMenu(s)
+}
+
+// applyAbilityBump steps one ability's score up or down by 1 within
+// [pointBuyMinScore..pointBuyMaxScore]. Over-budget bumps roll back,
+// mirroring the set-verb refusal behaviour.
+func (m *CharacterCreate) applyAbilityBump(s *telnet.Session, idTok string, up bool) error {
+	num, err := strconv.Atoi(idTok)
+	if err != nil || num < 1 || num > len(abilityKeys) {
+		return writeError(s, fmt.Sprintf(
+			"Pick a row number 1..%d.", len(abilityKeys)))
+	}
+	idx := num - 1
+	prev := int(m.draft.Abilities[idx])
+	next := prev
+	if up {
+		next++
+	} else {
+		next--
+	}
+	if next < pointBuyMinScore {
+		return writeError(s, fmt.Sprintf(
+			"Already at the floor (%d).", pointBuyMinScore))
+	}
+	if next > pointBuyMaxScore {
+		return writeError(s, fmt.Sprintf(
+			"Cap is %d.", pointBuyMaxScore))
+	}
+	m.draft.Abilities[idx] = int8(next)
+	if m.pointBuySpent() > pointBuyBudget {
+		m.draft.Abilities[idx] = int8(prev)
+		return writeError(s, fmt.Sprintf(
+			"Not enough points (would cost %d, %d remaining).",
+			pointBuyCost(next)-pointBuyCost(prev),
 			pointBuyBudget-m.pointBuySpent()))
 	}
 	return m.writeAbilitiesMenu(s)
@@ -952,27 +1196,63 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 	if err := writeRule(s); err != nil {
 		return err
 	}
+	if err := s.WriteString(
+		"  {{1)}}::gray Confirm and finalise\r\n",
+	); err != nil {
+		return err
+	}
+	rows := m.hubRows()
+	for _, r := range rows {
+		if r.number == 0 {
+			continue
+		}
+		if err := s.WriteString(fmt.Sprintf(
+			"  {{%d)}}::gray Revise %s\r\n",
+			r.number+1, display.Defang(r.label, ""),
+		)); err != nil {
+			return err
+		}
+	}
 	return s.WriteString(
-		"  Type {{yes}}::green|bold to confirm, " +
-			"{{back}}::yellow to revise, " +
-			"{{cancel}}::red to abort.\r\n")
+		"  Pick a number, or {{Y}}::green|bold to confirm / " +
+			"{{B}}::yellow to revisit the build hub.\r\n")
 }
 
+// applyReview routes one line of input on the review screen. Numbered
+// `1` (or `Y`/`yes`) finalises; `2..N` jumps to the corresponding hub
+// row's substep so the player can revise. `B`/`back` and `cancel` are
+// intercepted by handleMulti before they reach this handler.
 func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, input string) error {
-	if !strings.EqualFold(input, "yes") && !strings.EqualFold(input, "y") {
-		return writeError(s,
-			"Type 'yes' to confirm, 'back' to revise, or 'cancel' to abort.")
+	in := strings.TrimSpace(input)
+	switch strings.ToLower(in) {
+	case "y", "yes", "1":
+		return m.finaliseReview(ctx, s)
 	}
+	rows := m.hubRows()
+	idx, err := parsePositiveIndex(in, hubMaxNumber(rows)+1)
+	if err != nil || idx < 1 {
+		return writeError(s,
+			"Pick a number from the list, or 'Y' to confirm.")
+	}
+	row := hubRowByNumber(rows, idx)
+	if row == nil || !row.available {
+		return writeError(s, "That row is not editable.")
+	}
+	return m.enterSubstep(s, row.target)
+}
 
+// finaliseReview commits the draft via CharacterRepo.Create and
+// promotes the session into the game. Pulled out of applyReview so
+// the numeric "1" and the textual "yes"/"y" both land on one
+// implementation.
+func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session) error {
 	// Identity must be stamped before commit — otherwise GenderNone /
-	// zero height/weight would persist. The flow forces the player
-	// through chargenStepIdentity, but a future refactor that adds a
-	// shortcut into review would silently corrupt the row without
-	// this guard. Bump back to identity rather than committing.
+	// zero height/weight would persist. The hub gates auto-opening
+	// review on draftComplete (which checks IdentitySet), so this is
+	// defence in depth against a hypothetical jump-back path that
+	// lands here without the row filled.
 	if !m.draft.IdentitySet {
-		m.step = chargenStepIdentity
-		m.initIdentityIfNeeded()
-		return m.writeIdentityMenu(s)
+		return m.enterSubstep(s, chargenStepIdentity)
 	}
 
 	bg, _ := m.catalog.Background(m.draft.BackgroundID)

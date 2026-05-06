@@ -155,84 +155,92 @@ func (m *CharacterCreate) writeChannelingMenu(s *telnet.Session) error {
 		return err
 	}
 
-	// Affinity menu.
+	switch m.channelingStage {
+	case channelingStageAffinities:
+		return m.writeChannelingAffinitiesMenu(s)
+	case channelingStageWeaves:
+		return m.writeChannelingWeavesMenu(s)
+	}
+	return nil
+}
+
+// writeChannelingAffinitiesMenu renders stage 1 — five numbered
+// powers as a checklist, with selection marked `[x]` and the running
+// count visible in the footer.
+func (m *CharacterCreate) writeChannelingAffinitiesMenu(s *telnet.Session) error {
 	var b strings.Builder
 	fmt.Fprintf(&b,
-		"\r\n{{Affinities (pick exactly %d of 5):}}::yellow|bold\r\n",
+		"\r\n{{Affinities — pick exactly %d of 5:}}::yellow|bold\r\n",
 		channelerAffinityCount)
 	for i, name := range powerNames {
-		mark := " "
+		mark := "[ ]"
+		row := "yellow"
 		if m.draft.Affinities&(1<<uint(i)) != 0 {
-			mark = "*"
+			mark = "[x]"
+			row = "yellow|bold"
 		}
-		if mark == "*" {
-			fmt.Fprintf(&b,
-				"  {{%s}}::green|bold {{%2d.}}::gray {{%s}}::yellow|bold\r\n",
-				mark, i+1, defangChargenField(name))
-		} else {
-			fmt.Fprintf(&b,
-				"    {{%2d.}}::gray {{%s}}::yellow\r\n",
-				i+1, defangChargenField(name))
-		}
-	}
-	picked := powerSetFlags(m.draft.Affinities)
-	if len(picked) > 0 {
-		labels := make([]string, 0, len(picked))
-		for _, p := range picked {
-			labels = append(labels, powerNames[int(p)])
-		}
-		fmt.Fprintf(&b, "  {{Selected:}}::green|bold {{%s}}::green\r\n",
-			defangChargenField(strings.Join(labels, ", ")))
-	}
-
-	// Starting weaves — only meaningful once affinities are set.
-	weaves := eligibleStartingWeaves(m.catalog, m.draft.Affinities)
-	if m.draft.Affinities == 0 {
-		b.WriteString(
-			"\r\n{{Starting weaves:}}::yellow|bold {{(pick affinities first)}}::gray\r\n")
-	} else if len(weaves) == 0 {
-		b.WriteString(
-			"\r\n{{Starting weaves:}}::yellow|bold {{(no level-0 weaves match your affinities)}}::red\r\n")
-	} else {
 		fmt.Fprintf(&b,
-			"\r\n{{Starting weaves (pick exactly %d of eligible):}}::yellow|bold\r\n",
-			channelerStartingWeaveCount)
-		selected := map[string]bool{}
-		for _, id := range m.draft.StartingWeaves {
-			selected[id] = true
-		}
-		for i, w := range weaves {
-			mark := " "
-			if selected[w.ID] {
-				mark = "*"
-			}
-			if mark == "*" {
-				fmt.Fprintf(&b,
-					"  {{%s}}::green|bold {{%2d.}}::gray {{%-16s}}::yellow|bold {{%s}}::gray\r\n",
-					mark, i+1,
-					defangChargenField(w.ID), defangChargenField(w.Power))
-			} else {
-				fmt.Fprintf(&b,
-					"    {{%2d.}}::gray {{%-16s}}::yellow {{%s}}::gray\r\n",
-					i+1,
-					defangChargenField(w.ID), defangChargenField(w.Power))
-			}
-		}
-		if len(m.draft.StartingWeaves) > 0 {
-			fmt.Fprintf(&b, "  {{Selected:}}::green|bold {{%s}}::green\r\n",
-				defangChargenField(strings.Join(m.draft.StartingWeaves, ", ")))
-		}
+			"  {{%2d)}}::gray {{%s}}::green|bold  {{%s}}::%s\r\n",
+			i+1, mark, defangChargenField(name), row)
 	}
+	picked := len(powerSetFlags(m.draft.Affinities))
+	footerTag := "yellow"
+	if picked == channelerAffinityCount {
+		footerTag = "green|bold"
+	}
+	fmt.Fprintf(&b,
+		"  Picked {{%d / %d}}::%s\r\n",
+		picked, channelerAffinityCount, footerTag)
+	b.WriteString(
+		"\r\n  Pick a number to toggle  ·  {{[D]}}::green|bold one (advance to weaves)  ·  {{[B]}}::yellow ack to hub\r\n")
+	return s.WriteString(b.String())
+}
 
-	b.WriteString("\r\n")
-	b.WriteString(fmt.Sprintf(
-		"  {{affinities <a> <b>}}::yellow      pick exactly %d powers\r\n",
-		channelerAffinityCount))
-	b.WriteString(fmt.Sprintf(
-		"  {{weaves <id> <id> <id>}}::yellow   pick exactly %d eligible weaves\r\n",
-		channelerStartingWeaveCount))
-	b.WriteString("  {{show}}::yellow                    re-render this menu\r\n")
-	b.WriteString("  {{done}}::green|bold                   accept and continue\r\n")
+// writeChannelingWeavesMenu renders stage 2 — the eligible starting
+// weaves filtered by the player's affinity bitmask, as a numbered
+// checklist with running pick count.
+func (m *CharacterCreate) writeChannelingWeavesMenu(s *telnet.Session) error {
+	weaves := eligibleStartingWeaves(m.catalog, m.draft.Affinities)
+	if len(weaves) == 0 {
+		// Defensive — initStage guards against landing here with no
+		// affinities, but a future refactor that bypasses init would
+		// strand the player without this fallback.
+		m.channelingStage = channelingStageAffinities
+		if err := writeError(s,
+			"No eligible weaves yet — pick affinities first."); err != nil {
+			return err
+		}
+		return m.writeChannelingAffinitiesMenu(s)
+	}
+	selected := map[string]bool{}
+	for _, id := range m.draft.StartingWeaves {
+		selected[id] = true
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		"\r\n{{Starting weaves — pick exactly %d:}}::yellow|bold\r\n",
+		channelerStartingWeaveCount)
+	for i, w := range weaves {
+		mark := "[ ]"
+		row := "yellow"
+		if selected[w.ID] {
+			mark = "[x]"
+			row = "yellow|bold"
+		}
+		fmt.Fprintf(&b,
+			"  {{%2d)}}::gray {{%s}}::green|bold  {{%-22s}}::%s {{(%s)}}::gray\r\n",
+			i+1, mark, defangChargenField(w.Name), row,
+			defangChargenField(w.Power))
+	}
+	footerTag := "yellow"
+	if len(m.draft.StartingWeaves) == channelerStartingWeaveCount {
+		footerTag = "green|bold"
+	}
+	fmt.Fprintf(&b,
+		"  Picked {{%d / %d}}::%s\r\n",
+		len(m.draft.StartingWeaves), channelerStartingWeaveCount, footerTag)
+	b.WriteString(
+		"\r\n  Pick a number to toggle  ·  {{[D]}}::green|bold one  ·  {{[P]}}::yellow rev (revise affinities)  ·  {{[B]}}::yellow ack to hub\r\n")
 	return s.WriteString(b.String())
 }
 
@@ -244,6 +252,9 @@ func (m *CharacterCreate) applyChanneling(s *telnet.Session, input string) error
 	verb := strings.ToLower(fields[0])
 	rest := fields[1:]
 
+	// Top-level verbs work in either stage so the legacy
+	// `affinities a b` / `weaves x y z` power-user form keeps
+	// working regardless of which screen is active.
 	switch verb {
 	case "show":
 		return m.writeChannelingMenu(s)
@@ -251,22 +262,127 @@ func (m *CharacterCreate) applyChanneling(s *telnet.Session, input string) error
 		return m.applyAffinities(s, rest)
 	case "weaves", "weave":
 		return m.applyStartingWeaves(s, rest)
-	case "done", "next":
+	case "p", "prev", "previous":
+		// Rolls the stage back from weaves → affinities so the player
+		// can revise without leaving the substep.
+		m.channelingStage = channelingStageAffinities
+		return m.writeChannelingMenu(s)
+	case "d", "done", "next":
+		return m.applyChannelingDone(s)
+	}
+
+	// Bare numeric pick toggles within the active stage.
+	if len(fields) == 1 {
+		switch m.channelingStage {
+		case channelingStageAffinities:
+			return m.toggleAffinityByNumber(s, verb)
+		case channelingStageWeaves:
+			return m.toggleWeaveByNumber(s, verb)
+		}
+	}
+	return writeError(s,
+		"Pick a number to toggle, or use 'affinities <a> <b>' / 'weaves <id>...' / 'done'.")
+}
+
+// applyChannelingDone validates the active stage's selection count
+// and either advances to the next stage or returns to the hub.
+func (m *CharacterCreate) applyChannelingDone(s *telnet.Session) error {
+	switch m.channelingStage {
+	case channelingStageAffinities:
 		if got := len(powerSetFlags(m.draft.Affinities)); got != channelerAffinityCount {
 			return writeError(s, fmt.Sprintf(
 				"Pick exactly %d affinities first (have %d).",
 				channelerAffinityCount, got))
 		}
+		m.channelingStage = channelingStageWeaves
+		return m.writeChannelingMenu(s)
+	case channelingStageWeaves:
 		if len(m.draft.StartingWeaves) != channelerStartingWeaveCount {
 			return writeError(s, fmt.Sprintf(
 				"Pick exactly %d starting weaves first (have %d).",
 				channelerStartingWeaveCount, len(m.draft.StartingWeaves)))
 		}
-		m.step = chargenStepReview
-		return m.writeReview(s)
+		m.step = chargenStepHub
+		return m.writeHub(s)
 	}
-	return writeError(s,
-		"Usage: affinities <a> <b> | weaves <id> <id> <id> | show | done")
+	return nil
+}
+
+// toggleAffinityByNumber flips affinity row n on/off. Picking a 3rd
+// row when 2 are already set surfaces a focused error rather than
+// silently bumping someone else off.
+func (m *CharacterCreate) toggleAffinityByNumber(s *telnet.Session, tok string) error {
+	idx, err := parsePositiveIndex(tok, len(powerIDs))
+	if err != nil {
+		return writeError(s, fmt.Sprintf(
+			"Pick a row number 1..%d.", len(powerIDs)))
+	}
+	bit := creature.PowerSet(1 << uint(idx))
+	if m.draft.Affinities&bit != 0 {
+		// Toggle off — clears any weave picks that depended on this
+		// affinity (mirrors the verb-form contract).
+		m.draft.Affinities &^= bit
+		m.draft.StartingWeaves = nil
+		return m.writeChannelingMenu(s)
+	}
+	if len(powerSetFlags(m.draft.Affinities)) >= channelerAffinityCount {
+		return writeError(s, fmt.Sprintf(
+			"Already at %d affinities — toggle one off first.",
+			channelerAffinityCount))
+	}
+	m.draft.Affinities |= bit
+	// Filter shifted — drop any weave picks that no longer match.
+	m.draft.StartingWeaves = filterWeavesByAffinity(
+		m.catalog, m.draft.StartingWeaves, m.draft.Affinities)
+	return m.writeChannelingMenu(s)
+}
+
+// toggleWeaveByNumber flips weave row n on/off within the active
+// affinity-filtered list. Capped at channelerStartingWeaveCount.
+func (m *CharacterCreate) toggleWeaveByNumber(s *telnet.Session, tok string) error {
+	weaves := eligibleStartingWeaves(m.catalog, m.draft.Affinities)
+	idx, err := parsePositiveIndex(tok, len(weaves))
+	if err != nil {
+		return writeError(s, fmt.Sprintf(
+			"Pick a row number 1..%d.", len(weaves)))
+	}
+	id := weaves[idx].ID
+	for i, picked := range m.draft.StartingWeaves {
+		if picked == id {
+			// Toggle off.
+			m.draft.StartingWeaves = append(
+				m.draft.StartingWeaves[:i], m.draft.StartingWeaves[i+1:]...)
+			return m.writeChannelingMenu(s)
+		}
+	}
+	if len(m.draft.StartingWeaves) >= channelerStartingWeaveCount {
+		return writeError(s, fmt.Sprintf(
+			"Already at %d weaves — toggle one off first.",
+			channelerStartingWeaveCount))
+	}
+	m.draft.StartingWeaves = append(m.draft.StartingWeaves, id)
+	return m.writeChannelingMenu(s)
+}
+
+// filterWeavesByAffinity drops any picked weave whose Power isn't in
+// the supplied affinity bitmask. Called when an affinity toggle
+// shifts the eligibility filter — keeps the picked list valid
+// without forcing a full reset.
+func filterWeavesByAffinity(cat *chargen.Catalog, picked []string, affinities creature.PowerSet) []string {
+	if len(picked) == 0 {
+		return picked
+	}
+	eligible := map[string]bool{}
+	for _, w := range eligibleStartingWeaves(cat, affinities) {
+		eligible[w.ID] = true
+	}
+	out := make([]string, 0, len(picked))
+	for _, id := range picked {
+		if eligible[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // applyAffinities parses N power tokens, validates count + dedup, and

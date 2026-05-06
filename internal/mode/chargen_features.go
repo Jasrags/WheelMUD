@@ -124,29 +124,39 @@ func (m *CharacterCreate) writeFeatMenu(s *telnet.Session) error {
 	}
 	if len(feats) == 0 {
 		b.WriteString(
-			"  {{(no background-restricted feats — type 'done')}}::gray\r\n")
+			"  {{(no background-restricted feats — type [D]one to continue)}}::gray\r\n")
 	} else {
 		b.WriteString("  {{Choices:}}::yellow|bold\r\n")
 		for i, f := range feats {
 			if f.ID == m.draft.SelectedFeatID {
 				fmt.Fprintf(&b,
-					"  {{*}}::green|bold {{%2d.}}::gray {{%-22s}}::yellow|bold %s\r\n",
-					i+1, defangChargenField(f.ID), defangChargenField(f.Name))
+					"  {{*}}::green|bold {{%2d)}}::gray {{%-22s}}::yellow|bold %s\r\n",
+					i+1, defangChargenField(f.Name),
+					defangChargenField(featSummary(f)))
 			} else {
 				fmt.Fprintf(&b,
-					"    {{%2d.}}::gray {{%-22s}}::yellow|bold %s\r\n",
-					i+1, defangChargenField(f.ID), defangChargenField(f.Name))
+					"    {{%2d)}}::gray {{%-22s}}::yellow|bold %s\r\n",
+					i+1, defangChargenField(f.Name),
+					defangChargenField(featSummary(f)))
 			}
 		}
 	}
 	if m.draft.SelectedFeatID != "" {
-		fmt.Fprintf(&b, "  {{Selected:}}::green|bold {{%s}}::green\r\n",
-			defangChargenField(m.draft.SelectedFeatID))
+		if f, ok := m.catalog.Feat(m.draft.SelectedFeatID); ok && f != nil {
+			fmt.Fprintf(&b, "  {{Selected:}}::green|bold {{%s}}::green\r\n",
+				defangChargenField(f.Name))
+		}
 	}
-	b.WriteString("  {{pick <id|#>}}::yellow      choose your 1st-level feat\r\n")
-	b.WriteString("  {{info <id|#>}}::yellow      show feat description\r\n")
-	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	b.WriteString("\r\n  Pick a number  ·  {{[I]}}::yellow nfo <#>  ·  {{[D]}}::green|bold one  ·  {{[B]}}::yellow ack to hub\r\n")
 	return s.WriteString(b.String())
+}
+
+// featSummary renders a one-line hint for the picker row. Today the
+// catalog feat type carries no compact summary field; fall back to
+// the feat id (its yaml token) so power users still have a stable
+// label they can pass to `info <id>`.
+func featSummary(f *chargen.Feat) string {
+	return fmt.Sprintf("(%s)", f.ID)
 }
 
 // featNames maps a slice of feat ids to display names via the catalog,
@@ -175,27 +185,34 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 		return writeError(s, "Internal catalog error; background missing.")
 	}
 	feats := m.catalog.FeatsForBackground(bg.ID)
+
+	// Info shorthand handled first so it doesn't shadow a numeric
+	// pick. stripInfoVerb accepts "info <id|#>" and "i <id|#>".
+	if rest, ok := stripInfoVerb(input); ok {
+		if rest == "" {
+			return writeError(s, "Type 'i <#>' or 'info <id>' for details.")
+		}
+		idx := pickFromList(rest, len(feats), func(i int) string { return feats[i].ID })
+		if idx < 0 {
+			return writeError(s, "Unknown feat. Type the id or list number.")
+		}
+		return m.writeFeatInfo(s, feats[idx])
+	}
+
 	verb := strings.ToLower(fields[0])
 	rest := strings.Join(fields[1:], " ")
 
 	switch verb {
 	case "show":
 		return m.writeFeatMenu(s)
-	case "done", "next":
+	case "d", "done", "next":
 		// Empty pick is OK if the background offers no feats — the
 		// player still gets bg.BonusFeats.
 		if m.draft.SelectedFeatID == "" && len(feats) > 0 {
 			return writeError(s, "Pick a feat first, or 'pick <id|#>'.")
 		}
-		m.step = chargenStepSkills
-		m.initSkillsStepIfNeeded()
-		return m.writeSkillsMenu(s)
-	case "info":
-		idx := pickFromList(rest, len(feats), func(i int) string { return feats[i].ID })
-		if idx < 0 {
-			return writeError(s, "Unknown feat. Type the id or list number.")
-		}
-		return m.writeFeatInfo(s, feats[idx])
+		m.step = chargenStepHub
+		return m.writeHub(s)
 	case "pick":
 		idx := pickFromList(rest, len(feats), func(i int) string { return feats[i].ID })
 		if idx < 0 {
@@ -210,7 +227,7 @@ func (m *CharacterCreate) applyFeat(s *telnet.Session, input string) error {
 		m.draft.SelectedFeatID = feats[idx].ID
 		return m.writeFeatMenu(s)
 	}
-	return writeError(s, "Usage: pick <id|#> | info <id|#> | done")
+	return writeError(s, "Pick a number, or 'i <#>' for info, or 'done'.")
 }
 
 func (m *CharacterCreate) writeFeatInfo(s *telnet.Session, f *chargen.Feat) error {
@@ -278,11 +295,11 @@ func (m *CharacterCreate) writeSkillsMenu(s *telnet.Session) error {
 		// scan allocations at a glance.
 		if ranks > 0 {
 			fmt.Fprintf(&b,
-				"  {{%2d.}}::gray {{%-22s}}::yellow|bold {{%-3s}}::gray ranks={{%d}}::green|bold\r\n",
+				"  {{%2d)}}::gray {{%-22s}}::yellow|bold {{%-3s}}::gray ranks={{%d}}::green|bold\r\n",
 				i+1, defangChargenField(name), defangChargenField(ability), ranks)
 		} else {
 			fmt.Fprintf(&b,
-				"  {{%2d.}}::gray {{%-22s}}::yellow {{%-3s}}::gray ranks=%d\r\n",
+				"  {{%2d)}}::gray {{%-22s}}::yellow {{%-3s}}::gray ranks=%d\r\n",
 				i+1, defangChargenField(name), defangChargenField(ability), ranks)
 		}
 	}
@@ -298,12 +315,18 @@ func (m *CharacterCreate) writeSkillsMenu(s *telnet.Session) error {
 	fmt.Fprintf(&b,
 		"  Budget {{%d}}::yellow|bold · Spent {{%d}}::yellow · Remaining {{%d}}::%s\r\n",
 		m.draft.SkillBudget, spent, remaining, remTag)
-	b.WriteString("  {{rank <id|#> <n>}}::yellow  set ranks (0..4) on one skill\r\n")
-	b.WriteString("  {{reset}}::yellow            zero every skill\r\n")
-	b.WriteString("  {{done}}::green|bold             accept and continue\r\n")
+	b.WriteString("\r\n  Pick a number then {{+}}::green|bold or {{-}}::red|bold to adjust  ·  {{[R]}}::yellow eset  ·  {{[D]}}::green|bold one\r\n")
 	return s.WriteString(b.String())
 }
 
+// applySkills accepts:
+//
+//	<n>+ / <n>-          shorthand: bump skill <n>'s rank up or down by 1
+//	<n> +  / <n> -       same, with an explicit space
+//	rank <id|#> <n>      power-user form: set ranks directly to 0..4
+//	r / reset            zero every skill
+//	d / done             return to the hub
+//	show                 redraw the menu
 func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
@@ -315,30 +338,72 @@ func (m *CharacterCreate) applySkills(s *telnet.Session, input string) error {
 	switch verb {
 	case "show":
 		return m.writeSkillsMenu(s)
-	case "reset":
+	case "r", "reset":
 		m.draft.SkillRanks = map[string]int8{}
 		return m.writeSkillsMenu(s)
-	case "done", "next":
-		// Spending fewer than the budget is OK — extra points are
-		// forfeit at level 1 (V1 simplification; level-up code in
-		// Phase E will let players bank points).
-		//
-		// Channelers branch into the channeling substep (#15 slice 2)
-		// before review; non-channeler classes skip silently.
-		if m.classIsChanneler() {
-			m.step = chargenStepChanneling
-			m.initChannelingStepIfNeeded()
-			return m.writeChannelingMenu(s)
-		}
-		m.step = chargenStepReview
-		return m.writeReview(s)
+	case "d", "done", "next":
+		m.step = chargenStepHub
+		return m.writeHub(s)
 	case "rank":
 		if len(fields) != 3 {
 			return writeError(s, "Usage: rank <id|#> <n>")
 		}
 		return m.applySkillRank(s, skills, fields[1], fields[2])
 	}
-	return writeError(s, "Usage: rank <id|#> <n> | reset | done")
+
+	// "<n> +" / "<n> -" with a space.
+	if len(fields) == 2 && (fields[1] == "+" || fields[1] == "-") {
+		return m.applySkillBump(s, skills, fields[0], fields[1] == "+")
+	}
+	// "<n>+" / "<n>-" without a space.
+	if len(fields) == 1 {
+		tok := fields[0]
+		if n := len(tok); n >= 2 && (tok[n-1] == '+' || tok[n-1] == '-') {
+			return m.applySkillBump(s, skills, tok[:n-1], tok[n-1] == '+')
+		}
+	}
+	return writeError(s,
+		"Pick a number then '+' or '-', or 'rank <id|#> <n>' / 'reset' / 'done'.")
+}
+
+// applySkillBump steps the rank for one skill up or down by 1 within
+// [0..classSkillRankCapL1]. Over-budget bumps roll back, mirroring
+// the rank verb's refusal behaviour.
+func (m *CharacterCreate) applySkillBump(s *telnet.Session, skills []string, idTok string, up bool) error {
+	idx := pickFromList(idTok, len(skills), func(i int) string { return skills[i] })
+	if idx < 0 {
+		return writeError(s, "Unknown skill. Type the id or list number.")
+	}
+	id := skills[idx]
+	prev := m.draft.SkillRanks[id]
+	next := prev
+	if up {
+		next++
+	} else {
+		next--
+	}
+	if next < 0 {
+		return writeError(s, "Already at 0.")
+	}
+	if int(next) > classSkillRankCapL1 {
+		return writeError(s, fmt.Sprintf("Cap is %d ranks per skill.", classSkillRankCapL1))
+	}
+	if next == 0 {
+		delete(m.draft.SkillRanks, id)
+	} else {
+		m.draft.SkillRanks[id] = next
+	}
+	if m.skillsSpent() > int(m.draft.SkillBudget) {
+		if prev == 0 {
+			delete(m.draft.SkillRanks, id)
+		} else {
+			m.draft.SkillRanks[id] = prev
+		}
+		return writeError(s, fmt.Sprintf(
+			"Not enough points (%d remaining).",
+			int(m.draft.SkillBudget)-m.skillsSpent()))
+	}
+	return m.writeSkillsMenu(s)
 }
 
 func (m *CharacterCreate) applySkillRank(s *telnet.Session, skills []string, idTok, nTok string) error {

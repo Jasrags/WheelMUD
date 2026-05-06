@@ -207,41 +207,98 @@ func postureLabel(p creature.Posture) string {
 }
 
 func (m *CharacterCreate) writeIdentityMenu(s *telnet.Session) error {
+	// When awaiting a specific field's value, render only the field
+	// prompt — keeps the screen tight and the next-line semantic
+	// obvious.
+	if m.pendingIdentityField != identityFieldNone {
+		return m.writeIdentityFieldPrompt(s)
+	}
 	if err := writeStepHeader(s, chargenStepIdentity); err != nil {
 		return err
 	}
-	if err := writeFieldRow(s, "Gender", genderLabel(m.draft.Gender)); err != nil {
-		return err
-	}
-	if err := writeFieldRow(s, "Age", fmt.Sprintf("%d", m.draft.Age)); err != nil {
-		return err
-	}
-	if err := writeFieldRow(s, "Height", renderHeight(m.draft.HeightCm)); err != nil {
-		return err
-	}
-	if err := writeFieldRow(s, "Weight", renderWeight(m.draft.WeightKg)); err != nil {
-		return err
-	}
-	if err := writeFieldRow(s, "Handed", handLabel(m.draft.Handedness)); err != nil {
-		return err
-	}
-	if err := writeFieldRow(s, "Alignment", postureLabel(m.draft.Alignment)); err != nil {
-		return err
+	rows := [...]struct {
+		label, value string
+	}{
+		{"Gender", genderLabel(m.draft.Gender)},
+		{"Age", fmt.Sprintf("%d", m.draft.Age)},
+		{"Height/Weight", fmt.Sprintf("%s · %s",
+			renderHeight(m.draft.HeightCm), renderWeight(m.draft.WeightKg))},
+		{"Handedness", handLabel(m.draft.Handedness)},
+		{"Alignment", postureLabel(m.draft.Alignment)},
 	}
 	var b strings.Builder
-	b.WriteString("  {{gender <m|f>}}::yellow           set gender (re-rolls height/weight)\r\n")
-	b.WriteString("  {{age <n>}}::yellow                set age in years\r\n")
-	b.WriteString("  {{handed <r|l|a>}}::yellow         right / left / ambidextrous\r\n")
-	b.WriteString("  {{align <good|bad|evil>}}::yellow  alignment posture\r\n")
-	b.WriteString("  {{roll}}::yellow                   re-roll height and weight\r\n")
-	b.WriteString("  {{done}}::green|bold                   accept and continue\r\n")
+	for i, r := range rows {
+		fmt.Fprintf(&b,
+			"  {{%d)}}::gray {{%-13s}}::yellow|bold %s\r\n",
+			i+1, defangChargenField(r.label), defangChargenField(r.value))
+	}
+	b.WriteString("\r\n  Pick a number to edit  ·  {{[R]}}::yellow re-roll height/weight  ·  {{[D]}}::green|bold one\r\n")
 	return s.WriteString(b.String())
 }
 
-// applyIdentity dispatches one of the identity verbs. Verbs mutate the
-// draft and re-render the menu; `done` advances to review.
+// writeIdentityFieldPrompt emits a one-line "  Field: <hint> >" so
+// the player knows exactly what input the next line expects. Called
+// only while pendingIdentityField is set.
+func (m *CharacterCreate) writeIdentityFieldPrompt(s *telnet.Session) error {
+	switch m.pendingIdentityField {
+	case identityFieldGender:
+		return s.WriteString("  Gender ({{m}}::yellow ale / {{f}}::yellow emale) >\r\n")
+	case identityFieldAge:
+		return s.WriteString("  Age (years, positive integer) >\r\n")
+	case identityFieldHanded:
+		return s.WriteString(
+			"  Handedness ({{r}}::yellow ight / {{l}}::yellow eft / {{a}}::yellow mbidextrous) >\r\n")
+	case identityFieldAlign:
+		return s.WriteString(
+			"  Alignment ({{good}}::green / {{bad}}::yellow / {{evil}}::red) >\r\n")
+	}
+	return nil
+}
+
+// applyIdentity dispatches identity input. Slice 4 makes the
+// canonical form a numbered sub-hub: pick a row, then the next line
+// is the value for that field. Picking row 3 (Height/Weight) re-rolls
+// directly with no follow-up prompt. The legacy verb forms
+// (gender m / age 25 / handed left / align bad / roll) all keep
+// working at the top level so existing tests and muscle memory are
+// undisturbed.
 func (m *CharacterCreate) applyIdentity(s *telnet.Session, input string) error {
-	fields := strings.Fields(input)
+	trimmed := strings.TrimSpace(input)
+
+	// Awaiting a specific field's value — route the line to that
+	// field's parser. The latch only clears on successful validation;
+	// a bad value re-prompts in place so the player isn't dumped back
+	// to the menu after a typo.
+	if m.pendingIdentityField != identityFieldNone {
+		field := m.pendingIdentityField
+		var (
+			ok  bool
+			err error
+		)
+		switch field {
+		case identityFieldGender:
+			ok, err = m.applyIdentityGender(s, strings.ToLower(trimmed))
+		case identityFieldAge:
+			ok, err = m.applyIdentityAge(s, trimmed)
+		case identityFieldHanded:
+			ok, err = m.applyIdentityHanded(s, strings.ToLower(trimmed))
+		case identityFieldAlign:
+			ok, err = m.applyIdentityAlign(s, strings.ToLower(trimmed))
+		}
+		if err != nil {
+			return err
+		}
+		if !ok {
+			// Validation failed; the handler already wrote an error
+			// line. Re-show the field prompt so the next line is
+			// interpreted as a retry rather than a menu pick.
+			return m.writeIdentityFieldPrompt(s)
+		}
+		m.pendingIdentityField = identityFieldNone
+		return nil
+	}
+
+	fields := strings.Fields(trimmed)
 	if len(fields) == 0 {
 		return m.writeIdentityMenu(s)
 	}
@@ -254,52 +311,85 @@ func (m *CharacterCreate) applyIdentity(s *telnet.Session, input string) error {
 	switch verb {
 	case "show":
 		return m.writeIdentityMenu(s)
-	case "done", "next":
-		m.step = chargenStepFeat
-		m.initFeatStepIfNeeded()
-		return m.writeFeatMenu(s)
-	case "roll":
+	case "d", "done", "next":
+		m.step = chargenStepHub
+		return m.writeHub(s)
+	case "r", "roll":
 		m.rerollHeightWeight()
 		return m.writeIdentityMenu(s)
 	case "gender":
-		return m.applyIdentityGender(s, arg)
+		_, err := m.applyIdentityGender(s, arg)
+		return err
 	case "age":
-		return m.applyIdentityAge(s, arg)
+		_, err := m.applyIdentityAge(s, arg)
+		return err
 	case "handed", "handedness":
-		return m.applyIdentityHanded(s, arg)
+		_, err := m.applyIdentityHanded(s, arg)
+		return err
 	case "align", "alignment":
-		return m.applyIdentityAlign(s, arg)
+		_, err := m.applyIdentityAlign(s, arg)
+		return err
+	}
+
+	// Bare numeric pick from the sub-hub.
+	if len(fields) == 1 {
+		switch verb {
+		case "1":
+			m.pendingIdentityField = identityFieldGender
+			return m.writeIdentityFieldPrompt(s)
+		case "2":
+			m.pendingIdentityField = identityFieldAge
+			return m.writeIdentityFieldPrompt(s)
+		case "3":
+			// Height/Weight has no value to type — picking the row
+			// re-rolls directly.
+			m.rerollHeightWeight()
+			return m.writeIdentityMenu(s)
+		case "4":
+			m.pendingIdentityField = identityFieldHanded
+			return m.writeIdentityFieldPrompt(s)
+		case "5":
+			m.pendingIdentityField = identityFieldAlign
+			return m.writeIdentityFieldPrompt(s)
+		}
 	}
 
 	return writeError(s,
-		"Usage: gender <m|f> | age <n> | handed <r|l|a> | align <good|bad|evil> | roll | done")
+		"Pick a number 1..5, or use a verb (gender / age / handed / align / roll / done).")
 }
 
-func (m *CharacterCreate) applyIdentityGender(s *telnet.Session, arg string) error {
+// applyIdentityGender returns (validated, writeErr). When validated
+// is false the caller knows the input didn't parse; the handler
+// already wrote an error line, so the caller's job is to keep the
+// pending-field latch set and re-prompt. The verb-form callers
+// ignore the bool — for them, validation failure is semantically
+// the same as success since they always return to the top-level
+// applyIdentity dispatcher anyway.
+func (m *CharacterCreate) applyIdentityGender(s *telnet.Session, arg string) (bool, error) {
 	switch arg {
 	case "m", "male":
 		m.draft.Gender = creature.GenderMale
 	case "f", "female":
 		m.draft.Gender = creature.GenderFemale
 	default:
-		return writeError(s, "Gender must be 'm' / 'male' or 'f' / 'female'.")
+		return false, writeError(s, "Gender must be 'm' / 'male' or 'f' / 'female'.")
 	}
 	// Base height/weight depends on gender; re-roll so the line
 	// stays consistent with the chosen gender.
 	m.rerollHeightWeight()
-	return m.writeIdentityMenu(s)
+	return true, m.writeIdentityMenu(s)
 }
 
-func (m *CharacterCreate) applyIdentityAge(s *telnet.Session, arg string) error {
+func (m *CharacterCreate) applyIdentityAge(s *telnet.Session, arg string) (bool, error) {
 	n, err := strconv.Atoi(arg)
 	if err != nil || n < 1 || n > maxIdentityAgeYears {
-		return writeError(s, "Age must be a positive integer.")
+		return false, writeError(s, "Age must be a positive integer.")
 	}
 	m.draft.Age = int16(n)
-	return m.writeIdentityMenu(s)
+	return true, m.writeIdentityMenu(s)
 }
 
-func (m *CharacterCreate) applyIdentityHanded(s *telnet.Session, arg string) error {
+func (m *CharacterCreate) applyIdentityHanded(s *telnet.Session, arg string) (bool, error) {
 	switch arg {
 	case "r", "right":
 		m.draft.Handedness = creature.HandRight
@@ -308,12 +398,12 @@ func (m *CharacterCreate) applyIdentityHanded(s *telnet.Session, arg string) err
 	case "a", "ambi", "ambidextrous":
 		m.draft.Handedness = creature.HandAmbidextrous
 	default:
-		return writeError(s, "Handedness must be 'r' / 'l' / 'a'.")
+		return false, writeError(s, "Handedness must be 'r' / 'l' / 'a'.")
 	}
-	return m.writeIdentityMenu(s)
+	return true, m.writeIdentityMenu(s)
 }
 
-func (m *CharacterCreate) applyIdentityAlign(s *telnet.Session, arg string) error {
+func (m *CharacterCreate) applyIdentityAlign(s *telnet.Session, arg string) (bool, error) {
 	switch arg {
 	case "good":
 		m.draft.Alignment = creature.PostureGood
@@ -322,7 +412,7 @@ func (m *CharacterCreate) applyIdentityAlign(s *telnet.Session, arg string) erro
 	case "evil":
 		m.draft.Alignment = creature.PostureEvil
 	default:
-		return writeError(s, "Alignment must be 'good', 'bad', or 'evil'.")
+		return false, writeError(s, "Alignment must be 'good', 'bad', or 'evil'.")
 	}
-	return m.writeIdentityMenu(s)
+	return true, m.writeIdentityMenu(s)
 }
