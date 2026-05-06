@@ -237,7 +237,23 @@ func (m *CharacterCreate) writeFeatInfo(s *telnet.Session, f *chargen.Feat) erro
 	)); err != nil {
 		return err
 	}
+	if err := writeFieldRow(s, "Type", featTypeLabel(f)); err != nil {
+		return err
+	}
+	if f.Background && len(f.Backgrounds) > 0 {
+		labels := make([]string, 0, len(f.Backgrounds))
+		for _, id := range f.Backgrounds {
+			labels = append(labels, backgroundDisplayName(m.catalog, id))
+		}
+		if err := writeFieldRow(s, "Available to",
+			strings.Join(labels, ", ")); err != nil {
+			return err
+		}
+	}
 	if f.Description != "" {
+		if err := s.WriteString("\r\n"); err != nil {
+			return err
+		}
 		if err := s.WriteWrapped(strings.TrimRight(f.Description, "\n")); err != nil {
 			return err
 		}
@@ -246,6 +262,28 @@ func (m *CharacterCreate) writeFeatInfo(s *telnet.Session, f *chargen.Feat) erro
 		}
 	}
 	return writeRule(s)
+}
+
+// featTypeLabel reports whether a feat is background-restricted or
+// generally available, in player-friendly language.
+func featTypeLabel(f *chargen.Feat) string {
+	if f.Background {
+		return "Background feat"
+	}
+	return "General feat"
+}
+
+// backgroundDisplayName resolves a background id to its display
+// name via the catalog, falling back to the id when not found
+// (defensive — a YAML edit could leave a stale reference).
+func backgroundDisplayName(cat *chargen.Catalog, id string) string {
+	if cat == nil {
+		return id
+	}
+	if bg, ok := cat.Background(id); ok && bg != nil {
+		return bg.Name
+	}
+	return id
 }
 
 // initSkillsStepIfNeeded stamps the budget and zero-rank map on first

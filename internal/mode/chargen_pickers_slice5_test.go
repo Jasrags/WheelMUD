@@ -26,6 +26,30 @@ func TestChargenFeat_PickByNumberStillWorks(t *testing.T) {
 	}
 }
 
+// TestChargenFeat_InfoShowsMetadata asserts the slice-2/B
+// feat-info screen renders Type and Available-to rows alongside
+// the description. Bullheaded is offered to Aiel and Midlander
+// backgrounds, so both names should appear in the available-to
+// list.
+func TestChargenFeat_InfoShowsMetadata(t *testing.T) {
+	f := pushCharacterCreateMulti(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1")
+	f.feed("midlander")
+	f.feed("2")
+	f.feed("armsman")
+	f.feed("5") // hub → feat
+	f.captured.Reset()
+	f.feed("info bullheaded")
+	out := f.captured.String()
+	for _, want := range []string{"Bullheaded", "Type", "Background feat", "Available to", "Aiel", "Midlander"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("feat info missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestChargenFeat_DoneShorthand asserts `d` is accepted as `done`.
 func TestChargenFeat_DoneShorthand(t *testing.T) {
 	f := pushCharacterCreateMulti(t)

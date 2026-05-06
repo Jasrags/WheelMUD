@@ -8,40 +8,70 @@
   background: true
   backgrounds: [taraboner]
   description: |-
-    +2 Perform; +2 to one art-Craft skill (e.g. calligraphy,
-    painting, sculpture, embroidery).
+    The discerning Taraboner eye for craft and beauty — calligraphy,
+    painting, sculpture, embroidery, woven carpets in patterns no
+    foreigner can quite read.
+
+    +2 Perform; +2 to one art-Craft skill of your choice.
 - id: blooded
   name: Blooded
   background: true
   backgrounds: [aiel, borderlander]
-  description: +2 initiative; +2 Spot.
+  description: |-
+    You have stood in the line and watched it break — the Blight
+    edge, the Aiel Waste, a raid in the dark. You know what's
+    coming before others see it move.
+
+    +2 initiative; +2 Spot.
 - id: bullheaded
   name: Bullheaded
   background: true
   backgrounds: [aiel, midlander]
-  description: +1 Will saves; +2 Intimidate.
+  description: |-
+    A stubbornness that borders on contempt for danger. Hard to
+    talk down, hard to scare, and grimly persuasive when you do
+    plant your feet.
+
+    +1 Will saves; +2 Intimidate.
 - id: cosmopolitan
   name: Cosmopolitan
   background: true
   backgrounds: [cairhienin, domani, ebou_dari, illianer, tar_valoner]
   description: |-
+    A wider education than most provincials manage — you've crossed
+    borders, traded with strange merchants, listened to lectures
+    you weren't strictly entitled to hear.
+
     Choose a non-class skill: it becomes a class skill, +2 on its
     checks. May be taken multiple times for different skills.
 - id: disciplined
   name: Disciplined
   background: true
   backgrounds: [aiel, athaan_miere]
-  description: +1 Will saves; +2 Concentration.
+  description: |-
+    A clear mind under pressure — the patience of an Aiel maiden
+    or the focus of a sea folk windfinder. You hold your shape when
+    others fray.
+
+    +1 Will saves; +2 Concentration.
 - id: duelist
   name: Duelist
   background: true
   backgrounds: [ebou_dari]
-  description: +2 Diplomacy; +2 initiative.
+  description: |-
+    Ebou Dari blade etiquette — a knife at every belt and the words
+    to start or end a quarrel before steel decides it.
+
+    +2 Diplomacy; +2 initiative.
 - id: education
   name: Education
   background: true
   backgrounds: [tar_valoner]
   description: |-
+    You read. Tar Valon scribes, White Tower libraries, novices
+    drilling each other on dusty histories — wherever you came up,
+    knowing things was the point.
+
     All Knowledge skills become class skills; +1 on all Knowledge
     checks; +2 on two Knowledge skills of choice. 1st-level only.
 - id: gambler
@@ -49,82 +79,146 @@
   background: true
   backgrounds: [ebou_dari, tairen]
   description: |-
+    You read the table. Cards, dice, tea-leaves, faces — wagering
+    a wider game than the chips in front of you.
+
     Profession (gambler) is a class skill; +2 Profession (gambler);
     +2 Sense Motive.
 - id: living_history
   name: Living History
   background: true
   backgrounds: [taraboner]
-  description: +2 on all Knowledge checks.
+  description: |-
+    Taraboner storyteller blood — you carry the chains of
+    generations in your head, and people who don't write things
+    down still remember them through you.
+
+    +2 on all Knowledge checks.
 - id: luck_of_heroes
   name: Luck of Heroes
   background: true
   backgrounds: [midlander]
-  description: +1 luck bonus on all saving throws.
+  description: |-
+    Something in the Pattern bends your way. Midlanders chuckle
+    about it; the rest of the world calls it ta'veren-adjacent.
+
+    +1 luck bonus on all saving throws.
 - id: mercantile_background
   name: Mercantile Background
   background: true
   backgrounds: [athaan_miere, ebou_dari, illianer, taraboner, tairen]
-  description: +2 Appraise; +2 on Craft or Profession of choice.
+  description: |-
+    Counting-house upbringing — you grew up with bills of lading,
+    haggling, and the difference between a fair price and a fair
+    price for an outsider.
+
+    +2 Appraise; +2 on Craft or Profession of choice.
 - id: militia
   name: Militia
   background: true
   backgrounds: [cairhienin, domani, illianer, midlander, tar_valoner, tairen]
   description: |-
-    Bonus feats: Martial Weapon Proficiency (crossbow) and
-    Martial Weapon Proficiency (pike or halberd).
+    You served your levy — pikework on a muster line, crossbow drill
+    in the village square, the sergeant's voice in your sleep for
+    months afterward.
+
+    Bonus feats: Martial Weapon Proficiency (crossbow) and Martial
+    Weapon Proficiency (pike or halberd).
 - id: saddleback
   name: Saddleback
   background: true
   backgrounds: [borderlander, tairen]
-  description: +2 Ride.
+  description: |-
+    Raised in the saddle — Tairen plains-rider or Borderland horse
+    company. You move with a horse the way other people walk.
+
+    +2 Ride.
 - id: sea_legs
   name: Sea Legs
   background: true
   backgrounds: [athaan_miere]
-  description: +2 Balance; +2 Swim.
+  description: |-
+    Atha'an Miere bone — you can walk a heeled deck in a storm
+    and swim like the islands' tide-children.
+
+    +2 Balance; +2 Swim.
 - id: seductive
   name: Seductive
   background: true
   backgrounds: [domani]
-  description: +3 Bluff and Diplomacy when dealing with the opposite sex.
+  description: |-
+    A Domani gift — the smile, the shoulder, the silence at the
+    right moment. People tell you things, and they help you
+    afterwards.
+
+    +3 Bluff and Diplomacy when dealing with the opposite sex.
 - id: shadowspawn_hunter
   name: Shadowspawn Hunter
   background: true
   backgrounds: [borderlander]
   description: |-
-    +1 competence bonus on damage rolls vs Trollocs (melee + ranged ≤30 ft);
-    treat weapon as having Improved Critical against Trollocs. May be taken
-    multiple times to extend the creature list.
+    You have killed Trollocs before. The way they move, the joints
+    in their armor, the smell of one downwind — none of it is
+    new to you.
+
+    +1 competence bonus on damage rolls vs. Trollocs (melee + ranged
+    ≤ 30 ft); treat your weapon as having Improved Critical against
+    Trollocs. May be taken multiple times to extend the creature
+    list (Myrddraal, Draghkar, etc.).
 - id: silver_palm
   name: Silver Palm
   background: true
   backgrounds: [athaan_miere, cairhienin, illianer]
-  description: +2 Appraise; +2 Bluff.
+  description: |-
+    Trader's instincts — you can value goods on sight and read
+    the lie behind a quoted price.
+
+    +2 Appraise; +2 Bluff.
 - id: smooth_talk
   name: Smooth Talk
   background: true
   backgrounds: [athaan_miere, cairhienin, tar_valoner]
-  description: +2 Diplomacy; +2 Sense Motive.
+  description: |-
+    Court manners and a soft voice — you find your way into the
+    room you wanted to be in, then read the room.
+
+    +2 Diplomacy; +2 Sense Motive.
 - id: stealthy
   name: Stealthy
   background: true
   backgrounds: [aiel, borderlander]
-  description: +2 Hide; +2 Move Silently.
+  description: |-
+    Aiel desert-walking, or the Borderland habit of watching the
+    horizon without being seen yourself. You move like part of the
+    landscape.
+
+    +2 Hide; +2 Move Silently.
 - id: street_smart
   name: Street Smart
   background: true
   backgrounds: [cairhienin, domani, ebou_dari, illianer]
-  description: +2 Bluff; +2 Gather Information.
+  description: |-
+    City-grown — you know which alley to take, which barkeep
+    listens, and how to walk past trouble before it sees you.
+
+    +2 Bluff; +2 Gather Information.
 - id: strong_soul
   name: Strong Soul
   background: true
   backgrounds: [borderlander, midlander]
   description: |-
-    +1 Fortitude and Will saves; additional +1 vs energy drain and
-    death effects.
+    Something in the Westlands' deep stock holds out longer than it
+    should — against poison, plague, and the cold edge of dark
+    weaves.
+
+    +1 Fortitude and Will saves; an additional +1 against energy
+    drain and death effects.
 - id: survivor
   name: Survivor
   background: true
   backgrounds: [aiel]
-  description: +1 Fortitude; +2 Wilderness Lore.
+  description: |-
+    You came out of the Three-fold Land alive when others didn't.
+    The Waste teaches what it teaches; you remember.
+
+    +1 Fortitude; +2 Wilderness Lore.
