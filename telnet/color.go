@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -63,6 +64,48 @@ func DetectColorLevel(term string) int {
 		return ColorLevel16
 	}
 	return ColorLevel16
+}
+
+// StripANSI removes CSI escape sequences (ESC `[` … final-byte) from b,
+// returning a new slice. Used by the cfmt-rendering write paths to
+// downsample to plain text for ColorLevelNone clients — cfmt has no
+// level-awareness, so the session layer scrubs after rendering.
+//
+// CSI final bytes are 0x40..0x7E (ANSI X3.64 / ECMA-48); cfmt only
+// emits SGR (`m`), but any final byte ends a sequence safely. A bare
+// ESC (no `[`) or an unterminated sequence is dropped — the wire is
+// already corrupt at that point and we'd rather not re-emit the
+// fragments.
+func StripANSI(b []byte) []byte {
+	if !bytes.Contains(b, []byte{0x1b}) {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); {
+		if b[i] == 0x1b {
+			if i+1 < len(b) && b[i+1] == '[' {
+				i += 2
+				for i < len(b) {
+					c := b[i]
+					i++
+					if c >= 0x40 && c <= 0x7e {
+						break
+					}
+				}
+				continue
+			}
+			// Bare ESC or non-CSI escape — skip the ESC and any
+			// single follow-up byte if present.
+			i++
+			if i < len(b) {
+				i++
+			}
+			continue
+		}
+		out = append(out, b[i])
+		i++
+	}
+	return out
 }
 
 // SGR returns "\x1b[<codes>m" for the given numeric SGR codes. Zero codes

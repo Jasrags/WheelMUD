@@ -59,6 +59,32 @@ func TestRenderRGBBG_TrueColor(t *testing.T) {
 	}
 }
 
+func TestStripANSI(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"plain", "hello world", "hello world"},
+		{"sgr_only", "\x1b[31mred\x1b[0m", "red"},
+		{"multi_param_sgr", "\x1b[1;38;5;42mfoo\x1b[0m", "foo"},
+		{"truecolor", "\x1b[38;2;10;20;30mrgb\x1b[0m", "rgb"},
+		{"crlf_preserved", "\x1b[1mline1\x1b[0m\r\nline2", "line1\r\nline2"},
+		{"trailing_unterminated", "ok\x1b[", "ok"},
+		{"bare_esc", "ok\x1bX", "ok"},
+		{"non_sgr_csi", "a\x1b[2Jb", "ab"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(StripANSI([]byte(tc.in)))
+			if got != tc.want {
+				t.Errorf("StripANSI(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSGR(t *testing.T) {
 	if got := SGR(); got != "\x1b[0m" {
 		t.Errorf("SGR() = %q, want reset", got)

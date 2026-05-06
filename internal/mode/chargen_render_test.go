@@ -9,13 +9,12 @@ package mode
 //   - emit cfmt-derived ANSI SGR sequences,
 //   - cap visible-glyph rule width at the negotiated session width.
 //
-// Note on ColorLevel: today, Session.WriteString unconditionally
-// renders cfmt tags via cfmt.Sprint regardless of Session.ColorLevel,
-// so even ColorLevelNone sees ANSI escapes on the wire. That's a
-// real gap (the ui-expert skill claims downsampling kicks in at the
-// session layer); fixing it requires a level-aware cfmt wrapper or
-// strip pass in WriteString. Tracked as a follow-up. These tests
-// assert payload/structure, not the (broken-today) level gate.
+// ColorLevel is honored by the session-layer write paths
+// (WriteString / WriteWrapped / WritePagedWrapped / WriteAsync):
+// cfmt.Sprint always emits SGR, then the session strips ANSI when
+// ColorLevel == ColorLevelNone. So None clients see plain text;
+// 16/256/truecolor clients see escapes. These tests assert both
+// the payload + structure and the level gate.
 
 import (
 	"net"
@@ -111,13 +110,19 @@ func TestChargenRender_StepHeader_AcrossMatrix(t *testing.T) {
 					t.Fatalf("missing payload, got %q", out)
 				}
 
-				// cfmt always emits ANSI today (see file-top note).
-				// At minimum, payload must be present and the output
-				// must have the bold+cyan SGR signature so we know
-				// the cfmt path was hit, not the bypass.
-				if !hasANSIEscape(out) {
-					t.Fatalf("ColorLevel=%d emitted no SGR (cfmt path skipped?): %q",
-						c.level, out)
+				// Level gate: ColorLevelNone strips at the session
+				// layer; everything else preserves SGR so we know
+				// the cfmt path was hit, not bypassed.
+				switch c.level {
+				case telnet.ColorLevelNone:
+					if hasANSIEscape(out) {
+						t.Fatalf("ColorLevelNone leaked SGR: %q", out)
+					}
+				default:
+					if !hasANSIEscape(out) {
+						t.Fatalf("ColorLevel=%d emitted no SGR (cfmt path skipped?): %q",
+							c.level, out)
+					}
 				}
 
 				// Header line is bounded by terminal width once we

@@ -369,8 +369,11 @@ func NewSession(conn net.Conn) *Session {
 // Note: cfmt interprets `{{...}}::style` tokens, so callers MUST NOT pass
 // untrusted input directly. Use WriteRaw for client-derived strings.
 func (s *Session) WriteString(text string) error {
-	rendered := cfmt.Sprint(text)
-	return s.WriteRaw([]byte(rendered))
+	rendered := []byte(cfmt.Sprint(text))
+	if s.ColorLevel == ColorLevelNone {
+		rendered = StripANSI(rendered)
+	}
+	return s.WriteRaw(rendered)
 }
 
 // WriteWrapped renders cfmt tags and reflows the result to the session's
@@ -385,7 +388,11 @@ func (s *Session) WriteWrapped(text string) error {
 	wrapped := WrapText(rendered, s.Width)
 	// WrapText emits LF-only line breaks; convert to CRLF for the wire.
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
-	return s.WriteRaw([]byte(wrapped))
+	out := []byte(wrapped)
+	if s.ColorLevel == ColorLevelNone {
+		out = StripANSI(out)
+	}
+	return s.WriteRaw(out)
 }
 
 // WritePaged writes body, pushing a pager mode when body would
@@ -421,13 +428,20 @@ func (s *Session) WritePagedWrapped(text string) error {
 	if s.Width <= 0 {
 		// No width to wrap to — fall back to the cfmt-only path so
 		// the caller still gets pagination.
-		rendered := cfmt.Sprint(text)
-		return s.WritePaged([]byte(rendered))
+		rendered := []byte(cfmt.Sprint(text))
+		if s.ColorLevel == ColorLevelNone {
+			rendered = StripANSI(rendered)
+		}
+		return s.WritePaged(rendered)
 	}
 	rendered := cfmt.Sprint(text)
 	wrapped := WrapText(rendered, s.Width)
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
-	return s.WritePaged([]byte(wrapped))
+	out := []byte(wrapped)
+	if s.ColorLevel == ColorLevelNone {
+		out = StripANSI(out)
+	}
+	return s.WritePaged(out)
 }
 
 // WriteRaw writes the bytes verbatim, with no template rendering.
@@ -554,6 +568,9 @@ func (s *Session) snapshotInputLocked() (buf []byte, masked bool) {
 // spaces + CR.
 func (s *Session) WriteAsync(text string) error {
 	rendered := []byte(cfmt.Sprint(text))
+	if s.ColorLevel == ColorLevelNone {
+		rendered = StripANSI(rendered)
+	}
 	if !bytes.HasSuffix(rendered, []byte("\r\n")) {
 		rendered = append(rendered, '\r', '\n')
 	}
