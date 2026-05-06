@@ -618,6 +618,51 @@ func TestAccountMenu_PasswordCancelAtEachStep(t *testing.T) {
 	}
 }
 
+// failingUpdateAccounts wraps a real MemoryAccountRepo but forces
+// UpdatePasswordHash to return a synthetic error so we can exercise
+// the mode-layer "could not change password" branch that the contract
+// test in internal/repo/account_test.go can't reach.
+type failingUpdateAccounts struct {
+	*repo.MemoryAccountRepo
+	err error
+}
+
+func (f *failingUpdateAccounts) UpdatePasswordHash(ctx context.Context, id int64, newHash string) error {
+	return f.err
+}
+
+func TestAccountMenu_PasswordRepoFailureSurfacesGenericError(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.menu.SetAccounts(&failingUpdateAccounts{
+		MemoryAccountRepo: f.accounts,
+		err:               errors.New("synthetic repo failure"),
+	})
+	f.feed("password")
+	f.feed("oldpassword")
+	f.feed("brandnewpw")
+	f.captured.Reset()
+	f.feed("brandnewpw")
+	if !strings.Contains(f.captured.String(), "Could not change password") {
+		t.Fatalf("expected generic failure notice: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt = %q, want [account]", got)
+	}
+	if f.session.InPasswordMode {
+		t.Fatal("session still in password mode after failed update")
+	}
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("hash mutated despite repo error")
+	}
+	rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{})
+	for _, r := range rows {
+		if r.Verb == "change-password" {
+			t.Fatalf("audit row written despite repo error: %+v", r)
+		}
+	}
+}
+
 func TestAccountMenu_OnExitClearsPasswordFlow(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
 	f.feed("password")
