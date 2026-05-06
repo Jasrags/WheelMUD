@@ -163,6 +163,17 @@ type CharacterCreate struct {
 	// Tests inject a deterministic source via SetRNG; production paths
 	// fall through to a time-seeded default on first use.
 	rng *rand.Rand
+
+	// settings carries the §6 account-level AccountSettings the player
+	// configured in the account menu before entering chargen.
+	// PromptDefault stamps onto Character.PromptTemplate at finalize
+	// time; ColorOverride and WidthOverride apply to the session via
+	// applyAccountSettings just before promoteToGame so the very first
+	// game-mode render uses the player's preferred values. The zero
+	// value (an account that never visited the settings menu) is a
+	// no-op — the per-character column stays empty and the session
+	// keeps its TERM/NAWS-detected values.
+	settings repo.AccountSettings
 }
 
 func NewCharacterCreate(characters repo.CharacterRepo, game telnet.Mode) *CharacterCreate {
@@ -184,6 +195,12 @@ func (m *CharacterCreate) randSource() *rand.Rand {
 // SetCatalog enables the multi-step chargen flow. Passing nil keeps
 // the legacy single-name flow.
 func (m *CharacterCreate) SetCatalog(c *chargen.Catalog) { m.catalog = c }
+
+// SetSettings forwards the account-level AccountSettings so chargen
+// can stamp PromptDefault onto the new character's prompt_template
+// column and apply ColorOverride/WidthOverride to the session at
+// promote time. Zero value is a no-op.
+func (m *CharacterCreate) SetSettings(s repo.AccountSettings) { m.settings = s }
 
 func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	if m.catalog == nil {
@@ -250,9 +267,10 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 		return writeError(s, err.Error())
 	}
 	c, err := m.repo.Create(ctx, repo.Character{
-		AccountID: s.AccountID,
-		Name:      name,
-		AuthLevel: repo.AuthLevelPlayer,
+		AccountID:      s.AccountID,
+		Name:           name,
+		AuthLevel:      repo.AuthLevelPlayer,
+		PromptTemplate: m.settings.PromptDefault,
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):
@@ -260,6 +278,7 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 	case err != nil:
 		return writeError(s, "Character creation failed. Try again later.")
 	}
+	applyAccountSettings(s, m.settings)
 	return promoteToGame(ctx, s, c, m.repo, m.game)
 }
 
@@ -977,20 +996,21 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 	core.Alignment = m.draft.Alignment
 
 	c, err := m.repo.Create(ctx, repo.Character{
-		AccountID:   s.AccountID,
-		Name:        m.draft.Name,
-		AuthLevel:   repo.AuthLevelPlayer,
-		Race:        race,
-		Background:  bg.Enum,
-		ClassLevels: map[creature.Class]int8{cl.Enum: 1},
-		Core:        core,
-		HeightCm:    m.draft.HeightCm,
-		WeightKg:    m.draft.WeightKg,
-		Age:         m.draft.Age,
-		Handedness:  m.draft.Handedness,
-		Feats:       m.buildFeatIDs(),
-		Skills:      m.buildSkills(),
-		Channeling:  m.buildChanneling(),
+		AccountID:      s.AccountID,
+		Name:           m.draft.Name,
+		AuthLevel:      repo.AuthLevelPlayer,
+		Race:           race,
+		Background:     bg.Enum,
+		ClassLevels:    map[creature.Class]int8{cl.Enum: 1},
+		Core:           core,
+		HeightCm:       m.draft.HeightCm,
+		WeightKg:       m.draft.WeightKg,
+		Age:            m.draft.Age,
+		Handedness:     m.draft.Handedness,
+		Feats:          m.buildFeatIDs(),
+		Skills:         m.buildSkills(),
+		Channeling:     m.buildChanneling(),
+		PromptTemplate: m.settings.PromptDefault,
 	})
 	switch {
 	case errors.Is(err, repo.ErrDuplicateCharacterName):
@@ -1004,6 +1024,7 @@ func (m *CharacterCreate) applyReview(ctx context.Context, s *telnet.Session, in
 	}
 
 	m.step = chargenStepDone
+	applyAccountSettings(s, m.settings)
 	return promoteToGame(ctx, s, c, m.repo, m.game)
 }
 

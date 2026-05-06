@@ -65,6 +65,7 @@ Pragmas set on `Open`: `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMA
 | `mob_instances` | 0008 | `id, template_id FK, room_id FK nullable, created_at` (instance state separate from archetype) |
 | `channeling` | 0008 | `owner_kind (enum: 'mob_template'/'mob_instance'/'character'), owner_id, gender_source, channeler_type, affinity JSON, talents JSON, weaves_known JSON, slots_per_level JSON, embraced, madness, stilled, bonded_warder_id, bonded_aes_sedai_id, held_angreal_id, held_saangreal_id, circle_id, aes_sedai_oaths, damane_collar_to` — polymorphic via `(owner_kind, owner_id)` |
 | `channels` | 0011 | `id, name (unique), description` — seeded with ooc/gossip/newbie |
+| `account_logins` | 0036 | `id, account_id, ts, remote_address, outcome ('success'/'failure'/'lockout'/'kick'), info` + index on `(account_id, ts)` — append-only per-account authentication-event log backing the §6 security sub-menu |
 
 **World data flow**: `0004_seed_starter_zone.sql` was the original SQL seed for the 3-room demo zone. `0006_world_external_id.sql` wipes that seed, adds `external_id` columns, and resets the autoincrement sequences. The runtime now populates the world via `internal/world.LoadAndSync` reading YAML — see "World loader" below. Room id `1` is still the starter (`repo.StarterRoomID`); the loader pins the YAML room flagged `starter: true` to that id explicitly.
 

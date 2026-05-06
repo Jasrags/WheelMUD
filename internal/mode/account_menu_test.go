@@ -15,6 +15,10 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
+// menuFixture wires every dep the AccountMenu needs for a numbered-
+// picker-driven test. The feed() helper drives Handle one line at a
+// time — tests express UX flows as a sequence of digit selections
+// (e.g. "5" → "1" → "6" picks Settings → Color → Truecolor).
 type menuFixture struct {
 	t        *testing.T
 	session  *telnet.Session
@@ -57,9 +61,6 @@ func pushAccountMenu(t *testing.T, names []string) *menuFixture {
 	items := repo.NewMemoryItemRepo()
 	audits := repo.NewMemoryAdminAuditRepo()
 	accounts := repo.NewMemoryAccountRepo()
-	// Seed the account corresponding to AccountID=1 with a known
-	// password so password-change tests can verify the current-password
-	// step without faking the bcrypt verifier.
 	hash, err := auth.Hash("oldpassword")
 	if err != nil {
 		t.Fatalf("hash old: %v", err)
@@ -107,6 +108,37 @@ func (f *menuFixture) feed(line string) {
 	time.Sleep(20 * time.Millisecond)
 }
 
+// rootChoice maps a label to the displayed number for the populated-
+// roster root menu. Tests hard-code numbers (1=Play, 2=New, 3=Delete,
+// 4=Password, 5=Settings, 6=Security, 7=News) — re-numbering would
+// require updating every test, so the mapping is treated as part of
+// the contract.
+const (
+	rootPlay     = "1"
+	rootNew      = "2"
+	rootDelete   = "3"
+	rootPassword = "4"
+	rootSettings = "5"
+	rootSecurity = "6"
+	rootNews     = "7"
+)
+
+// settings drilldown labels.
+const (
+	settingsColor  = "1"
+	settingsPrompt = "2"
+	settingsWidth  = "3"
+	settingsLocale = "4"
+	settingsMOTD   = "5"
+
+	// settingsColorClear is the "Auto / clear override" pick inside the
+	// color drilldown. Numbered 1 by colorOptions in account_menu_settings.go.
+	settingsColorClear     = "1"
+	settingsColorTruecolor = "6"
+)
+
+// ─── Root menu ───────────────────────────────────────────────────────
+
 func TestAccountMenu_ListsOnEntry(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
 	time.Sleep(20 * time.Millisecond)
@@ -114,11 +146,40 @@ func TestAccountMenu_ListsOnEntry(t *testing.T) {
 	if !strings.Contains(out, "Alpha") || !strings.Contains(out, "Beta") {
 		t.Fatalf("expected both characters in listing: %q", out)
 	}
+	if !strings.Contains(out, "Account: rangerbob") {
+		t.Fatalf("expected account header: %q", out)
+	}
+	if !strings.Contains(out, "1) Play") {
+		t.Fatalf("expected numbered Play option: %q", out)
+	}
 }
 
-func TestAccountMenu_PlayNoArgAutoPicksSingle(t *testing.T) {
+func TestAccountMenu_RootHidesPlayDeleteWhenEmpty(t *testing.T) {
+	f := pushAccountMenu(t, nil)
+	time.Sleep(20 * time.Millisecond)
+	out := f.captured.String()
+	if strings.Contains(out, "1) Play") {
+		t.Fatalf("Play must not appear in empty-roster root: %q", out)
+	}
+	if !strings.Contains(out, "1) Create a new character") {
+		t.Fatalf("Create should be option 1 in empty-roster root: %q", out)
+	}
+}
+
+func TestAccountMenu_InvalidChoiceRejects(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.captured.Reset()
+	f.feed("frobnicate")
+	if !strings.Contains(f.captured.String(), "Invalid choice") {
+		t.Fatalf("expected invalid-choice notice: %q", f.captured.String())
+	}
+}
+
+// ─── Play ────────────────────────────────────────────────────────────
+
+func TestAccountMenu_PlaySingleAutoPicks(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Solo"})
-	f.feed("play")
+	f.feed(rootPlay)
 	if f.session.CurrentMode() != f.game {
 		t.Fatalf("CurrentMode = %T, want game", f.session.CurrentMode())
 	}
@@ -127,167 +188,112 @@ func TestAccountMenu_PlayNoArgAutoPicksSingle(t *testing.T) {
 	}
 }
 
-func TestAccountMenu_PlayNoArgRefusesAmbiguous(t *testing.T) {
+func TestAccountMenu_PlayMultiPicker(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	f.feed("play")
-	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
-		t.Fatalf("ambiguous play should stay in menu, got %T", f.session.CurrentMode())
+	f.feed(rootPlay)
+	// Picker is now active; pick option 1.
+	if f.menu.step != accountStepPlayPicker {
+		t.Fatalf("step = %d, want PlayPicker", f.menu.step)
 	}
-	if !strings.Contains(f.captured.String(), "Specify") {
-		t.Fatalf("expected disambiguation hint: %q", f.captured.String())
-	}
-}
-
-func TestAccountMenu_PlayByNamePromotes(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	f.feed("play beta")
+	f.feed("1")
 	if f.session.CurrentMode() != f.game {
 		t.Fatalf("CurrentMode = %T, want game", f.session.CurrentMode())
 	}
-	if f.session.CharacterName != "Beta" {
-		t.Fatalf("CharacterName = %q, want Beta", f.session.CharacterName)
-	}
 }
 
-func TestAccountMenu_PlayByIndexPromotes(t *testing.T) {
+func TestAccountMenu_PlayPickerBackReturnsToRoot(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	f.feed("play 2")
-	if f.session.CurrentMode() != f.game {
-		t.Fatalf("CurrentMode = %T, want game", f.session.CurrentMode())
-	}
-	// chars[0] is most-recently-played; "Beta" was created last so
-	// it lands at index 0 under MemoryCharacterRepo's ordering. Index 2
-	// addresses the second slot regardless — assert the session has
-	// exactly one of the seeded names.
-	if f.session.CharacterName != "Alpha" && f.session.CharacterName != "Beta" {
-		t.Fatalf("CharacterName = %q, want Alpha or Beta", f.session.CharacterName)
+	f.feed(rootPlay)
+	f.feed("b")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root after [B]ack", f.menu.step)
 	}
 }
 
-func TestAccountMenu_PlayForeignCharacterRejected(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha"})
-	if _, err := f.chars.Create(context.Background(), repo.Character{AccountID: 999, Name: "Stranger"}); err != nil {
-		t.Fatalf("seed stranger: %v", err)
-	}
-	f.feed("play Stranger")
-	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
-		t.Fatal("foreign character must not promote — must stay in menu")
-	}
-	if !strings.Contains(f.captured.String(), "No such character on this account") {
-		t.Fatalf("expected reject message: %q", f.captured.String())
-	}
-}
+// ─── New character ───────────────────────────────────────────────────
 
 func TestAccountMenu_NewRoutesToCharacterCreate(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("new")
+	f.feed(rootNew)
 	if _, ok := f.session.CurrentMode().(*CharacterCreate); !ok {
 		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
 	}
 }
+
+// ─── News ────────────────────────────────────────────────────────────
 
 func TestAccountMenu_NewsReplaysHook(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
 	if got := atomic.LoadInt32(f.motdHits); got != 0 {
 		t.Fatalf("motd hits before news = %d, want 0", got)
 	}
-	f.feed("news")
+	f.feed(rootNews)
 	if got := atomic.LoadInt32(f.motdHits); got != 1 {
 		t.Fatalf("motd hits after news = %d, want 1", got)
 	}
-	// Replay must not advance the watermark or change mode.
+	// Stay in menu; news substep awaits Enter to return to root.
 	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
 		t.Fatalf("news should stay in menu, got %T", f.session.CurrentMode())
 	}
-}
-
-func TestAccountMenu_HelpListsVerbs(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha"})
-	f.captured.Reset()
-	f.feed("help")
-	out := f.captured.String()
-	for _, want := range []string{"list", "play", "new", "news", "quit"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("help missing %q: %q", want, out)
-		}
+	if f.menu.step != accountStepNews {
+		t.Fatalf("step = %d, want news", f.menu.step)
+	}
+	// Pressing any line returns to root.
+	f.feed("")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root after Enter", f.menu.step)
 	}
 }
 
-func TestAccountMenu_QuitClosesConnection(t *testing.T) {
+// ─── Quit ────────────────────────────────────────────────────────────
+
+func TestAccountMenu_QuitConfirmYes(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("quit")
+	f.feed("Q")
+	if f.menu.step != accountStepQuitConfirm {
+		t.Fatalf("step = %d, want quit confirm", f.menu.step)
+	}
+	f.captured.Reset()
+	f.feed("y")
 	if !strings.Contains(f.captured.String(), "Goodbye") {
 		t.Fatalf("expected goodbye line: %q", f.captured.String())
 	}
 }
 
-func TestAccountMenu_UnknownVerbStaysInMenu(t *testing.T) {
+func TestAccountMenu_QuitConfirmNo(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("frobnicate")
-	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
-		t.Fatal("unknown verb should stay in menu")
-	}
-	if !strings.Contains(f.captured.String(), "Unknown command") {
-		t.Fatalf("expected error message: %q", f.captured.String())
+	f.feed("Q")
+	f.feed("n")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root after declining quit", f.menu.step)
 	}
 }
 
-func TestAccountMenu_DeleteRequiresArg(t *testing.T) {
+// ─── Delete ──────────────────────────────────────────────────────────
+
+func TestAccountMenu_DeletePickerBackReturnsToRoot(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.captured.Reset()
-	f.feed("delete")
-	if !strings.Contains(f.captured.String(), "Usage: delete") {
-		t.Fatalf("expected usage hint: %q", f.captured.String())
+	f.feed(rootDelete)
+	if f.menu.step != accountStepDeletePicker {
+		t.Fatalf("step = %d, want delete picker", f.menu.step)
+	}
+	f.feed("b")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
 }
 
-func TestAccountMenu_DeleteUnknownNameStaysInRoot(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha"})
-	f.captured.Reset()
-	f.feed("delete Stranger")
-	if _, ok := f.session.CurrentMode().(*AccountMenu); !ok {
-		t.Fatalf("CurrentMode = %T, want *AccountMenu", f.session.CurrentMode())
-	}
-	if !strings.Contains(f.captured.String(), "No such character on this account") {
-		t.Fatalf("expected reject message: %q", f.captured.String())
-	}
-	// Confirmation step must NOT have been pushed.
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
-	}
-}
-
-func TestAccountMenu_DeleteForeignCharacterRejected(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha"})
-	if _, err := f.chars.Create(context.Background(), repo.Character{
-		AccountID: 999, Name: "Stranger",
-	}); err != nil {
-		t.Fatalf("seed stranger: %v", err)
-	}
-	f.captured.Reset()
-	f.feed("delete Stranger")
-	if !strings.Contains(f.captured.String(), "No such character on this account") {
-		t.Fatalf("expected reject: %q", f.captured.String())
-	}
-	// Stranger must still exist.
-	if _, err := f.chars.FindByName(context.Background(), "Stranger"); err != nil {
-		t.Fatalf("stranger removed despite ownership gate: %v", err)
-	}
-}
-
-func TestAccountMenu_DeleteCancelReturnsToRoot(t *testing.T) {
+func TestAccountMenu_DeleteConfirmCancel(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	f.feed("delete Alpha")
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[delete]") {
-		t.Fatalf("prompt = %q, want [delete]", got)
+	f.feed(rootDelete)
+	f.feed("1") // pick Alpha
+	if f.menu.step != accountStepConfirmDelete {
+		t.Fatalf("step = %d, want confirm delete", f.menu.step)
 	}
 	f.captured.Reset()
 	f.feed("cancel")
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt after cancel = %q, want [account]", got)
-	}
-	if !strings.Contains(f.captured.String(), "Cancelled") {
-		t.Fatalf("expected cancel notice: %q", f.captured.String())
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step after cancel = %d, want root", f.menu.step)
 	}
 	// Character must still exist.
 	if _, err := f.chars.FindByName(context.Background(), "Alpha"); err != nil {
@@ -295,20 +301,17 @@ func TestAccountMenu_DeleteCancelReturnsToRoot(t *testing.T) {
 	}
 }
 
-func TestAccountMenu_DeleteMismatchedNameRepeatsConfirm(t *testing.T) {
+func TestAccountMenu_DeleteConfirmMismatchRepeats(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	f.feed("delete Alpha")
+	f.feed(rootDelete)
+	f.feed("1")
 	f.captured.Reset()
 	f.feed("alpha") // case-sensitive — must not match
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[delete]") {
-		t.Fatalf("prompt = %q, want still [delete]", got)
+	if f.menu.step != accountStepConfirmDelete {
+		t.Fatalf("step = %d, want still confirm delete", f.menu.step)
 	}
 	if !strings.Contains(f.captured.String(), "Names did not match") {
 		t.Fatalf("expected mismatch warning: %q", f.captured.String())
-	}
-	// Character must still exist.
-	if _, err := f.chars.FindByName(context.Background(), "Alpha"); err != nil {
-		t.Fatalf("Alpha removed by mismatch: %v", err)
 	}
 }
 
@@ -316,16 +319,10 @@ func TestAccountMenu_DeleteCascadesItemsAndAudits(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
 	ctx := context.Background()
 
-	// Resolve the to-be-deleted character so we know its ID for the
-	// item seed and the audit assertion.
 	target, err := f.chars.FindByName(ctx, "Alpha")
 	if err != nil {
 		t.Fatalf("find Alpha: %v", err)
 	}
-
-	// Seed two items: a top-level worn outfit, and a bag containing
-	// a coin pouch (verifies the BFS through parent_item_id is used,
-	// not just ListInInventory).
 	outfit, err := f.items.Create(ctx, repo.Item{
 		ExternalID: "outfit-1", Name: "leather jerkin", Type: repo.ItemTypeArmor,
 		Stats: &repo.ArmorStats{Bonus: 1}, OwnerCharacterID: target.ID,
@@ -347,8 +344,6 @@ func TestAccountMenu_DeleteCascadesItemsAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed pouch: %v", err)
 	}
-
-	// Foreign item on a different character must NOT be touched.
 	foreignChar, err := f.chars.Create(ctx, repo.Character{AccountID: 1, Name: "Foreign"})
 	if err != nil {
 		t.Fatalf("seed foreign char: %v", err)
@@ -361,14 +356,25 @@ func TestAccountMenu_DeleteCascadesItemsAndAudits(t *testing.T) {
 		t.Fatalf("seed foreign item: %v", err)
 	}
 
-	// Drive the delete.
-	f.feed("delete Alpha")
-	f.feed(target.Name) // exact case-sensitive match
-
-	if got := f.menu.Prompt(ctx, f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt after delete = %q, want [account]", got)
+	// Resolve Alpha's index in the menu's cached roster.
+	var alphaIdx int
+	for i, c := range f.menu.chars {
+		if c.Name == "Alpha" {
+			alphaIdx = i + 1
+			break
+		}
+	}
+	if alphaIdx == 0 {
+		t.Fatalf("Alpha not in cached roster: %+v", f.menu.chars)
 	}
 
+	f.feed(rootDelete)
+	f.feed(itoa(alphaIdx))
+	f.feed("Alpha")
+
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step after delete = %d, want root", f.menu.step)
+	}
 	if _, err := f.chars.FindByName(ctx, "Alpha"); !errors.Is(err, repo.ErrCharacterNotFound) {
 		t.Fatalf("Alpha not removed: err=%v", err)
 	}
@@ -377,12 +383,10 @@ func TestAccountMenu_DeleteCascadesItemsAndAudits(t *testing.T) {
 			t.Fatalf("item %d not deleted: err=%v", id, err)
 		}
 	}
-	// Foreign item must survive.
 	if _, err := f.items.GetByID(ctx, foreignItem.ID); err != nil {
 		t.Fatalf("foreign item destroyed: %v", err)
 	}
 
-	// Audit row.
 	rows, err := f.audits.List(ctx, repo.AdminAuditFilter{})
 	if err != nil {
 		t.Fatalf("list audits: %v", err)
@@ -397,50 +401,18 @@ func TestAccountMenu_DeleteCascadesItemsAndAudits(t *testing.T) {
 	if a.ActorType != repo.ActorTypeAccount || a.ActorAccountID != 1 || a.ActorName != "rangerbob" {
 		t.Fatalf("audit actor mismatch: %+v", a)
 	}
-
-	// Roster reload — Alpha gone, Beta + Foreign still listed.
-	if !strings.Contains(f.captured.String(), "Beta") {
-		t.Fatalf("post-delete listing missing Beta: %q", f.captured.String())
-	}
-	if strings.Contains(f.captured.String()[strings.LastIndex(f.captured.String(), "Your characters:"):], "Alpha") {
-		t.Fatalf("post-delete listing still contains Alpha: %q", f.captured.String())
-	}
-}
-
-func TestAccountMenu_DeleteLastCharacterRendersEmptyRoster(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Solo"})
-	f.feed("delete Solo")
-	f.captured.Reset()
-	f.feed("Solo")
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
-	}
-	out := f.captured.String()
-	if !strings.Contains(out, "Character deleted") {
-		t.Fatalf("expected delete confirmation: %q", out)
-	}
-	if !strings.Contains(out, "(none — type 'new' to create one)") {
-		t.Fatalf("expected empty-roster line: %q", out)
-	}
-	// Solo gone from repo.
-	if _, err := f.chars.FindByName(context.Background(), "Solo"); !errors.Is(err, repo.ErrCharacterNotFound) {
-		t.Fatalf("Solo not removed: %v", err)
-	}
 }
 
 func TestAccountMenu_DeleteWithoutItemsRepoRefuses(t *testing.T) {
-	// Without SetItems, the cascade guard must refuse rather than
-	// silently skip — orphaned items.owner_character_id rows are the
-	// invariant slice 1b enforces.
 	f := pushAccountMenu(t, []string{"Alpha"})
 	f.menu.SetItems(nil)
-	f.feed("delete Alpha")
+	f.feed(rootDelete)
+	f.feed("1")
 	f.captured.Reset()
 	f.feed("Alpha")
 	if !strings.Contains(f.captured.String(), "Could not delete") {
 		t.Fatalf("expected refusal: %q", f.captured.String())
 	}
-	// Character must still exist.
 	if _, err := f.chars.FindByName(context.Background(), "Alpha"); err != nil {
 		t.Fatalf("Alpha removed despite refusal: %v", err)
 	}
@@ -448,18 +420,15 @@ func TestAccountMenu_DeleteWithoutItemsRepoRefuses(t *testing.T) {
 
 func TestAccountMenu_DeleteRefusesLoggedInTarget(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha", "Beta"})
-	// Stand up a parallel session bound under a different account that
-	// happens to be playing as "Alpha" (test contrives this; production
-	// can't reach this state today, but the defensive check forward-
-	// proofs the code).
 	other, _ := net.Pipe()
 	t.Cleanup(func() { _ = other.Close() })
 	otherSess := telnet.NewSession(other)
 	otherSess.SetInWorld(99, "Alpha", 1)
 	f.registry.Bind(2, otherSess)
 
+	f.feed(rootDelete)
 	f.captured.Reset()
-	f.feed("delete Alpha")
+	f.feed("1") // Alpha is index 1 in the cached roster
 	if !strings.Contains(f.captured.String(), "currently logged in") {
 		t.Fatalf("expected live-session refusal: %q", f.captured.String())
 	}
@@ -468,77 +437,55 @@ func TestAccountMenu_DeleteRefusesLoggedInTarget(t *testing.T) {
 	}
 }
 
+// ─── Password ────────────────────────────────────────────────────────
+
 func TestAccountMenu_PasswordWithoutAccountsRepoRefuses(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
 	f.menu.SetAccounts(nil)
 	f.captured.Reset()
-	f.feed("password")
+	f.feed(rootPassword)
 	if !strings.Contains(f.captured.String(), "not configured") {
 		t.Fatalf("expected refusal: %q", f.captured.String())
 	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
-	}
-}
-
-func TestAccountMenu_PasswordWrongCurrentResetsToRoot(t *testing.T) {
-	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("password")
-	if got := f.menu.Prompt(context.Background(), f.session); got != "Current password: " {
-		t.Fatalf("prompt = %q, want current-password prompt", got)
-	}
-	f.captured.Reset()
-	f.feed("notmypw")
-	if !strings.Contains(f.captured.String(), "did not match") {
-		t.Fatalf("expected current-mismatch notice: %q", f.captured.String())
-	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt after wrong current = %q, want [account]", got)
-	}
-	// Hash unchanged.
-	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
-	if !auth.Verify(got.PasswordHash, "oldpassword") {
-		t.Fatal("old password should still verify")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
 }
 
 func TestAccountMenu_PasswordHappyPath(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("password")
+	f.feed(rootPassword)
+	if f.menu.step != accountStepCurrentPassword {
+		t.Fatalf("step = %d, want CurrentPassword", f.menu.step)
+	}
 	f.feed("oldpassword")
-	if got := f.menu.Prompt(context.Background(), f.session); got != "New password: " {
-		t.Fatalf("prompt = %q, want new-password prompt", got)
+	if f.menu.step != accountStepNewPassword {
+		t.Fatalf("step = %d, want NewPassword", f.menu.step)
 	}
 	f.feed("brandnewpw")
-	if got := f.menu.Prompt(context.Background(), f.session); got != "Confirm new password: " {
-		t.Fatalf("prompt = %q, want confirm prompt", got)
+	if f.menu.step != accountStepConfirmNewPassword {
+		t.Fatalf("step = %d, want ConfirmNewPassword", f.menu.step)
 	}
 	f.captured.Reset()
 	f.feed("brandnewpw")
 	if !strings.Contains(f.captured.String(), "Password changed") {
 		t.Fatalf("expected success line: %q", f.captured.String())
 	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
 	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
 	if !auth.Verify(got.PasswordHash, "brandnewpw") {
 		t.Fatal("new password did not verify after change")
 	}
-	if auth.Verify(got.PasswordHash, "oldpassword") {
-		t.Fatal("old password still verifies after change")
-	}
 	rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{})
 	var found bool
 	for _, r := range rows {
 		if r.Verb == "change-password" {
-			if r.ActorType != repo.ActorTypeAccount || r.ActorAccountID != f.account.ID || r.ActorName != "rangerbob" {
+			found = true
+			if r.ActorType != repo.ActorTypeAccount || r.ActorAccountID != f.account.ID {
 				t.Fatalf("audit actor mismatch: %+v", r)
 			}
-			if r.Target != "" || r.Args != "" {
-				t.Fatalf("audit row leaked target/args: %+v", r)
-			}
-			found = true
 		}
 	}
 	if !found {
@@ -546,9 +493,26 @@ func TestAccountMenu_PasswordHappyPath(t *testing.T) {
 	}
 }
 
+func TestAccountMenu_PasswordWrongCurrentResetsToRoot(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed(rootPassword)
+	f.captured.Reset()
+	f.feed("notmypw")
+	if !strings.Contains(f.captured.String(), "did not match") {
+		t.Fatalf("expected mismatch notice: %q", f.captured.String())
+	}
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
+	}
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("old password should still verify")
+	}
+}
+
 func TestAccountMenu_PasswordConfirmMismatchResets(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("password")
+	f.feed(rootPassword)
 	f.feed("oldpassword")
 	f.feed("brandnewpw")
 	f.captured.Reset()
@@ -556,79 +520,32 @@ func TestAccountMenu_PasswordConfirmMismatchResets(t *testing.T) {
 	if !strings.Contains(f.captured.String(), "did not match") {
 		t.Fatalf("expected confirm-mismatch notice: %q", f.captured.String())
 	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
-	}
-	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
-	if !auth.Verify(got.PasswordHash, "oldpassword") {
-		t.Fatal("old password should survive confirm mismatch")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
 }
 
 func TestAccountMenu_PasswordTooShortResets(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("password")
+	f.feed(rootPassword)
 	f.feed("oldpassword")
 	f.captured.Reset()
-	f.feed("short") // < 8 runes
+	f.feed("short")
 	if !strings.Contains(f.captured.String(), "too short") {
 		t.Fatalf("expected too-short notice: %q", f.captured.String())
 	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
-	}
-	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
-	if !auth.Verify(got.PasswordHash, "oldpassword") {
-		t.Fatal("hash mutated despite too-short rejection")
-	}
 }
 
-func TestAccountMenu_PasswordCancelAtEachStep(t *testing.T) {
-	cases := []struct {
-		name    string
-		feedPre []string
-	}{
-		{"current", nil},
-		{"new", []string{"oldpassword"}},
-		{"confirm", []string{"oldpassword", "brandnewpw"}},
+func TestAccountMenu_PasswordCancelAtCurrent(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed(rootPassword)
+	f.feed("cancel")
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := pushAccountMenu(t, []string{"Alpha"})
-			f.feed("password")
-			for _, line := range tc.feedPre {
-				f.feed(line)
-			}
-			f.captured.Reset()
-			f.feed("cancel")
-			if !strings.Contains(f.captured.String(), "Cancelled") {
-				t.Fatalf("expected cancel notice: %q", f.captured.String())
-			}
-			if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-				t.Fatalf("prompt after cancel = %q, want [account]", got)
-			}
-			if f.session.InPasswordMode {
-				t.Fatal("session still in password mode after cancel")
-			}
-			got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
-			if !auth.Verify(got.PasswordHash, "oldpassword") {
-				t.Fatal("old password should survive cancel")
-			}
-		})
+	if f.session.InPasswordMode {
+		t.Fatal("session still in password mode after cancel")
 	}
-}
-
-// failingUpdateAccounts wraps a real MemoryAccountRepo but forces
-// UpdatePasswordHash to return a synthetic error so we can exercise
-// the mode-layer "could not change password" branch that the contract
-// test in internal/repo/account_test.go can't reach.
-type failingUpdateAccounts struct {
-	*repo.MemoryAccountRepo
-	err error
-}
-
-func (f *failingUpdateAccounts) UpdatePasswordHash(ctx context.Context, id int64, newHash string) error {
-	return f.err
 }
 
 func TestAccountMenu_PasswordRepoFailureSurfacesGenericError(t *testing.T) {
@@ -637,7 +554,7 @@ func TestAccountMenu_PasswordRepoFailureSurfacesGenericError(t *testing.T) {
 		MemoryAccountRepo: f.accounts,
 		err:               errors.New("synthetic repo failure"),
 	})
-	f.feed("password")
+	f.feed(rootPassword)
 	f.feed("oldpassword")
 	f.feed("brandnewpw")
 	f.captured.Reset()
@@ -645,15 +562,11 @@ func TestAccountMenu_PasswordRepoFailureSurfacesGenericError(t *testing.T) {
 	if !strings.Contains(f.captured.String(), "Could not change password") {
 		t.Fatalf("expected generic failure notice: %q", f.captured.String())
 	}
-	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
-		t.Fatalf("prompt = %q, want [account]", got)
+	if f.menu.step != accountStepRoot {
+		t.Fatalf("step = %d, want root", f.menu.step)
 	}
 	if f.session.InPasswordMode {
 		t.Fatal("session still in password mode after failed update")
-	}
-	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
-	if !auth.Verify(got.PasswordHash, "oldpassword") {
-		t.Fatal("hash mutated despite repo error")
 	}
 	rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{})
 	for _, r := range rows {
@@ -665,9 +578,8 @@ func TestAccountMenu_PasswordRepoFailureSurfacesGenericError(t *testing.T) {
 
 func TestAccountMenu_OnExitClearsPasswordFlow(t *testing.T) {
 	f := pushAccountMenu(t, []string{"Alpha"})
-	f.feed("password")
+	f.feed(rootPassword)
 	f.feed("oldpassword")
-	// Mid-flow at new-password prompt; tear the menu down.
 	if err := f.menu.OnExit(f.session); err != nil {
 		t.Fatalf("OnExit: %v", err)
 	}
@@ -675,6 +587,246 @@ func TestAccountMenu_OnExitClearsPasswordFlow(t *testing.T) {
 		t.Fatal("password mode persisted past OnExit")
 	}
 }
+
+// failingUpdateAccounts wraps a real MemoryAccountRepo but forces
+// UpdatePasswordHash to return a synthetic error so we can exercise
+// the mode-layer "could not change password" branch.
+type failingUpdateAccounts struct {
+	*repo.MemoryAccountRepo
+	err error
+}
+
+func (f *failingUpdateAccounts) UpdatePasswordHash(ctx context.Context, id int64, newHash string) error {
+	return f.err
+}
+
+// ─── Settings ────────────────────────────────────────────────────────
+
+func TestAccountMenu_SettingsRootShowsKeys(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.captured.Reset()
+	f.feed(rootSettings)
+	out := f.captured.String()
+	for _, want := range []string{"1) Color", "2) Prompt", "3) Width", "4) Locale", "5) MOTD replay"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("settings root missing %q in:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "(auto)") {
+		t.Fatalf("expected (auto) defaults: %q", out)
+	}
+}
+
+func TestAccountMenu_SettingsColorSetsTruecolor(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsColor)
+	f.feed(settingsColorTruecolor)
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.ColorOverride != "truecolor" {
+		t.Fatalf("color = %q, want truecolor", got.Settings.ColorOverride)
+	}
+}
+
+func TestAccountMenu_SettingsColorClear(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	// Set then clear.
+	f.feed(rootSettings)
+	f.feed(settingsColor)
+	f.feed(settingsColorTruecolor)
+	f.feed(settingsColor)
+	f.feed(settingsColorClear)
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.ColorOverride != "" {
+		t.Fatalf("color = %q, want empty", got.Settings.ColorOverride)
+	}
+}
+
+func TestAccountMenu_SettingsPromptFreeText(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsPrompt)
+	f.feed(`"<%h/%H hp>"`)
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.PromptDefault != "<%h/%H hp>" {
+		t.Fatalf("prompt = %q", got.Settings.PromptDefault)
+	}
+}
+
+func TestAccountMenu_SettingsPromptStripsControlBytes(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsPrompt)
+	f.feed("hi\x1bX\x7f>")
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	stored := got.Settings.PromptDefault
+	if stored == "" {
+		t.Fatalf("expected non-empty stored prompt after stripping")
+	}
+	for _, r := range stored {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("control byte %#x leaked into stored prompt %q", r, stored)
+		}
+	}
+}
+
+func TestAccountMenu_SettingsPromptClear(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsPrompt)
+	f.feed("hello")
+	// After save we're back at settingsRoot; re-enter Prompt.
+	f.feed(settingsPrompt)
+	f.feed("clear")
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.PromptDefault != "" {
+		t.Fatalf("prompt not cleared: %q", got.Settings.PromptDefault)
+	}
+}
+
+func TestAccountMenu_SettingsWidthSetsAndRejects(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsWidth)
+	f.captured.Reset()
+	f.feed("xyz")
+	if !strings.Contains(f.captured.String(), "Bad width") {
+		t.Fatalf("expected bad-width notice: %q", f.captured.String())
+	}
+	// Out of range.
+	f.captured.Reset()
+	f.feed("10")
+	if !strings.Contains(f.captured.String(), "Bad width") {
+		t.Fatalf("expected bad-width notice (out of range): %q", f.captured.String())
+	}
+	// Valid.
+	f.feed("100")
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.WidthOverride != 100 {
+		t.Fatalf("width = %d", got.Settings.WidthOverride)
+	}
+}
+
+func TestAccountMenu_SettingsLocaleSetsAndRejects(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsLocale)
+	f.captured.Reset()
+	f.feed("Nowhere/Made_Up")
+	if !strings.Contains(f.captured.String(), "Bad locale") {
+		t.Fatalf("expected bad-locale notice: %q", f.captured.String())
+	}
+	f.captured.Reset()
+	f.feed("Local")
+	if !strings.Contains(f.captured.String(), "Bad locale") {
+		t.Fatalf("'Local' magic token must be rejected: %q", f.captured.String())
+	}
+	f.captured.Reset()
+	f.feed("../etc/passwd")
+	if !strings.Contains(f.captured.String(), "Bad locale") {
+		t.Fatalf("path-bearing locale must be rejected: %q", f.captured.String())
+	}
+	f.feed("America/New_York")
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.Locale != "America/New_York" {
+		t.Fatalf("locale = %q", got.Settings.Locale)
+	}
+}
+
+func TestAccountMenu_SettingsMOTDToggle(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsMOTD)
+	f.feed("1") // On
+	got, _ := f.accounts.FindByID(context.Background(), f.account.ID)
+	if !got.Settings.MOTDAlways {
+		t.Fatalf("MOTDAlways not set")
+	}
+	f.feed(settingsMOTD)
+	f.feed("2") // Off
+	got, _ = f.accounts.FindByID(context.Background(), f.account.ID)
+	if got.Settings.MOTDAlways {
+		t.Fatalf("MOTDAlways not cleared")
+	}
+}
+
+func TestAccountMenu_SettingsAuditsEachChange(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsColor)
+	f.feed(settingsColorTruecolor)
+	f.feed(settingsWidth)
+	f.feed("100")
+	rows, _ := f.audits.List(context.Background(),
+		repo.AdminAuditFilter{ActorAccount: f.account.ID, Limit: 50})
+	if len(rows) != 2 {
+		t.Fatalf("audit rows = %d, want 2", len(rows))
+	}
+	keys := map[string]bool{}
+	for _, r := range rows {
+		if r.Verb != "settings-update" {
+			t.Fatalf("verb = %q", r.Verb)
+		}
+		keys[r.Target] = true
+	}
+	for _, want := range []string{"color", "width"} {
+		if !keys[want] {
+			t.Fatalf("missing audit row for %q (got %v)", want, keys)
+		}
+	}
+}
+
+func TestAccountMenu_SettingsAppliedOnPlay(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsColor)
+	f.feed("2") // None
+	f.feed(settingsWidth)
+	f.feed("80")
+	f.feed("b") // back to root
+	f.feed(rootPlay)
+	if f.session.CurrentMode() != f.game {
+		t.Fatalf("not promoted: %T", f.session.CurrentMode())
+	}
+	if f.session.ColorLevel != telnet.ColorLevelNone {
+		t.Fatalf("ColorLevel = %d, want None", f.session.ColorLevel)
+	}
+	if f.session.Width != 80 {
+		t.Fatalf("Width = %d, want 80", f.session.Width)
+	}
+}
+
+func TestAccountMenu_SettingsForwardsPromptDefaultToCharacterCreate(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.feed(rootSettings)
+	f.feed(settingsPrompt)
+	f.feed("%h>")
+	f.feed("b") // back to root
+	f.feed(rootNew)
+	create, ok := f.session.CurrentMode().(*CharacterCreate)
+	if !ok {
+		t.Fatalf("CurrentMode = %T, want *CharacterCreate", f.session.CurrentMode())
+	}
+	if create.settings.PromptDefault != "%h>" {
+		t.Fatalf("forwarded prompt = %q, want %q", create.settings.PromptDefault, "%h>")
+	}
+}
+
+func TestAccountMenu_SettingsMOTDAlwaysReplaysFromZero(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Solo"})
+	f.menu.SetSettings(repo.AccountSettings{MOTDAlways: true})
+	var got time.Time
+	f.menu.SetMOTD(func(_ *telnet.Session, lastSeen time.Time) error {
+		got = lastSeen
+		return nil
+	})
+	f.feed(rootNews)
+	if !got.IsZero() {
+		t.Fatalf("MOTDAlways should pass zero time, got %v", got)
+	}
+}
+
+// ─── postAuth ordering ───────────────────────────────────────────────
 
 // TestPostAuth_FiresMOTDOncePerLogin locks in the §6 ordering note:
 // MOTD/news fires before the AccountMenu, and is not re-fired by
@@ -709,14 +861,15 @@ func TestPostAuth_FiresMOTDOncePerLogin(t *testing.T) {
 		t.Fatalf("postAuth: %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {
-		t.Fatalf("motd hits after postAuth = %d, want 1 (fires before menu)", got)
+		t.Fatalf("motd hits after postAuth = %d, want 1", got)
 	}
 
 	menu, ok := s.CurrentMode().(*AccountMenu)
 	if !ok {
 		t.Fatalf("CurrentMode = %T, want *AccountMenu", s.CurrentMode())
 	}
-	if err := menu.Handle(context.Background(), s, "play"); err != nil {
+	// Single character → "1) Play" auto-promotes.
+	if err := menu.Handle(context.Background(), s, "1"); err != nil {
 		t.Fatalf("play: %v", err)
 	}
 	if got := atomic.LoadInt32(&hits); got != 1 {

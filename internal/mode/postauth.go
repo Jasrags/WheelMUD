@@ -2,7 +2,9 @@ package mode
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
@@ -24,6 +26,7 @@ type postAuthDeps struct {
 	audits          repo.AdminAuditRepo
 	accounts        repo.AccountRepo
 	sessions        *session.Registry
+	logins          repo.AccountLoginRepo
 	accountUsername string
 }
 
@@ -66,16 +69,40 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	chars, err := characters.ListByAccount(ctx, s.AccountID)
 	if err != nil {
 		slog.Warn("postAuth: list characters failed", "remote", s.RemoteAddress, "account", s.AccountID, "error", err)
-		return s.WriteRaw([]byte("Could not load characters. Try again later.\r\n"))
+		// Surface a generic notice and return the underlying error so
+		// the caller (Login / Create) can reset its state machine
+		// instead of silently looping at stepPassword with the mask
+		// off. Write failures are reported back as-is.
+		if werr := s.WriteRaw([]byte("Could not load characters. Try again later.\r\n")); werr != nil {
+			return werr
+		}
+		return err
+	}
+	// Resolve the account row's AccountSettings (slice 3). A repo
+	// failure or a nil accounts wiring leaves settings at the zero
+	// value, which round-trips as "use server defaults" — login
+	// proceeds rather than failing on a settings load. Logged for
+	// forensics when a real lookup fails so a corrupt or missing row
+	// doesn't disappear silently.
+	var settings repo.AccountSettings
+	if deps.accounts != nil && s.AccountID > 0 {
+		if a, lookupErr := deps.accounts.FindByID(ctx, s.AccountID); lookupErr == nil {
+			settings = a.Settings
+		} else if !errors.Is(lookupErr, repo.ErrAccountNotFound) {
+			slog.Warn("postAuth: load account settings failed",
+				"account", s.AccountID, "error", lookupErr)
+		}
 	}
 	// Fire MOTD/news once per successful login, before routing to a
-	// post-auth mode. Errors here are surfaced — a write failure
-	// almost certainly means the connection is dead and pushing a
-	// mode after would do nothing useful.
+	// post-auth mode. MOTDAlways flattens the per-character
+	// last_news_seen watermark to zero so every entry re-renders.
 	if motd != nil {
 		var lastSeen time.Time
 		if len(chars) > 0 {
 			lastSeen = chars[0].LastNewsSeen
+		}
+		if settings.MOTDAlways {
+			lastSeen = time.Time{}
 		}
 		if err := motd(s, lastSeen); err != nil {
 			return err
@@ -84,6 +111,7 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	if len(chars) == 0 {
 		create := NewCharacterCreate(characters, game)
 		create.SetCatalog(catalog)
+		create.SetSettings(settings)
 		return s.ReplaceMode(create)
 	}
 	menu := NewAccountMenu(chars, characters, game)
@@ -94,7 +122,43 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	menu.SetAccounts(deps.accounts)
 	menu.SetSessions(deps.sessions)
 	menu.SetAccountUsername(deps.accountUsername)
+	menu.SetSettings(settings)
+	menu.SetLogins(deps.logins)
 	return s.ReplaceMode(menu)
+}
+
+// remoteHost extracts the host portion of a RemoteAddress string
+// (typically "host:port" from net.Conn.RemoteAddr().String()). Falls
+// back to the input verbatim when the value doesn't contain a port —
+// IPv6 link-local without brackets, unix sockets, test fakes — so the
+// audit log still records *something* useful in odd environments.
+func remoteHost(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
+// applyAccountSettings stamps the slice-3 session-scoped settings
+// (color level, terminal width) onto the session. Called from
+// promoteToGame just before in-world fields land so the next render
+// (and the cached prompt repaint) sees the new values. Lives next to
+// promoteToGame so the apply order stays one-stop-shoppable.
+//
+// ColorOverride is parsed at the menu boundary already, but a stale or
+// hand-edited row could carry an unrecognised token; ParseColorLevel
+// silently rejects rather than crashing the promote, and the session
+// keeps its TERM-detected level. Width 0/<40/>200 is similarly tolerated.
+func applyAccountSettings(s *telnet.Session, settings repo.AccountSettings) {
+	if level, ok := telnet.ParseColorLevel(settings.ColorOverride); ok && settings.ColorOverride != "" {
+		s.ColorLevel = level
+	}
+	if w := settings.WidthOverride; w >= 40 && w <= 200 {
+		s.Width = w
+	}
 }
 
 // promoteToGame stamps the character onto the session, records play

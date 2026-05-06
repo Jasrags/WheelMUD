@@ -87,6 +87,27 @@ func (r *MemoryAccountRepo) UpdatePasswordHash(_ context.Context, id int64, newH
 	return nil
 }
 
+func (r *MemoryAccountRepo) UpdateSettings(_ context.Context, id int64, s AccountSettings) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.findByIDLocked(id)
+	if a == nil {
+		return ErrAccountNotFound
+	}
+	a.Settings = s
+	return nil
+}
+
+func (r *MemoryAccountRepo) FindByID(_ context.Context, id int64) (Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.findByIDLocked(id)
+	if a == nil {
+		return Account{}, ErrAccountNotFound
+	}
+	return *a, nil
+}
+
 func (r *MemoryAccountRepo) findByIDLocked(id int64) *Account {
 	for _, a := range r.byLower {
 		if a.ID == id {

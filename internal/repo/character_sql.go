@@ -138,8 +138,10 @@ func charPlayerScanDest(c *Character,
 	classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON *string,
 	coinCP, bankCP *int64,
 	fatigueUntil, idleSince, lastLogin *sql.NullTime,
-	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON,
-	channelingJSON *string,
+	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON *string,
+	// channelingJSON is *sql.NullString (not *string) so a stray
+	// SQL NULL on pre-0033 rows scans cleanly. See scanCharacter.
+	channelingJSON *sql.NullString,
 	lastNewsSeenSec *int64,
 ) []any {
 	return []any{

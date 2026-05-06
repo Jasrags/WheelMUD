@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/prompt"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -203,7 +204,7 @@ func TestPrompt_RejectOverlong(t *testing.T) {
 	s.CharacterID = c.ID
 	s.CharacterName = c.Name
 
-	long := strings.Repeat("x", promptMaxLen+1)
+	long := strings.Repeat("x", prompt.MaxTemplateLen+1)
 	runPromptCmd(t, NewPrompt(chars, testServerDefault), s, "set "+long)
 
 	if !strings.Contains(out.String(), "Invalid template") {

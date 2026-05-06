@@ -3,14 +3,10 @@ package cmd
 import (
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/prompt"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
-
-// promptMaxLen caps the per-character template length. A longer prompt
-// would push command output off the right margin on standard 80-col
-// terminals; 120 leaves room for color tags + a few placeholders.
-const promptMaxLen = 120
 
 // NewPrompt returns the `prompt` command — show / set / clear / help
 // the session character's prompt template.
@@ -85,7 +81,7 @@ func showPrompt(c *telnet.Context, characters repo.CharacterRepo, serverDefault 
 }
 
 func setPrompt(c *telnet.Context, characters repo.CharacterRepo, tmpl string) error {
-	clean, ok := sanitizePromptTemplate(tmpl)
+	clean, ok := prompt.SanitizeTemplate(tmpl)
 	if !ok {
 		return c.Session.WriteRaw([]byte("Invalid template (empty, too long, or contains control characters).\r\n"))
 	}
@@ -102,30 +98,3 @@ func clearPrompt(c *telnet.Context, characters repo.CharacterRepo) error {
 	return c.Session.WriteRaw([]byte("Reverted to server default.\r\n"))
 }
 
-// sanitizePromptTemplate strips control bytes first and then enforces
-// the length cap so a template that fits after stripping is accepted.
-// Unlike sanitizeChat it does NOT defang cfmt syntax — color tags in
-// a player's own prompt are intentional. Returns ok=false on empty
-// (post-strip) or oversized input.
-func sanitizePromptTemplate(s string) (string, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", false
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	out := b.String()
-	if out == "" {
-		return "", false
-	}
-	if len(out) > promptMaxLen {
-		return "", false
-	}
-	return out, true
-}

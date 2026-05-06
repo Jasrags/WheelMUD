@@ -47,6 +47,7 @@ type Create struct {
 	catalog  *chargen.Catalog
 	items    repo.ItemRepo
 	audits   repo.AdminAuditRepo
+	logins   repo.AccountLoginRepo
 }
 
 // SetMOTD propagates the MOTD/news hook from Login through Create →
@@ -65,6 +66,11 @@ func (c *Create) SetItems(r repo.ItemRepo) { c.items = r }
 // SetAudits forwards the admin_audit repo through to the post-auth
 // AccountMenu for account-mode audit rows. nil is a no-op.
 func (c *Create) SetAudits(r repo.AdminAuditRepo) { c.audits = r }
+
+// SetLogins forwards the account_logins repo (slice 4) so a fresh
+// account-creation lands one success row before postAuth fires. nil
+// silently skips the recording.
+func (c *Create) SetLogins(r repo.AccountLoginRepo) { c.logins = r }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
 // to postAuth after the account is persisted; sessions enforces the
@@ -175,13 +181,36 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Account created. Welcome, " + a.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game, postAuthDeps{
+	if c.logins != nil {
+		if rerr := c.logins.Record(ctx, repo.AccountLoginEntry{
+			AccountID:     a.ID,
+			RemoteAddress: remoteHost(s.RemoteAddress),
+			Outcome:       repo.LoginOutcomeSuccess,
+			Info:          "account created",
+		}); rerr != nil {
+			slog.Warn("create: record account_logins failed",
+				"account", a.ID, "err", rerr)
+		}
+	}
+	if err := postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game, postAuthDeps{
 		items:           c.items,
 		audits:          c.audits,
 		accounts:        c.accounts,
 		sessions:        c.sessions,
+		logins:          c.logins,
 		accountUsername: a.Username,
-	})
+	}); err != nil {
+		// Reset the create state machine so a postAuth failure doesn't
+		// strand the session at stepConfirm with the password mask
+		// off. The user can reconnect; the account itself was already
+		// persisted.
+		c.step = createStepUsername
+		c.username = ""
+		c.hash = ""
+		s.SetPasswordMode(false)
+		return err
+	}
+	return nil
 }
 
 // reservedUsernames are case-insensitively forbidden. "new" routes to

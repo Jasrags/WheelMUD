@@ -53,8 +53,9 @@ type Login struct {
 	account  *repo.Account // resolved after step 1; nil when no such user
 	motd     MOTDFunc      // optional MOTD/news hook fired by promoteToGame
 	catalog  *chargen.Catalog
-	items    repo.ItemRepo       // wired via SetItems; threaded to AccountMenu
-	audits   repo.AdminAuditRepo // wired via SetAudits; threaded to AccountMenu
+	items    repo.ItemRepo         // wired via SetItems; threaded to AccountMenu
+	audits   repo.AdminAuditRepo   // wired via SetAudits; threaded to AccountMenu
+	logins   repo.AccountLoginRepo // slice 4: per-account login-event log
 }
 
 // SetMOTD wires an optional MOTD hook that promoteToGame fires on
@@ -76,6 +77,12 @@ func (l *Login) SetItems(r repo.ItemRepo) { l.items = r }
 // AccountMenu so destructive actions land an account-mode audit row.
 // nil silently skips the audit write.
 func (l *Login) SetAudits(r repo.AdminAuditRepo) { l.audits = r }
+
+// SetLogins wires the per-account authentication-event log (slice 4).
+// Login mode records one row per outcome (success / failure / lockout)
+// and forwards the repo to the AccountMenu so the security view can
+// list recent activity. nil silently skips the recording.
+func (l *Login) SetLogins(r repo.AccountLoginRepo) { l.logins = r }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
 // sessions enforces the single-session-per-account policy: a successful
@@ -141,6 +148,7 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 		create.SetCatalog(l.catalog)
 		create.SetItems(l.items)
 		create.SetAudits(l.audits)
+		create.SetLogins(l.logins)
 		return s.ReplaceMode(create)
 	}
 
@@ -194,6 +202,7 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 		// Locked accounts skip the verify step entirely (saves bcrypt
 		// CPU for repeated probes). Be explicit so users with a valid
 		// password understand why they can't log in.
+		l.recordLoginEvent(ctx, s, repo.LoginOutcomeLockout, "locked")
 		return l.fail(s, "Account temporarily locked. Try again later.")
 	}
 
@@ -201,20 +210,28 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 		newCount := l.account.FailedLoginCount + 1
 		var lockedUntil time.Time
 		var msg string
+		outcome := repo.LoginOutcomeFailure
+		info := "wrong password"
 		if newCount >= l.lockoutThreshold {
 			lockedUntil = l.now().Add(l.lockoutDuration)
 			msg = "Too many failures. Account temporarily locked."
+			outcome = repo.LoginOutcomeLockout
+			info = "lockout threshold reached"
 		}
 		// Best-effort: a DB error here is logged via the wrapped error
 		// path but should not block the login response.
 		_ = l.accounts.RecordLoginFailure(ctx, l.account.ID, lockedUntil)
+		l.recordLoginEvent(ctx, s, outcome, info)
 		return l.fail(s, msg)
 	}
 
 	// Success.
 	if err := l.accounts.RecordLoginSuccess(ctx, l.account.ID, l.now()); err != nil {
-		return s.WriteRaw([]byte("Login system unavailable. Try again later.\r\n"))
+		// Reset to stepUsername instead of stranding at stepPassword
+		// with the mask off (see fail()).
+		return l.fail(s, "Login system unavailable. Try again later.")
 	}
+	l.recordLoginEvent(ctx, s, repo.LoginOutcomeSuccess, "")
 	s.AccountID = l.account.ID
 	// Login no longer earns a privilege — the session stays at
 	// AuthGuest until postauth.promoteToGame stamps the chosen
@@ -234,13 +251,46 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	if err := s.WriteRaw([]byte("Welcome, " + l.account.Username + ".\r\n")); err != nil {
 		return err
 	}
-	return postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game, postAuthDeps{
+	if err := postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game, postAuthDeps{
 		items:           l.items,
 		audits:          l.audits,
 		accounts:        l.accounts,
 		sessions:        l.sessions,
+		logins:          l.logins,
 		accountUsername: l.account.Username,
-	})
+	}); err != nil {
+		// postAuth wrote its own user-facing notice on the data-side
+		// failures (e.g. ListByAccount). Reset to stepUsername so the
+		// session doesn't stay at stepPassword with the mask off and
+		// the cached account still bound.
+		l.step = stepUsername
+		l.account = nil
+		l.username = ""
+		s.SetPasswordMode(false)
+		return err
+	}
+	return nil
+}
+
+// recordLoginEvent persists one account_logins row, swallowing repo
+// failures with a slog.Warn so a downed audit table can't fail the
+// login response. account is l.account (resolved at handleUsername);
+// callers must invoke only on the password-step branch where l.account
+// is non-nil.
+func (l *Login) recordLoginEvent(ctx context.Context, s *telnet.Session, outcome, info string) {
+	if l.logins == nil || l.account == nil {
+		return
+	}
+	if err := l.logins.Record(ctx, repo.AccountLoginEntry{
+		AccountID:     l.account.ID,
+		At:            l.now(),
+		RemoteAddress: remoteHost(s.RemoteAddress),
+		Outcome:       outcome,
+		Info:          info,
+	}); err != nil {
+		slog.Warn("login: record account_logins failed",
+			"account", l.account.ID, "outcome", outcome, "err", err)
+	}
 }
 
 // fail resets to the username step and writes a uniform failure

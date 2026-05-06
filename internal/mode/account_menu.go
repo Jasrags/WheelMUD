@@ -4,48 +4,37 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Jasrags/WheelMUD/internal/audit"
-	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 // AccountMenu is the post-authentication hub. Login / Create push it
-// after firing the once-per-login MOTD/news block, so character
-// management lives behind a stable set of verbs rather than the legacy
-// auto-skip-to-select shortcut.
+// after firing the once-per-login MOTD/news block. The UI is a
+// numbered-picker hierarchy modelled on classic MUD post-login menus:
+// the root shows a numbered list of actions, each option drills into
+// a focused sub-page (numbered picker or free-text prompt depending
+// on the action), and [B] returns to the parent. There are no typed
+// verbs — every input is either a numbered choice, a free-text value
+// for screens that ask for one (settings prompt/width/locale, the
+// delete typed-name confirm, password fields), or [B]/[Q].
 //
-// Slice 1 verbs:
+// Substep handlers live in sibling files for cohesion:
 //
-//	list           — re-display the character roster
-//	play [name]    — promote into game; no-arg auto-picks when there's
-//	                 exactly one character (preserves the "one keystroke
-//	                 into the world" feel for single-character accounts)
-//	new            — ReplaceMode into CharacterCreate
-//	news           — replay the unseen-news block on demand without
-//	                 advancing last_news_seen
-//	help           — list verbs
-//	quit           — close the connection
-//
-// Slice 1b adds:
-//
-//	delete <n|#>   — destroy a character on this account. Requires
-//	                 typed-name confirmation; cascades owned items
-//	                 (recursively, including container contents) and
-//	                 records an account-mode admin_audit row. Wiring
-//	                 the new soft-FK cleanup is application-level —
-//	                 items.owner_character_id is a soft FK by design.
-//
-// Subsequent slices add password change (2), account settings (3),
-// security/login audit (4), and email/recovery (5).
+//	account_menu_play.go      — single-char auto-pick + multi-char picker
+//	account_menu_delete.go    — picker → typed-name confirm → cascade
+//	account_menu_password.go  — current → new → confirm 3-step flow
+//	account_menu_settings.go  — settings root + 5 drilldowns
+//	account_menu_security.go  — recent logins + active sessions + kick
+//	account_menu_news.go      — MOTD/news replay
+//	account_menu_quit.go      — Y/N quit confirm
 type AccountMenu struct {
 	chars    []repo.Character
 	repo     repo.CharacterRepo
@@ -60,16 +49,18 @@ type AccountMenu struct {
 	// time so audit rows attribute to a name without a per-action repo
 	// lookup. Mirrors how AdminAuditEntry.ActorName snapshots names.
 	accountUsername string
-	// lastSeen feeds the `news` replay verb so re-rendering shows the
+	// lastSeen feeds the news-replay screen so re-rendering shows the
 	// same unseen entries the post-login block did. Sourced from the
 	// most-recently-played character (chars[0] under ListByAccount's
 	// ordering), or the zero value when the account has no characters.
-	lastSeen  time.Time
-	listShown bool
+	lastSeen time.Time
+	// rootShown latches OnEnter so PushMode → repaint sequences don't
+	// double-render the root.
+	rootShown bool
 
-	// Substep state. accountStepRoot dispatches verbs; child steps
-	// own a focused prompt (typed-name delete confirm; the 3-step
-	// password-change flow current → new → confirm).
+	// Substep state. Most steps own a focused render via their entry
+	// handler; the handler line dispatcher drives validation and step
+	// transitions. Numbered-picker steps redraw their parent on [B].
 	step          accountStep
 	pendingDelete *repo.Character
 	// pendingNewHash carries the bcrypt hash produced from the
@@ -77,20 +68,42 @@ type AccountMenu struct {
 	// completion / cancel / OnExit so plaintext-derived state never
 	// outlives the flow.
 	pendingNewHash string
+
+	// settings is the slice-3 AccountSettings snapshot loaded by
+	// postAuth. The menu mutates it in place when the player edits a
+	// key, persists via accounts.UpdateSettings, and forwards it to
+	// CharacterCreate (PromptDefault) and promoteToGame
+	// (ColorOverride / WidthOverride). Zero value = defaults.
+	settings repo.AccountSettings
+
+	// logins is the slice-4 per-account authentication-event log.
+	// nil leaves the security view functional but reports an empty
+	// history.
+	logins repo.AccountLoginRepo
 }
 
-// accountStep is the post-auth menu's substep enum. Mirrors the
-// chargenStep pattern in character_create.go: a single Handle entry
-// point branches on step, child steps capture in-progress state on
-// the AccountMenu struct.
+// accountStep is the post-auth menu's substep enum. accountStepRoot
+// runs the numbered-picker dispatcher; child steps own a focused
+// render and a tighter line dispatcher.
 type accountStep int
 
 const (
 	accountStepRoot accountStep = iota
+	accountStepPlayPicker
+	accountStepDeletePicker
 	accountStepConfirmDelete
 	accountStepCurrentPassword
 	accountStepNewPassword
 	accountStepConfirmNewPassword
+	accountStepSettingsRoot
+	accountStepSettingsColor
+	accountStepSettingsPrompt
+	accountStepSettingsWidth
+	accountStepSettingsLocale
+	accountStepSettingsMOTD
+	accountStepSecurity
+	accountStepNews
+	accountStepQuitConfirm
 )
 
 // NewAccountMenu returns an AccountMenu over the given character list.
@@ -105,16 +118,15 @@ func NewAccountMenu(chars []repo.Character, characters repo.CharacterRepo, game 
 	return m
 }
 
-// SetMOTD wires the MOTD/news hook used by the `news` replay verb.
+// SetMOTD wires the MOTD/news hook used by the news-replay screen.
 func (m *AccountMenu) SetMOTD(f MOTDFunc) { m.motd = f }
 
-// SetCatalog forwards the chargen content catalog to a CharacterCreate
-// spawned by the `new` verb.
+// SetCatalog forwards the chargen content catalog to the
+// CharacterCreate spawned by the "Create a new character" option.
 func (m *AccountMenu) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 
 // SetItems wires the item repo used by the delete-character cascade.
-// nil keeps the verb available but reports a generic failure if the
-// owner has any items at delete time.
+// nil leaves the option available but the cascade refuses (fail-loud).
 func (m *AccountMenu) SetItems(r repo.ItemRepo) { m.items = r }
 
 // SetAudits wires the admin_audit repo used to record destructive
@@ -122,19 +134,29 @@ func (m *AccountMenu) SetItems(r repo.ItemRepo) { m.items = r }
 func (m *AccountMenu) SetAudits(r repo.AdminAuditRepo) { m.audits = r }
 
 // SetSessions wires the session registry for the live-session check
-// when deleting a character. nil disables the check (acceptable for
-// tests; production wiring always supplies it).
+// when deleting a character + the security view's active-sessions
+// list. nil disables both.
 func (m *AccountMenu) SetSessions(r *session.Registry) { m.session = r }
 
-// SetAccounts wires the account repo used by the change-password
-// flow. nil keeps the verb available but reports a generic
-// "not configured" message — matches the SetMOTD/SetItems pattern
-// of fail-soft when an optional dep is missing.
+// SetAccounts wires the account repo used by the password and
+// settings flows. nil keeps the surrounding UI but the affected
+// drilldowns refuse with "not configured".
 func (m *AccountMenu) SetAccounts(r repo.AccountRepo) { m.accounts = r }
 
 // SetAccountUsername stamps the audit-row actor name. Empty falls back
 // to a generic placeholder when an audit row is written.
 func (m *AccountMenu) SetAccountUsername(name string) { m.accountUsername = name }
+
+// SetSettings forwards the loaded AccountSettings (slice 3). postAuth
+// loads them once per login from the account row and hands them off
+// here; the settings drilldowns mutate them in place and persist via
+// UpdateSettings.
+func (m *AccountMenu) SetSettings(s repo.AccountSettings) { m.settings = s }
+
+// SetLogins wires the slice-4 account_logins repo. The security
+// substep reads from it via ListRecentByAccount; nil leaves the view
+// available but reports an empty history.
+func (m *AccountMenu) SetLogins(r repo.AccountLoginRepo) { m.logins = r }
 
 func (m *AccountMenu) Prompt(_ context.Context, _ *telnet.Session) string {
 	switch m.step {
@@ -146,16 +168,22 @@ func (m *AccountMenu) Prompt(_ context.Context, _ *telnet.Session) string {
 		return "New password: "
 	case accountStepConfirmNewPassword:
 		return "Confirm new password: "
+	case accountStepSettingsPrompt, accountStepSettingsWidth, accountStepSettingsLocale:
+		return "> "
+	case accountStepQuitConfirm:
+		return "[Y/N] "
 	}
-	return "[account] "
+	// Numbered-picker pages share a compact prompt; the screen body
+	// itself shows the valid range (e.g. "[1-7] >").
+	return "> "
 }
 
 func (m *AccountMenu) OnEnter(s *telnet.Session) error {
-	if m.listShown {
+	if m.rootShown {
 		return nil
 	}
-	m.listShown = true
-	return m.writeList(s)
+	m.rootShown = true
+	return m.writeRoot(s)
 }
 
 // OnExit clears any in-progress password-change state so a torn-down
@@ -170,6 +198,12 @@ func (m *AccountMenu) OnExit(s *telnet.Session) error {
 
 func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string) error {
 	switch m.step {
+	case accountStepRoot:
+		return m.handleRootChoice(ctx, s, line)
+	case accountStepPlayPicker:
+		return m.handlePlayPickerLine(ctx, s, line)
+	case accountStepDeletePicker:
+		return m.handleDeletePickerLine(s, line)
 	case accountStepConfirmDelete:
 		return m.handleConfirmDelete(ctx, s, line)
 	case accountStepCurrentPassword:
@@ -178,392 +212,288 @@ func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string
 		return m.handleNewPassword(s, line)
 	case accountStepConfirmNewPassword:
 		return m.handleConfirmNewPassword(ctx, s, line)
+	case accountStepSettingsRoot:
+		return m.handleSettingsRootLine(s, line)
+	case accountStepSettingsColor:
+		return m.handleSettingsColorLine(ctx, s, line)
+	case accountStepSettingsPrompt:
+		return m.handleSettingsPromptLine(ctx, s, line)
+	case accountStepSettingsWidth:
+		return m.handleSettingsWidthLine(ctx, s, line)
+	case accountStepSettingsLocale:
+		return m.handleSettingsLocaleLine(ctx, s, line)
+	case accountStepSettingsMOTD:
+		return m.handleSettingsMOTDLine(ctx, s, line)
+	case accountStepSecurity:
+		return m.handleSecurityLine(ctx, s, line)
+	case accountStepNews:
+		return m.handleNewsLine(s, line)
+	case accountStepQuitConfirm:
+		return m.handleQuitConfirmLine(s, line)
 	}
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) == 0 {
+	// Defensive: unknown step. Reset to root.
+	return m.returnToRoot(s)
+}
+
+// writeRoot renders the top-level menu. The displayed numbering is
+// the source of truth for handleRootChoice's dispatch — see the
+// rootMenu function below for the option table.
+func (m *AccountMenu) writeRoot(s *telnet.Session) error {
+	if err := display.SectionHeader(s, "Account: "+menuName(m.accountUsername)); err != nil {
+		return err
+	}
+	if err := s.WriteRaw([]byte(m.lastLoginLine())); err != nil {
+		return err
+	}
+	if err := s.WriteRaw([]byte("\r\n  Your characters:\r\n")); err != nil {
+		return err
+	}
+	if err := s.WriteRaw([]byte(m.charListBlock())); err != nil {
+		return err
+	}
+	opts := m.rootMenu()
+	if err := display.Rule(s); err != nil {
+		return err
+	}
+	for _, opt := range opts {
+		if err := s.WriteRaw([]byte(fmt.Sprintf("  %d) %s\r\n", opt.number, opt.label))); err != nil {
+			return err
+		}
+	}
+	if err := display.Rule(s); err != nil {
+		return err
+	}
+	if err := s.WriteRaw([]byte("  [Q]uit\r\n\r\n")); err != nil {
+		return err
+	}
+	return s.WriteRaw([]byte(rangeHint(opts) + " >\r\n"))
+}
+
+// rootOption captures one row in the top-level numbered menu. action
+// is dispatched by handleRootChoice when the user picks `number`.
+type rootOption struct {
+	number int
+	label  string
+	action rootAction
+}
+
+type rootAction int
+
+const (
+	rootActionPlay rootAction = iota
+	rootActionNew
+	rootActionDelete
+	rootActionPassword
+	rootActionSettings
+	rootActionSecurity
+	rootActionNews
+)
+
+// rootMenu returns the displayed option list, contiguously numbered.
+// Empty rosters omit Play and Delete so the numbering is stable for
+// the actions that *are* available — picking 1) Create works whether
+// you have characters or not.
+func (m *AccountMenu) rootMenu() []rootOption {
+	all := []rootOption{
+		{label: "Play", action: rootActionPlay},
+		{label: "Create a new character", action: rootActionNew},
+		{label: "Delete a character", action: rootActionDelete},
+		{label: "Change password", action: rootActionPassword},
+		{label: "Settings", action: rootActionSettings},
+		{label: "Security", action: rootActionSecurity},
+		{label: "Re-display news / MOTD", action: rootActionNews},
+	}
+	out := make([]rootOption, 0, len(all))
+	for _, o := range all {
+		if len(m.chars) == 0 && (o.action == rootActionPlay || o.action == rootActionDelete) {
+			continue
+		}
+		o.number = len(out) + 1
+		out = append(out, o)
+	}
+	return out
+}
+
+// handleRootChoice dispatches one numeric (or "q"/"Q") line at root.
+// Anything else writes an inline error and re-renders the root.
+func (m *AccountMenu) handleRootChoice(ctx context.Context, s *telnet.Session, line string) error {
+	in := strings.TrimSpace(line)
+	if strings.EqualFold(in, "q") || strings.EqualFold(in, "quit") || strings.EqualFold(in, "exit") {
+		return m.handleQuitEnter(s)
+	}
+	if in == "" {
+		return m.writeRoot(s)
+	}
+	opts := m.rootMenu()
+	idx, err := parsePositiveIndex(in, len(opts))
+	if err != nil {
+		if werr := writeError(s, "Invalid choice. "+rangeHint(opts)+" or [Q]uit."); werr != nil {
+			return werr
+		}
 		return nil
 	}
-	verb := strings.ToLower(fields[0])
-	args := fields[1:]
-	switch verb {
-	case "list", "ls", "characters":
-		return m.writeList(s)
-	case "play", "select":
-		return m.handlePlay(ctx, s, args)
-	case "new", "create":
+	switch opts[idx].action {
+	case rootActionPlay:
+		return m.handlePlayEnter(ctx, s)
+	case rootActionNew:
 		return m.handleNew(s)
-	case "delete", "del", "remove":
-		return m.handleDelete(s, args)
-	case "password", "passwd":
-		return m.handlePassword(s)
-	case "news", "motd":
-		return m.handleNews(s)
-	case "help", "?":
-		return m.writeHelp(s)
-	case "quit", "exit":
-		_ = s.WriteRaw([]byte("Goodbye.\r\n"))
-		_ = s.Conn.Close()
-		return telnet.ErrSessionEnded
+	case rootActionDelete:
+		return m.handleDeleteEnter(s)
+	case rootActionPassword:
+		return m.handlePasswordEnter(s)
+	case rootActionSettings:
+		return m.handleSettingsEnter(s)
+	case rootActionSecurity:
+		return m.handleSecurityEnter(s)
+	case rootActionNews:
+		return m.handleNewsEnter(s)
 	}
-	return writeError(s, "Unknown command. Type 'help' for the menu.")
+	return nil
 }
 
-func (m *AccountMenu) writeList(s *telnet.Session) error {
-	var b strings.Builder
-	b.WriteString("\r\nYour characters:\r\n")
-	if len(m.chars) == 0 {
-		b.WriteString("  (none — type 'new' to create one)\r\n")
-		return s.WriteRaw([]byte(b.String()))
-	}
-	for i, c := range m.chars {
-		last := "never"
-		if c.LastPlayedAt != nil && !c.LastPlayedAt.IsZero() {
-			last = c.LastPlayedAt.Format("2006-01-02")
-		}
-		fmt.Fprintf(&b, "  %d) %-20s  lvl %-2d  last %s\r\n",
-			i+1, c.Name, totalClassLevels(c.ClassLevels), last)
-	}
-	return s.WriteRaw([]byte(b.String()))
-}
-
-// handlePlay resolves the target character and promotes the session
-// into game mode. With no arg, single-character accounts auto-pick;
-// multi-character accounts are required to name the character. Lookup
-// is constrained to the menu's pre-loaded roster so a player can't
-// promote into a character they don't own — the same ownership gate
-// CharacterSelect uses.
-func (m *AccountMenu) handlePlay(ctx context.Context, s *telnet.Session, args []string) error {
-	if len(m.chars) == 0 {
-		return writeError(s, "No characters on this account. Type 'new' to create one.")
-	}
-	var target *repo.Character
-	switch len(args) {
-	case 0:
-		if len(m.chars) > 1 {
-			return writeError(s, "Specify a character: play <name>.")
-		}
-		target = &m.chars[0]
-	default:
-		name := args[0]
-		// Numeric pick (matches the list ordering shown by `list`).
-		if i, err := parsePositiveIndex(name, len(m.chars)); err == nil {
-			target = &m.chars[i]
-			break
-		}
-		for i := range m.chars {
-			if strings.EqualFold(m.chars[i].Name, name) {
-				target = &m.chars[i]
-				break
-			}
-		}
-		if target == nil {
-			// Re-resolve via repo to distinguish "no such character
-			// anywhere" from "not yours" without leaking either bit.
-			if _, err := m.repo.FindByName(ctx, name); err != nil && !errors.Is(err, repo.ErrCharacterNotFound) {
-				return writeError(s, "Could not load that character. Try again.")
-			}
-			return writeError(s, "No such character on this account.")
-		}
-	}
-	return promoteToGame(ctx, s, *target, m.repo, m.game)
-}
-
+// handleNew replaces the current mode with chargen. The slice-1b
+// destructive deps are intentionally NOT forwarded — CharacterCreate
+// ends in promoteToGame, never re-enters this menu.
 func (m *AccountMenu) handleNew(s *telnet.Session) error {
 	create := NewCharacterCreate(m.repo, m.game)
 	create.SetCatalog(m.catalog)
-	// MOTD intentionally not threaded into CharacterCreate: the news
-	// block fires once per login in postAuth, before the menu lands.
-	// promoteToGame downstream is now MOTD-free for the same reason.
-	//
-	// Slice 1b deps (items / audits / sessions / accountUsername) are
-	// intentionally NOT forwarded here: CharacterCreate ends with
-	// promoteToGame, not a postAuth round-trip, so it never re-enters
-	// this menu and never needs the destructive-action plumbing. If a
-	// future refactor adds a "back to account menu" path off
-	// CharacterCreate, the deps would need to be threaded through —
-	// at which point this should be hoisted onto a shared deps
-	// builder rather than copied.
+	create.SetSettings(m.settings)
 	return s.ReplaceMode(create)
 }
 
-// handleDelete resolves the target character (by 1-based index or
-// case-insensitive name) and pushes the typed-name confirm substep.
-// Resolution is constrained to m.chars so a player can't see whether a
-// foreign name exists. A defensive live-session check refuses deletion
-// of a currently-online character even though the session registry's
-// one-session-per-account policy means that character isn't this
-// session's deleter; future multi-session work would lean on this
-// check.
-func (m *AccountMenu) handleDelete(s *telnet.Session, args []string) error {
+// returnToRoot resets m.step to root and re-renders. Used by every
+// [B]ack path so a single function owns the transition (and the
+// repaint stays uniform).
+func (m *AccountMenu) returnToRoot(s *telnet.Session) error {
+	m.step = accountStepRoot
+	return m.writeRoot(s)
+}
+
+// charListBlock renders the "Your characters" body for the root
+// screen. Returns an empty-roster placeholder when the account has
+// no characters.
+func (m *AccountMenu) charListBlock() string {
 	if len(m.chars) == 0 {
-		return writeError(s, "No characters on this account.")
+		return "    (none — pick \"Create a new character\" below to make your first one)\r\n"
 	}
-	if len(args) == 0 {
-		return writeError(s, "Usage: delete <name|#>")
-	}
-	target := m.resolveOwned(args[0])
-	if target == nil {
-		return writeError(s, "No such character on this account.")
-	}
-	if m.session != nil {
-		if active := m.session.FindByCharacterName(target.Name); active != nil {
-			return writeError(s, "That character is currently logged in. Try again later.")
-		}
-	}
-	m.pendingDelete = target
-	m.step = accountStepConfirmDelete
-	last := "never"
-	if target.LastPlayedAt != nil && !target.LastPlayedAt.IsZero() {
-		last = target.LastPlayedAt.Format("2006-01-02")
-	}
+	loc := m.displayLocation()
 	var b strings.Builder
-	b.WriteString("\r\nDelete this character?\r\n")
-	fmt.Fprintf(&b, "  %s  lvl %d  last %s\r\n",
-		target.Name, totalClassLevels(target.ClassLevels), last)
-	b.WriteString("\r\nThis cannot be undone. All carried items, equipment,\r\n")
-	b.WriteString("and bank balance will be destroyed.\r\n")
-	b.WriteString("\r\nType the character's name exactly (case-sensitive) to confirm, or 'cancel' to abort.\r\n")
-	return s.WriteRaw([]byte(b.String()))
-}
-
-// handleConfirmDelete runs at accountStepConfirmDelete. cancel/blank
-// returns to root; an exact (case-sensitive) name match executes the
-// cascade. Mismatches repeat the prompt rather than auto-aborting so
-// a typo doesn't lose progress, and so the deletion stays explicit.
-func (m *AccountMenu) handleConfirmDelete(ctx context.Context, s *telnet.Session, line string) error {
-	in := strings.TrimSpace(line)
-	if in == "" || strings.EqualFold(in, "cancel") || strings.EqualFold(in, "abort") {
-		m.pendingDelete = nil
-		m.step = accountStepRoot
-		if err := s.WriteRaw([]byte("Cancelled.\r\n")); err != nil {
-			return err
+	for i, c := range m.chars {
+		last := "never"
+		if c.LastPlayedAt != nil && !c.LastPlayedAt.IsZero() {
+			last = c.LastPlayedAt.In(loc).Format("2006-01-02")
 		}
-		return m.writeList(s)
+		fmt.Fprintf(&b, "    %d) %-20s  %-12s lvl %-2d  last %s\r\n",
+			i+1, c.Name, className(c), totalClassLevels(c.ClassLevels), last)
 	}
-	target := m.pendingDelete
-	if target == nil {
-		// Defensive: confirm step entered without a pending target
-		// (shouldn't happen, but keep it deterministic).
-		m.step = accountStepRoot
-		return writeError(s, "Nothing to confirm. Type 'help' for the menu.")
-	}
-	if in != target.Name {
-		return writeError(s, "Names did not match. Type the character's name exactly, or 'cancel'.")
-	}
-	if err := m.executeDelete(ctx, s, *target); err != nil {
-		// Per-step state is reset so the user can retry without being
-		// stuck in the confirm prompt with a stale target.
-		m.pendingDelete = nil
-		m.step = accountStepRoot
-		slog.Warn("account_menu: delete cascade failed",
-			"account", s.AccountID, "character", target.ID, "err", err)
-		return writeError(s, "Could not delete that character. Try again later.")
-	}
-	m.pendingDelete = nil
-	m.step = accountStepRoot
-	if err := s.WriteRaw([]byte("Character deleted.\r\n")); err != nil {
-		return err
-	}
-	return m.refreshAndList(ctx, s, target.ID)
+	return b.String()
 }
 
-// executeDelete performs the application-level cascade for a character
-// row: every owned item (top-level inventory plus everything nested
-// inside containers they own) is deleted, then the character row
-// itself, then an account-mode audit row is written. Order matters —
-// ListAllOwnedTransitive before character.Delete keeps the BFS through
-// items.parent_item_id valid; character.Delete is the last destructive
-// step so a partial item failure leaves a deletable character.
-//
-// Refuses if m.items is nil (the items repo wasn't wired). The
-// alternative — silently skipping the cascade and deleting the row —
-// would orphan items.owner_character_id references, which is the
-// invariant slice 1b exists to enforce. Production wiring always
-// supplies items; this guard catches misconfiguration loudly.
-//
-// The live-session check is re-run here (in addition to handleDelete)
-// to close the TOCTOU window between confirm prompt and execute. Single-
-// session-per-account makes this almost impossible today, but cheap.
-func (m *AccountMenu) executeDelete(ctx context.Context, s *telnet.Session, target repo.Character) error {
-	if m.items == nil {
-		return errors.New("item repo not wired; refusing to delete character without item cascade")
-	}
-	if m.session != nil {
-		if active := m.session.FindByCharacterName(target.Name); active != nil {
-			return fmt.Errorf("character %q is logged in", target.Name)
-		}
-	}
-	owned, err := m.items.ListAllOwnedTransitive(ctx, target.ID)
-	if err != nil {
-		return fmt.Errorf("list owned items: %w", err)
-	}
-	for _, it := range owned {
-		if err := m.items.Delete(ctx, it.ID); err != nil {
-			return fmt.Errorf("delete item %d: %w", it.ID, err)
-		}
-	}
-	if err := m.repo.Delete(ctx, target.ID); err != nil {
-		return fmt.Errorf("delete character row: %w", err)
-	}
-	audit.RecordAccount(ctx, m.audits, s.AccountID, m.accountUsername,
-		"delete-character", target.Name,
-		fmt.Sprintf("id=%d level=%d", target.ID, totalClassLevels(target.ClassLevels)))
-	return nil
-}
-
-// refreshAndList reloads the character roster from the repo so the
-// post-delete list reflects state-of-the-world, then renders it.
-// deletedID is dropped from the cached roster on repo failure so the
-// fallback render doesn't show the just-deleted character (which would
-// be very confusing right after a "Character deleted." line).
-func (m *AccountMenu) refreshAndList(ctx context.Context, s *telnet.Session, deletedID int64) error {
-	chars, err := m.repo.ListByAccount(ctx, s.AccountID)
-	if err != nil {
-		slog.Warn("account_menu: refresh ListByAccount failed",
-			"account", s.AccountID, "err", err)
-		// Drop the deleted entry from the cached roster so the user
-		// doesn't see it in the fallback list.
-		filtered := m.chars[:0]
-		for _, c := range m.chars {
-			if c.ID != deletedID {
-				filtered = append(filtered, c)
-			}
-		}
-		m.chars = filtered
-	} else {
-		m.chars = chars
-	}
-	return m.writeList(s)
-}
-
-// resolveOwned looks up a character in the cached roster by 1-based
-// list index or case-insensitive name. Returns nil for misses; never
-// hits the repo so a foreign name leaks no information.
-func (m *AccountMenu) resolveOwned(arg string) *repo.Character {
-	if i, err := parsePositiveIndex(arg, len(m.chars)); err == nil {
-		c := m.chars[i]
-		return &c
-	}
-	for i := range m.chars {
-		if strings.EqualFold(m.chars[i].Name, arg) {
-			c := m.chars[i]
-			return &c
-		}
-	}
-	return nil
-}
-
-// handlePassword opens the change-password substep flow. It enters
-// password-mode immediately so the very next keystroke (which becomes
-// the current-password line) is masked. The dispatcher repaints the
-// step-aware Prompt() automatically; no extra write here.
-//
-// Refuses with a "not configured" notice when the account repo isn't
-// wired (memory-only test paths). Production wiring always supplies it.
-func (m *AccountMenu) handlePassword(s *telnet.Session) error {
-	if m.accounts == nil {
-		return writeError(s, "Password change is not configured on this server.")
-	}
-	m.step = accountStepCurrentPassword
-	s.SetPasswordMode(true)
-	return nil
-}
-
-// handleCurrentPassword runs at accountStepCurrentPassword. cancel /
-// blank → reset to root. Otherwise re-fetch the account by the
-// snapshotted username (cheaper and safer than caching the hash on
-// the menu) and bcrypt-verify. Mismatch resets to root with a generic
-// notice; the user retypes `password` to retry. Match advances to
-// accountStepNewPassword keeping password mode on.
-func (m *AccountMenu) handleCurrentPassword(ctx context.Context, s *telnet.Session, line string) error {
-	if isCancelOrBlank(line) {
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Cancelled.\r\n"))
-	}
-	if m.accounts == nil {
-		// Defensive: handlePassword guards on this, but if accounts is
-		// cleared mid-flow, fail closed.
-		m.resetPasswordFlow(s)
-		return writeError(s, "Password change is not configured on this server.")
-	}
-	a, err := m.accounts.FindByUsername(ctx, m.accountUsername)
-	if err != nil {
-		slog.Warn("account_menu: find account for password change failed",
-			"account", s.AccountID, "err", err)
-		m.resetPasswordFlow(s)
-		return writeError(s, "Could not change password. Try again later.")
-	}
-	if !auth.Verify(a.PasswordHash, line) {
-		m.resetPasswordFlow(s)
-		return writeError(s, "Current password did not match.")
-	}
-	m.step = accountStepNewPassword
-	// Password mode stays on for the next prompt.
-	return nil
-}
-
-// handleNewPassword runs at accountStepNewPassword. cancel / blank →
-// reset to root. Otherwise hash via auth.Hash and stash on the menu.
-// Length-policy error wording matches Create.handlePassword so a user
-// who hits a too-short / too-long during chargen sees the same notice
-// during rotation.
-func (m *AccountMenu) handleNewPassword(s *telnet.Session, line string) error {
-	if isCancelOrBlank(line) {
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Cancelled.\r\n"))
-	}
-	hash, err := auth.Hash(line)
+// lastLoginLine renders the "Last login: …" subtitle on the root
+// page. Sourced from the highest-AccountID-bound account row's
+// LastLoginAt — but the menu doesn't carry that scalar today, so we
+// fall back to the most-recently-played character's last_played_at
+// as a proxy. Future work: pass repo.Account.LastLoginAt directly
+// from postAuth into NewAccountMenu.
+func (m *AccountMenu) lastLoginLine() string {
+	loc := m.displayLocation()
 	switch {
-	case errors.Is(err, auth.ErrPasswordTooShort):
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Password too short (minimum 8 characters).\r\n"))
-	case errors.Is(err, auth.ErrPasswordTooLong):
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Password too long (maximum 72 bytes).\r\n"))
-	case err != nil:
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Could not process password. Try again.\r\n"))
+	case len(m.chars) == 0:
+		return "  Last login: never\r\n"
+	case m.chars[0].LastPlayedAt == nil || m.chars[0].LastPlayedAt.IsZero():
+		return "  Last login: never\r\n"
+	default:
+		return "  Last login: " +
+			m.chars[0].LastPlayedAt.In(loc).Format("2006-01-02 15:04") + "\r\n"
 	}
-	m.pendingNewHash = hash
-	m.step = accountStepConfirmNewPassword
-	// Password mode stays on for the confirm prompt.
-	return nil
 }
 
-// handleConfirmNewPassword runs at accountStepConfirmNewPassword.
-// Mirrors Create.handleConfirm: clears password mode first thing, then
-// verifies the typed line against the stashed hash. Match → persist
-// + audit + "Password changed.". Any other outcome (cancel, mismatch,
-// repo failure) resets to root with the appropriate notice.
-func (m *AccountMenu) handleConfirmNewPassword(ctx context.Context, s *telnet.Session, line string) error {
-	s.SetPasswordMode(false)
-	if isCancelOrBlank(line) {
-		m.resetPasswordFlow(s)
-		return s.WriteRaw([]byte("Cancelled.\r\n"))
+// rangeHint produces the "[1-N]" footer hint for a numbered page.
+// Empty option lists return "[]" — caller should never reach that.
+func rangeHint(opts []rootOption) string {
+	if len(opts) == 0 {
+		return "[]"
 	}
-	if !auth.Verify(m.pendingNewHash, line) {
-		m.resetPasswordFlow(s)
-		return writeError(s, "Passwords did not match. Run 'password' to try again.")
+	if len(opts) == 1 {
+		return fmt.Sprintf("[%d]", opts[0].number)
 	}
-	if err := m.accounts.UpdatePasswordHash(ctx, s.AccountID, m.pendingNewHash); err != nil {
-		slog.Warn("account_menu: password update failed",
-			"account", s.AccountID, "err", err)
-		m.resetPasswordFlow(s)
-		return writeError(s, "Could not change password. Try again later.")
-	}
-	audit.RecordAccount(ctx, m.audits, s.AccountID, m.accountUsername,
-		"change-password", "", "")
-	m.resetPasswordFlow(s)
-	return s.WriteRaw([]byte("Password changed.\r\n"))
+	return fmt.Sprintf("[%d-%d]", opts[0].number, opts[len(opts)-1].number)
 }
 
-// resetPasswordFlow clears in-progress state and exits password mode.
-// Idempotent — safe to call from any step (including from within
-// handleConfirmNewPassword which already turned masking off).
-func (m *AccountMenu) resetPasswordFlow(s *telnet.Session) {
-	m.step = accountStepRoot
-	m.pendingNewHash = ""
-	s.SetPasswordMode(false)
+// menuName returns a non-empty display name for the account header.
+// Empty username (test paths that didn't call SetAccountUsername)
+// falls back to a placeholder so the header still renders.
+func menuName(name string) string {
+	if name == "" {
+		return "(unknown)"
+	}
+	return name
+}
+
+// className returns a short label for the character's class
+// progression. With no class levels it's "—" (totalClassLevels still
+// floors at 1, so the player sees "—  lvl 1" — accurate for fresh
+// chargen rows that haven't filled ClassLevels yet). Multi-class is
+// rare in V1; we render the highest-level class name. classFallback
+// in cmd/score.go has the canonical mapping; this helper duplicates
+// it to avoid a cmd → mode dependency.
+func className(c repo.Character) string {
+	if len(c.ClassLevels) == 0 {
+		return "—"
+	}
+	var top creature.Class
+	var topLv int8
+	for cl, lv := range c.ClassLevels {
+		if lv > topLv {
+			top = cl
+			topLv = lv
+		}
+	}
+	switch top {
+	case creature.ClassAlgaiDSiswai:
+		return "Algai'd'Siswai"
+	case creature.ClassArmsman:
+		return "Armsman"
+	case creature.ClassInitiate:
+		return "Initiate"
+	case creature.ClassNoble:
+		return "Noble"
+	case creature.ClassWanderer:
+		return "Wanderer"
+	case creature.ClassWilder:
+		return "Wilder"
+	case creature.ClassWoodsman:
+		return "Woodsman"
+	}
+	return "—"
+}
+
+// parsePositiveIndex interprets `s` as a 1-based list index in
+// [1, n] and returns the 0-based slot. Anything non-numeric or out of
+// range returns an error so the caller can render a "bad choice"
+// message and re-prompt.
+func parsePositiveIndex(s string, n int) (int, error) {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || v < 1 || v > n {
+		return 0, errors.New("out of range")
+	}
+	return v - 1, nil
+}
+
+// isBack returns true when the line is a blank, "b", or "back". The
+// menu sub-pages all accept these as the canonical "return to parent"
+// affordance. Cancel/abort still work as aliases for in-progress
+// flows (delete confirm, password steps).
+func isBack(line string) bool {
+	in := strings.TrimSpace(line)
+	if in == "" {
+		return true
+	}
+	switch strings.ToLower(in) {
+	case "b", "back":
+		return true
+	}
+	return false
 }
 
 // isCancelOrBlank captures the shared "user wants out" checks used at
@@ -574,36 +504,28 @@ func isCancelOrBlank(line string) bool {
 	return in == "" || strings.EqualFold(in, "cancel") || strings.EqualFold(in, "abort")
 }
 
-func (m *AccountMenu) handleNews(s *telnet.Session) error {
-	if m.motd == nil {
-		return writeError(s, "News is not configured on this server.")
-	}
-	return m.motd(s, m.lastSeen)
-}
+// defaultLocale is the timezone used when AccountSettings.Locale is
+// empty or fails to load. America/Chicago is the project default for
+// V1 since the wider game has no real player-base; the setting itself
+// stays free-form for users who want to override it.
+const defaultLocale = "America/Chicago"
 
-func (m *AccountMenu) writeHelp(s *telnet.Session) error {
-	help := "" +
-		"\r\nAccount menu:\r\n" +
-		"  list              show your characters\r\n" +
-		"  play [name|#]     enter the world (no-arg picks the only character)\r\n" +
-		"  new               create a new character\r\n" +
-		"  delete <name|#>   permanently destroy a character (typed-name confirm)\r\n" +
-		"  password          change your account password\r\n" +
-		"  news              re-display the unread-news block\r\n" +
-		"  help              this list\r\n" +
-		"  quit              disconnect\r\n"
-	return s.WriteRaw([]byte(help))
-}
-
-// parsePositiveIndex interprets `s` as a 1-based list index in
-// [1, n] and returns the 0-based slot. Anything non-numeric or out of
-// range returns an error so the caller can fall back to a name lookup.
-func parsePositiveIndex(s string, n int) (int, error) {
-	v, err := strconv.Atoi(s)
-	if err != nil || v < 1 || v > n {
-		return 0, errors.New("out of range")
+// displayLocation returns the *time.Location to format
+// account-menu-rendered timestamps in. Settings.Locale is validated at
+// edit time, but a stale row could still carry a now-unloadable zone;
+// the fallback to defaultLocale keeps rendering deterministic in that
+// edge. If even the default tzdata is missing (extremely minimal
+// container build), we fall through to time.UTC.
+func (m *AccountMenu) displayLocation() *time.Location {
+	if m.settings.Locale != "" {
+		if loc, err := time.LoadLocation(m.settings.Locale); err == nil {
+			return loc
+		}
 	}
-	return v - 1, nil
+	if loc, err := time.LoadLocation(defaultLocale); err == nil {
+		return loc
+	}
+	return time.UTC
 }
 
 // totalClassLevels sums the multi-class level map. Returns 1 when the

@@ -124,6 +124,7 @@ func main() {
 	}
 	worldState := repo.NewSQLiteWorldStateRepo(conn)
 	audits := repo.NewSQLiteAdminAuditRepo(conn)
+	logins := repo.NewSQLiteAccountLoginRepo(conn)
 	shops := repo.NewSQLiteShopRepo(conn)
 	bankers := repo.NewSQLiteBankerRepo(conn)
 
@@ -259,6 +260,8 @@ func main() {
 		// live-session check.
 		login.SetItems(items)
 		login.SetAudits(audits)
+		// Slice 4: account-menu security view + per-login audit log.
+		login.SetLogins(logins)
 		return login
 	}
 

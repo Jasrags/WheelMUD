@@ -243,15 +243,31 @@ constants and helpers in `telnet/iac.go`.
         → new → confirm under `Session.SetPasswordMode`, rehashes via
         `auth.Hash`, calls `AccountRepo.UpdatePassword`, invalidates
         any other bound sessions for the account.
-      - **Account settings** — color level (`colors` shortcut), default
-        prompt template applied to new chars, terminal width override
-        when NAWS lies, locale/timezone for `time` display, MOTD
-        re-display toggle.
-      - **Account security** — view recent login timestamps + source
-        IPs (needs a small `account_logins` audit table — piggyback
-        on §17 admin_audit pattern), active session list with "kick
-        other sessions" action (uses `session.Registry.Snapshot` +
-        the displaced-session path already wired for multi-session).
+      - **Account settings** — `settings` sub-menu (slice 3, landed)
+        edits five knobs persisted to `accounts.settings_json`
+        (migration 0035): `color` (override TERM-detected level),
+        `prompt` (default template stamped onto new characters at
+        chargen finalize), `width` (override NAWS in [40,200]),
+        `locale` (IANA tz string, currently feeds the menu's date
+        formatter), `motd` (replay MOTD on every login regardless of
+        `last_news_seen`). Each edit writes through
+        `AccountRepo.UpdateSettings` and records one
+        `settings-update` row in `admin_audit` (account-mode actor).
+        Color/Width apply to the session via
+        `mode/postauth.applyAccountSettings` immediately before
+        `promoteToGame`.
+      - **Account security** (slice 4, landed) — `security` sub-menu
+        renders the last 10 entries from `account_logins` (migration
+        0036; outcome ∈ {success, failure, lockout, kick}) plus the
+        active-session list pulled from `session.Registry.Snapshot()`.
+        `kick` disconnects every peer session for the account and
+        records one `account_logins(outcome=kick)` row per peer plus
+        one `admin_audit(verb=kick-sessions)` account-mode row;
+        single-session-per-account makes this a no-op today, but the
+        path is forward-wired for multi-session work. Login outcomes
+        are recorded by `mode/login.go::recordLoginEvent` and
+        `mode/create.go` (success-only). `info` is a short fixed-
+        vocabulary note and never carries the typed password.
       - **Email / recovery** — set/verify email, trigger password-reset
         token (depends on the §6 email-verification item; menu entry
         is dark until that lands).

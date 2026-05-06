@@ -1,0 +1,22 @@
+-- 0035_accounts_settings_json.sql
+--
+-- Backs the §6 post-login account-menu "settings" sub-menu (slice 3).
+-- Five user-editable knobs hang off the account row: color-level
+-- override (override TERM detection), default prompt template
+-- (applied to new chars at chargen finalize), terminal-width override
+-- (override NAWS), locale/timezone (IANA TZ string for date display),
+-- and an MOTD-always toggle (re-show MOTD on every login regardless
+-- of last_news_seen).
+--
+-- Schema choices:
+--   * Single JSON blob mirrors the channel_settings_json (0011)
+--     precedent rather than five separate columns. The schema is
+--     loosely-coupled scalars and likely to grow (per-client
+--     overrides, future toggles); JSON keeps migrations cheap.
+--   * NOT NULL DEFAULT '{}' so existing rows backfill to the zero
+--     value without touching them — `{}` unmarshals into the
+--     all-defaults AccountSettings.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+
+ALTER TABLE accounts ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';

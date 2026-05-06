@@ -314,6 +314,15 @@ func scanCharacter(s scanner) (Character, error) {
 		idle         sql.NullTime
 		login        sql.NullTime
 		newsSeenSecs int64
+		// channeling_json (migration 0033) was added with
+		// NOT NULL DEFAULT 'null', but rows imported / migrated from
+		// pre-0033 DBs in the wild can still hold an actual SQL NULL.
+		// Scan into a nullable so a rogue NULL doesn't take the whole
+		// account offline at login (postAuth.ListByAccount). Empty /
+		// invalid values fold back to "" which jsonUnmarshalString
+		// treats as a no-op (Channeling stays nil — correct for
+		// non-channeler classes and the implicit pre-0033 default).
+		channelingNS sql.NullString
 	)
 	dest := []any{
 		&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed, &c.CurrentRoomID,
@@ -324,11 +333,14 @@ func scanCharacter(s scanner) (Character, error) {
 		&coinCP, &bankCP,
 		&fatigue, &idle, &login,
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
-		&j.channelSettings, &j.channeling,
+		&j.channelSettings, &channelingNS,
 		&newsSeenSecs)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
+	}
+	if channelingNS.Valid {
+		j.channeling = channelingNS.String
 	}
 	// Defense-in-depth: a corrupt row with auth_level outside the
 	// known enum range would silently amplify privilege when stamped

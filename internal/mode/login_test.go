@@ -123,7 +123,7 @@ func TestLogin_HappyPath(t *testing.T) {
 	// `play` with no arg auto-picks the only character (the
 	// "one keystroke into the world" affordance the menu preserves).
 	menu := f.session.CurrentMode().(*AccountMenu)
-	if err := menu.Handle(context.Background(), f.session, "play"); err != nil {
+	if err := menu.Handle(context.Background(), f.session, "1"); err != nil {
 		t.Fatalf("play: %v", err)
 	}
 	if f.session.AuthLevel != telnet.AuthPlayer {
@@ -183,7 +183,7 @@ func TestPostAuth_AdminFromCharacter(t *testing.T) {
 	if !ok {
 		t.Fatalf("CurrentMode = %T, want *AccountMenu", s.CurrentMode())
 	}
-	if err := menu.Handle(context.Background(), s, "play"); err != nil {
+	if err := menu.Handle(context.Background(), s, "1"); err != nil {
 		t.Fatalf("play: %v", err)
 	}
 	if s.AuthLevel != telnet.AuthAdmin {

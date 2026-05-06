@@ -38,6 +38,48 @@ const (
 	ANSI_NO_STRIKE        = 29
 )
 
+// ParseColorLevel maps a user-typed token (from the §6 account-menu
+// settings sub-menu, or any other config surface) to one of the
+// ColorLevel* constants. Accepted spellings: "none"/"off"/"plain",
+// "basic"/"8", "16"/"ansi", "256"/"xterm"/"xterm256",
+// "truecolor"/"24bit"/"rgb". Returns (level, true) on success and
+// (0, false) on miss so the caller can produce its own error wording.
+func ParseColorLevel(s string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "none", "off", "plain", "0":
+		return ColorLevelNone, true
+	case "basic", "8":
+		return ColorLevelBasic, true
+	case "16", "ansi":
+		return ColorLevel16, true
+	case "256", "xterm", "xterm256", "xterm-256":
+		return ColorLevel256, true
+	case "truecolor", "24bit", "24-bit", "rgb":
+		return ColorLevelTrueColor, true
+	}
+	return 0, false
+}
+
+// ColorLevelName returns the canonical short token that round-trips
+// through ParseColorLevel — useful for menu echoes and config
+// serialisation. Unknown values return "auto" so a corrupt persisted
+// value never claims to be a real level.
+func ColorLevelName(level int) string {
+	switch level {
+	case ColorLevelNone:
+		return "none"
+	case ColorLevelBasic:
+		return "basic"
+	case ColorLevel16:
+		return "16"
+	case ColorLevel256:
+		return "256"
+	case ColorLevelTrueColor:
+		return "truecolor"
+	}
+	return "auto"
+}
+
 // DetectColorLevel maps a TERM string to one of the ColorLevel* constants.
 // Telnet does not give us the COLORTERM hint that local shells get, so the
 // truecolor branch only fires for terminal types that explicitly advertise

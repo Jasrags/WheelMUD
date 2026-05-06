@@ -136,6 +136,73 @@ func runAccountRepoTests(t *testing.T, name string, newRepo func(t *testing.T) A
 			t.Fatalf("err = %v, want ErrAccountNotFound", err)
 		}
 	})
+
+	t.Run(name+"/settings_default_zero_value", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		a, err := r.Create(ctx, Account{Username: "newcomer", PasswordHash: "h"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		got, err := r.FindByUsername(ctx, "newcomer")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.Settings != (AccountSettings{}) {
+			t.Fatalf("default settings = %+v, want zero value", got.Settings)
+		}
+		_ = a
+	})
+
+	t.Run(name+"/update_settings_round_trip", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		a, _ := r.Create(ctx, Account{Username: "tweaker", PasswordHash: "h"})
+		want := AccountSettings{
+			ColorOverride: "256",
+			PromptDefault: "<%h/%H hp> ",
+			WidthOverride: 100,
+			Locale:        "America/New_York",
+			MOTDAlways:    true,
+		}
+		if err := r.UpdateSettings(ctx, a.ID, want); err != nil {
+			t.Fatalf("update settings: %v", err)
+		}
+		got, err := r.FindByUsername(ctx, "tweaker")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.Settings != want {
+			t.Fatalf("settings = %+v, want %+v", got.Settings, want)
+		}
+		// Verify other columns weren't trashed.
+		if got.PasswordHash != "h" {
+			t.Fatalf("hash mutated: %q", got.PasswordHash)
+		}
+	})
+
+	t.Run(name+"/update_settings_missing", func(t *testing.T) {
+		err := newRepo(t).UpdateSettings(context.Background(), 9999, AccountSettings{})
+		if !errors.Is(err, ErrAccountNotFound) {
+			t.Fatalf("err = %v, want ErrAccountNotFound", err)
+		}
+	})
+
+	t.Run(name+"/find_by_id", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		a, _ := r.Create(ctx, Account{Username: "byid", PasswordHash: "h"})
+		got, err := r.FindByID(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("find by id: %v", err)
+		}
+		if got.ID != a.ID || got.Username != "byid" {
+			t.Fatalf("find by id = %+v", got)
+		}
+		if _, err := r.FindByID(ctx, 9999); !errors.Is(err, ErrAccountNotFound) {
+			t.Fatalf("missing find by id = %v, want ErrAccountNotFound", err)
+		}
+	})
 }
 
 func TestMemoryAccountRepo(t *testing.T) {

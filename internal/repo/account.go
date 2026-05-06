@@ -25,6 +25,11 @@ type Account struct {
 	LastLoginAt      *time.Time
 	FailedLoginCount int
 	LockedUntil      *time.Time
+	// Settings is the §6 account-menu "settings" sub-menu blob,
+	// persisted as accounts.settings_json (migration 0035). Zero value
+	// means "use server defaults"; see AccountSettings for the field
+	// semantics and apply points.
+	Settings AccountSettings
 }
 
 // IsLockedAt reports whether the account is in a lockout window at t.
@@ -55,6 +60,15 @@ type AccountRepo interface {
 	// columns (FailedLoginCount, LockedUntil, Username, etc.) are
 	// untouched. Returns ErrAccountNotFound when no row matches.
 	UpdatePasswordHash(ctx context.Context, id int64, newHash string) error
+	// UpdateSettings overwrites the persisted AccountSettings blob
+	// (migration 0035). Other columns are untouched. Returns
+	// ErrAccountNotFound when no row matches.
+	UpdateSettings(ctx context.Context, id int64, s AccountSettings) error
+	// FindByID resolves an account by primary key. Used by the §6
+	// account-menu apply paths (and by future audit lookups) when
+	// the username is not in scope. Returns ErrAccountNotFound when
+	// missing.
+	FindByID(ctx context.Context, id int64) (Account, error)
 }
 
 var (

@@ -190,6 +190,35 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   to ('character', 0); `audit.RecordAccount(ctx, repo, accountID,
   accountUsername, verb, target, args)` writes the new row shape.
   `audit.Record` (character-mode) keeps its existing call sites.
+  0035 added `accounts.settings_json` (TEXT NOT NULL DEFAULT '{}')
+  backing the §6 post-login account-menu "settings" sub-menu (slice
+  3 — color/prompt/width/locale/MOTD-toggle). The blob persists
+  `repo.AccountSettings` (`ColorOverride`, `PromptDefault`,
+  `WidthOverride`, `Locale`, `MOTDAlways`); the zero value
+  round-trips through `{}` and means "use server defaults". Apply
+  points: `mode/postauth.go::applyAccountSettings` stamps Color/
+  Width onto the session immediately before `promoteToGame`;
+  `CharacterCreate.SetSettings` forwards the bag so chargen stamps
+  `PromptDefault` onto `Character.PromptTemplate` at finalize time;
+  `MOTDAlways` flattens the `last_news_seen` watermark to zero in
+  both `postAuth` and `AccountMenu.handleNews`. Locale feeds the
+  account-menu's character-list date formatter only — wider
+  locale-aware rendering (the `time` verb, etc.) is deferred.
+  0036 added the `account_logins` table — append-only per-account
+  authentication-event log backing the §6 post-login account-menu
+  "security" sub-menu (slice 4). One row per outcome on every login
+  attempt (`success` / `failure` / `lockout`) plus one row per kicked
+  peer when the menu's `kick` verb runs (`kick`). Schema mirrors
+  `admin_audit` (0029): no FK on `account_id`, ts as unix seconds,
+  indexed by `(account_id, ts)`. `info` is a short fixed-vocabulary
+  note (`"wrong password"`, `"locked"`, `"kicked by other-session"`)
+  and NEVER carries the typed password. `Login.SetLogins` /
+  `Create.SetLogins` thread the repo through `postAuthDeps` to
+  `AccountMenu.SetLogins`; the security view calls
+  `ListRecentByAccount(s.AccountID, 10)` and pairs it with
+  `session.Registry.Snapshot()` for the active-session list. Single-
+  session-per-account makes `kick` a no-op today; the path is
+  forward-wired for multi-session work.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
