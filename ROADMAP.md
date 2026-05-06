@@ -217,6 +217,58 @@ constants and helpers in `telnet/iac.go`.
       with FK + cascade, account isolation enforced in `CharacterSelect`
 - [x] Character-select + character-create modes — auto-skip when account
       has 0 chars (forced create) or 1 char (auto-promote); 2+ shows menu
+- [ ] **Post-login account menu** — new `internal/mode/account_menu.go`
+      pushed by `Login.onSuccess` (and `Create.onSuccess`) *before*
+      `character_select`, replacing the auto-skip-to-select shortcut.
+      Becomes the single hub players land on after auth and the place
+      every account-scoped action is reachable without dropping to a
+      verb. Ordering note: MOTD/news currently renders after
+      `character_select` inside `postauth.promoteToGame`; move that
+      `news.WriteMOTDBlock` call to fire *before* the account menu is
+      pushed (right after login/create success) so players see news
+      once per login regardless of which character they pick — and
+      so the menu itself isn't interrupted by a news block on every
+      character switch. The `last_news_seen_at` gate stays on the
+      character row but is stamped against the account's most-recent
+      character (or skipped until a character is selected, with a
+      `news` menu entry to replay). Menu items:
+      - **Character management** — `play <n>` / `select <n>` enters the
+        existing `character_select` → `promoteToGame` path; `new`
+        ReplaceModes into `character_create`; `delete <n>` runs a
+        confirm-by-typed-name guard, then `CharacterRepo.Delete`
+        (cascades inventory + equipment + bank + audit refs); `rename
+        <n> <name>` if §6 ever allows post-creation rename (gated off
+        V1). List shows name / class / level / last-played.
+      - **Account password change** — `password` substep prompts current
+        → new → confirm under `Session.SetPasswordMode`, rehashes via
+        `auth.Hash`, calls `AccountRepo.UpdatePassword`, invalidates
+        any other bound sessions for the account.
+      - **Account settings** — color level (`colors` shortcut), default
+        prompt template applied to new chars, terminal width override
+        when NAWS lies, locale/timezone for `time` display, MOTD
+        re-display toggle.
+      - **Account security** — view recent login timestamps + source
+        IPs (needs a small `account_logins` audit table — piggyback
+        on §17 admin_audit pattern), active session list with "kick
+        other sessions" action (uses `session.Registry.Snapshot` +
+        the displaced-session path already wired for multi-session).
+      - **Email / recovery** — set/verify email, trigger password-reset
+        token (depends on the §6 email-verification item; menu entry
+        is dark until that lands).
+      - **News / MOTD replay** — re-render the unseen-news block on
+        demand without flipping `last_news_seen_at`.
+      - **Help** — `help account` topic (§18) describing every menu
+        verb.
+      - **Quit** — drops the connection cleanly (same as game-mode
+        `quit`, but from pre-game).
+      Substep state machine mirrors the chargen pattern (`accountStep`
+      enum, `accountDraft` for in-progress password change). Single-
+      character accounts no longer auto-promote — the menu always
+      shows — but `play` with no arg picks the only character if
+      there's exactly one, preserving the "one keystroke into the
+      world" feel. Cross-cutting: every destructive action (delete
+      character, password change, kick sessions) records to
+      `admin_audit` with `actor=account`, `target=character|account`.
 - [ ] **Character creation flow** — replace the current single-screen
       name prompt (`internal/mode/character_create.go`) with the full
       WoT chargen pipeline, driven by content catalogs in

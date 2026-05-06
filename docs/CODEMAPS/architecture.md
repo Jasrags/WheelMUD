@@ -1,4 +1,8 @@
-<!-- Generated: 2026-05-02 | Files scanned: ~45 (.go) | Token estimate: ~950 -->
+<!-- Generated: 2026-05-05 | Files scanned: ~80 (.go) | Token estimate: ~1100 -->
+<!-- Note: This codemap was last fully re-derived 2026-05-02 and has
+     been surgically updated for chargen and a few touchpoints. For
+     the authoritative current architecture see CLAUDE.md and PLAN.md
+     at the repo root. -->
 
 # Architecture
 
@@ -132,6 +136,55 @@ Login.handlePassword:
 `promoteToGame` stamps `CharacterID`, `CharacterName`, and `CurrentRoomID` onto the session (defaulting to `repo.StarterRoomID` if the row has none) so the first `look` resolves immediately. Movement commands write `CurrentRoomID` back via `CharacterRepo.RecordRoom` so a reconnect picks up where the player left off.
 
 Create mode mirrors Login on the success path (insert account, Bind, postAuth → CharacterCreate since 0 chars).
+
+## CharacterCreate substeps (Phase C chargen)
+
+When a `*chargen.Catalog` is wired via `SetCatalog`, `CharacterCreate`
+walks a substep state machine; without a catalog it falls back to a
+single-name legacy flow (kept for tests / dev fixtures).
+
+```
+chargenStepName       → name validated like account username
+   ↓
+chargenStepRace       → human | ogier
+   ↓
+chargenStepBackground → Catalog.BackgroundsForRace; pick by id|#|info
+   ↓
+chargenStepClass      → Catalog.ClassesForRace; ogier filtered out of
+                        channeler classes per book lore
+   ↓
+chargenStepAbilities  → point-buy V1, 25-point budget, [8..18] range,
+                        non-linear cost table; verbs set/reset/done
+   ↓
+chargenStepIdentity   → defaults stamped on entry; gender/age/handed/
+                        align/roll verbs. Height/weight roll Table 6-1
+                        against race + bg.HeightModIn (RNG injectable)
+   ↓
+chargenStepFeat       → bg.BonusFeats auto-merged; player picks one
+                        from Catalog.FeatsForBackground; verbs
+                        pick/info/bare-id/done
+   ↓
+chargenStepSkills     → budget = max(1, class.SkillPoints + IntMod) × 4;
+                        ranks across class ∪ bg skills, cap 4 each;
+                        verbs rank/reset/done
+   ↓
+chargenStepReview     → render full draft; yes commits via
+                        CharacterRepo.Create (single insert); back/
+                        cancel revisits/aborts
+```
+
+Catalog string ids hash to int32 via FNV-32a (`catalogIDInt32` in
+`internal/mode/chargen_features.go`) so `Character.Feats []int32` and
+`Character.Skills map[int32]SkillRanks` round-trip through the
+existing `feats_json` / `skills_json` columns. Channeler branch
+(Source/Affinities/level-0 weaves) and starting-equipment spawning
+are deferred — see PLAN.md §15 and `chargen_features_followups.md`.
+
+Files:
+- `internal/mode/character_create.go` — substep enum, draft, dispatch
+- `internal/mode/chargen_identity.go` — identity substep + Table 6-1
+- `internal/mode/chargen_features.go` — feat + skills substeps
+- `internal/chargen/` — catalog loader (YAML; CHARGEN_DIR override)
 
 ## Input → command path
 
