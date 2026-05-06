@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -21,6 +22,8 @@ type menuFixture struct {
 	chars    *repo.MemoryCharacterRepo
 	items    *repo.MemoryItemRepo
 	audits   *repo.MemoryAdminAuditRepo
+	accounts *repo.MemoryAccountRepo
+	account  repo.Account
 	registry *session.Registry
 	game     *stubMode
 	captured *safeBuf
@@ -53,10 +56,23 @@ func pushAccountMenu(t *testing.T, names []string) *menuFixture {
 	game := &stubMode{name: "game"}
 	items := repo.NewMemoryItemRepo()
 	audits := repo.NewMemoryAdminAuditRepo()
+	accounts := repo.NewMemoryAccountRepo()
+	// Seed the account corresponding to AccountID=1 with a known
+	// password so password-change tests can verify the current-password
+	// step without faking the bcrypt verifier.
+	hash, err := auth.Hash("oldpassword")
+	if err != nil {
+		t.Fatalf("hash old: %v", err)
+	}
+	acc, err := accounts.Create(context.Background(), repo.Account{Username: "rangerbob", PasswordHash: hash})
+	if err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
 	registry := session.NewRegistry()
 	menu := NewAccountMenu(seeded, cr, game)
 	menu.SetItems(items)
 	menu.SetAudits(audits)
+	menu.SetAccounts(accounts)
 	menu.SetSessions(registry)
 	menu.SetAccountUsername("rangerbob")
 
@@ -67,7 +83,7 @@ func pushAccountMenu(t *testing.T, names []string) *menuFixture {
 	})
 
 	s := telnet.NewSession(server)
-	s.AccountID = 1
+	s.AccountID = acc.ID
 
 	captured := &safeBuf{}
 	drainPeer(t, client, captured)
@@ -77,7 +93,8 @@ func pushAccountMenu(t *testing.T, names []string) *menuFixture {
 	}
 	return &menuFixture{
 		t: t, session: s, peer: client, chars: cr, items: items,
-		audits: audits, registry: registry, game: game,
+		audits: audits, accounts: accounts, account: acc,
+		registry: registry, game: game,
 		captured: captured, menu: menu, motdHits: &motdHits,
 	}
 }
@@ -448,6 +465,169 @@ func TestAccountMenu_DeleteRefusesLoggedInTarget(t *testing.T) {
 	}
 	if _, err := f.chars.FindByName(context.Background(), "Alpha"); err != nil {
 		t.Fatalf("Alpha removed despite live-session block: %v", err)
+	}
+}
+
+func TestAccountMenu_PasswordWithoutAccountsRepoRefuses(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.menu.SetAccounts(nil)
+	f.captured.Reset()
+	f.feed("password")
+	if !strings.Contains(f.captured.String(), "not configured") {
+		t.Fatalf("expected refusal: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt = %q, want [account]", got)
+	}
+}
+
+func TestAccountMenu_PasswordWrongCurrentResetsToRoot(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed("password")
+	if got := f.menu.Prompt(context.Background(), f.session); got != "Current password: " {
+		t.Fatalf("prompt = %q, want current-password prompt", got)
+	}
+	f.captured.Reset()
+	f.feed("notmypw")
+	if !strings.Contains(f.captured.String(), "did not match") {
+		t.Fatalf("expected current-mismatch notice: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt after wrong current = %q, want [account]", got)
+	}
+	// Hash unchanged.
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("old password should still verify")
+	}
+}
+
+func TestAccountMenu_PasswordHappyPath(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed("password")
+	f.feed("oldpassword")
+	if got := f.menu.Prompt(context.Background(), f.session); got != "New password: " {
+		t.Fatalf("prompt = %q, want new-password prompt", got)
+	}
+	f.feed("brandnewpw")
+	if got := f.menu.Prompt(context.Background(), f.session); got != "Confirm new password: " {
+		t.Fatalf("prompt = %q, want confirm prompt", got)
+	}
+	f.captured.Reset()
+	f.feed("brandnewpw")
+	if !strings.Contains(f.captured.String(), "Password changed") {
+		t.Fatalf("expected success line: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt = %q, want [account]", got)
+	}
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "brandnewpw") {
+		t.Fatal("new password did not verify after change")
+	}
+	if auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("old password still verifies after change")
+	}
+	rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{})
+	var found bool
+	for _, r := range rows {
+		if r.Verb == "change-password" {
+			if r.ActorType != repo.ActorTypeAccount || r.ActorAccountID != f.account.ID || r.ActorName != "rangerbob" {
+				t.Fatalf("audit actor mismatch: %+v", r)
+			}
+			if r.Target != "" || r.Args != "" {
+				t.Fatalf("audit row leaked target/args: %+v", r)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("change-password audit row missing: %+v", rows)
+	}
+}
+
+func TestAccountMenu_PasswordConfirmMismatchResets(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed("password")
+	f.feed("oldpassword")
+	f.feed("brandnewpw")
+	f.captured.Reset()
+	f.feed("differentpw")
+	if !strings.Contains(f.captured.String(), "did not match") {
+		t.Fatalf("expected confirm-mismatch notice: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt = %q, want [account]", got)
+	}
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("old password should survive confirm mismatch")
+	}
+}
+
+func TestAccountMenu_PasswordTooShortResets(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed("password")
+	f.feed("oldpassword")
+	f.captured.Reset()
+	f.feed("short") // < 8 runes
+	if !strings.Contains(f.captured.String(), "too short") {
+		t.Fatalf("expected too-short notice: %q", f.captured.String())
+	}
+	if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+		t.Fatalf("prompt = %q, want [account]", got)
+	}
+	got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+	if !auth.Verify(got.PasswordHash, "oldpassword") {
+		t.Fatal("hash mutated despite too-short rejection")
+	}
+}
+
+func TestAccountMenu_PasswordCancelAtEachStep(t *testing.T) {
+	cases := []struct {
+		name    string
+		feedPre []string
+	}{
+		{"current", nil},
+		{"new", []string{"oldpassword"}},
+		{"confirm", []string{"oldpassword", "brandnewpw"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := pushAccountMenu(t, []string{"Alpha"})
+			f.feed("password")
+			for _, line := range tc.feedPre {
+				f.feed(line)
+			}
+			f.captured.Reset()
+			f.feed("cancel")
+			if !strings.Contains(f.captured.String(), "Cancelled") {
+				t.Fatalf("expected cancel notice: %q", f.captured.String())
+			}
+			if got := f.menu.Prompt(context.Background(), f.session); !strings.HasPrefix(got, "[account]") {
+				t.Fatalf("prompt after cancel = %q, want [account]", got)
+			}
+			if f.session.InPasswordMode {
+				t.Fatal("session still in password mode after cancel")
+			}
+			got, _ := f.accounts.FindByUsername(context.Background(), "rangerbob")
+			if !auth.Verify(got.PasswordHash, "oldpassword") {
+				t.Fatal("old password should survive cancel")
+			}
+		})
+	}
+}
+
+func TestAccountMenu_OnExitClearsPasswordFlow(t *testing.T) {
+	f := pushAccountMenu(t, []string{"Alpha"})
+	f.feed("password")
+	f.feed("oldpassword")
+	// Mid-flow at new-password prompt; tear the menu down.
+	if err := f.menu.OnExit(f.session); err != nil {
+		t.Fatalf("OnExit: %v", err)
+	}
+	if f.session.InPasswordMode {
+		t.Fatal("password mode persisted past OnExit")
 	}
 }
 

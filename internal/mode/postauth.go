@@ -22,6 +22,7 @@ import (
 type postAuthDeps struct {
 	items           repo.ItemRepo
 	audits          repo.AdminAuditRepo
+	accounts        repo.AccountRepo
 	sessions        *session.Registry
 	accountUsername string
 }
@@ -90,6 +91,7 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	menu.SetCatalog(catalog)
 	menu.SetItems(deps.items)
 	menu.SetAudits(deps.audits)
+	menu.SetAccounts(deps.accounts)
 	menu.SetSessions(deps.sessions)
 	menu.SetAccountUsername(deps.accountUsername)
 	return s.ReplaceMode(menu)

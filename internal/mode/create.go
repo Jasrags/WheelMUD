@@ -178,6 +178,7 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 	return postAuth(ctx, s, c.characters, c.motd, c.catalog, c.game, postAuthDeps{
 		items:           c.items,
 		audits:          c.audits,
+		accounts:        c.accounts,
 		sessions:        c.sessions,
 		accountUsername: a.Username,
 	})

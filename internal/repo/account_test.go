@@ -105,6 +105,37 @@ func runAccountRepoTests(t *testing.T, name string, newRepo func(t *testing.T) A
 			t.Fatalf("locked_until = %v, want %v", got.LockedUntil, lock)
 		}
 	})
+
+	t.Run(name+"/update_password_hash", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		a, _ := r.Create(ctx, Account{Username: "rosie", PasswordHash: "old"})
+		// Fail a login first so we can verify other columns survive.
+		if err := r.RecordLoginFailure(ctx, a.ID, time.Time{}); err != nil {
+			t.Fatalf("failure: %v", err)
+		}
+		if err := r.UpdatePasswordHash(ctx, a.ID, "new"); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		got, _ := r.FindByUsername(ctx, "rosie")
+		if got.PasswordHash != "new" {
+			t.Fatalf("hash = %q, want %q", got.PasswordHash, "new")
+		}
+		if got.FailedLoginCount != 1 {
+			t.Fatalf("failed count mutated: %d, want 1", got.FailedLoginCount)
+		}
+		if got.Username != "rosie" || got.UsernameLower != "rosie" {
+			t.Fatalf("username changed: %+v", got)
+		}
+	})
+
+	t.Run(name+"/update_password_hash_missing", func(t *testing.T) {
+		r := newRepo(t)
+		err := r.UpdatePasswordHash(context.Background(), 9999, "h")
+		if !errors.Is(err, ErrAccountNotFound) {
+			t.Fatalf("err = %v, want ErrAccountNotFound", err)
+		}
+	})
 }
 
 func TestMemoryAccountRepo(t *testing.T) {

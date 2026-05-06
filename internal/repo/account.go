@@ -50,6 +50,11 @@ type AccountRepo interface {
 	// lockout window. Pass a zero `lockedUntil` to leave the existing
 	// lockout untouched.
 	RecordLoginFailure(ctx context.Context, id int64, lockedUntil time.Time) error
+	// UpdatePasswordHash overwrites the bcrypt hash for the given
+	// account id. Caller is responsible for hashing (auth.Hash). Other
+	// columns (FailedLoginCount, LockedUntil, Username, etc.) are
+	// untouched. Returns ErrAccountNotFound when no row matches.
+	UpdatePasswordHash(ctx context.Context, id int64, newHash string) error
 }
 
 var (

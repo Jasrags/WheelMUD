@@ -112,6 +112,24 @@ func (r *SQLiteAccountRepo) RecordLoginFailure(ctx context.Context, id int64, lo
 	return nil
 }
 
+func (r *SQLiteAccountRepo) UpdatePasswordHash(ctx context.Context, id int64, newHash string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE accounts SET password_hash = ? WHERE id = ?`,
+		newHash, id,
+	)
+	if err != nil {
+		return fmt.Errorf("update password hash: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update password hash rows: %w", err)
+	}
+	if n == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
+}
+
 // isUniqueViolation detects a SQLite unique-constraint error without
 // importing the driver-specific error type. modernc.org/sqlite formats
 // unique violations as "constraint failed: UNIQUE constraint failed: ...".

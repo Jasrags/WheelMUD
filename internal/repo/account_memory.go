@@ -76,6 +76,17 @@ func (r *MemoryAccountRepo) RecordLoginFailure(_ context.Context, id int64, lock
 	return nil
 }
 
+func (r *MemoryAccountRepo) UpdatePasswordHash(_ context.Context, id int64, newHash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	a := r.findByIDLocked(id)
+	if a == nil {
+		return ErrAccountNotFound
+	}
+	a.PasswordHash = newHash
+	return nil
+}
+
 func (r *MemoryAccountRepo) findByIDLocked(id int64) *Account {
 	for _, a := range r.byLower {
 		if a.ID == id {

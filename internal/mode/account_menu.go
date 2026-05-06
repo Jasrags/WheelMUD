@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/audit"
+	"github.com/Jasrags/WheelMUD/internal/auth"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -46,14 +47,15 @@ import (
 // Subsequent slices add password change (2), account settings (3),
 // security/login audit (4), and email/recovery (5).
 type AccountMenu struct {
-	chars   []repo.Character
-	repo    repo.CharacterRepo
-	items   repo.ItemRepo
-	audits  repo.AdminAuditRepo
-	session *session.Registry
-	game    telnet.Mode
-	motd    MOTDFunc
-	catalog *chargen.Catalog
+	chars    []repo.Character
+	repo     repo.CharacterRepo
+	items    repo.ItemRepo
+	audits   repo.AdminAuditRepo
+	accounts repo.AccountRepo
+	session  *session.Registry
+	game     telnet.Mode
+	motd     MOTDFunc
+	catalog  *chargen.Catalog
 	// accountUsername snapshots the authed username at menu construction
 	// time so audit rows attribute to a name without a per-action repo
 	// lookup. Mirrors how AdminAuditEntry.ActorName snapshots names.
@@ -66,9 +68,15 @@ type AccountMenu struct {
 	listShown bool
 
 	// Substep state. accountStepRoot dispatches verbs; child steps
-	// own a focused prompt (today only the typed-name delete confirm).
+	// own a focused prompt (typed-name delete confirm; the 3-step
+	// password-change flow current → new → confirm).
 	step          accountStep
 	pendingDelete *repo.Character
+	// pendingNewHash carries the bcrypt hash produced from the
+	// new-password prompt across to the confirm step. Cleared on
+	// completion / cancel / OnExit so plaintext-derived state never
+	// outlives the flow.
+	pendingNewHash string
 }
 
 // accountStep is the post-auth menu's substep enum. Mirrors the
@@ -80,6 +88,9 @@ type accountStep int
 const (
 	accountStepRoot accountStep = iota
 	accountStepConfirmDelete
+	accountStepCurrentPassword
+	accountStepNewPassword
+	accountStepConfirmNewPassword
 )
 
 // NewAccountMenu returns an AccountMenu over the given character list.
@@ -115,6 +126,12 @@ func (m *AccountMenu) SetAudits(r repo.AdminAuditRepo) { m.audits = r }
 // tests; production wiring always supplies it).
 func (m *AccountMenu) SetSessions(r *session.Registry) { m.session = r }
 
+// SetAccounts wires the account repo used by the change-password
+// flow. nil keeps the verb available but reports a generic
+// "not configured" message — matches the SetMOTD/SetItems pattern
+// of fail-soft when an optional dep is missing.
+func (m *AccountMenu) SetAccounts(r repo.AccountRepo) { m.accounts = r }
+
 // SetAccountUsername stamps the audit-row actor name. Empty falls back
 // to a generic placeholder when an audit row is written.
 func (m *AccountMenu) SetAccountUsername(name string) { m.accountUsername = name }
@@ -123,6 +140,12 @@ func (m *AccountMenu) Prompt(_ context.Context, _ *telnet.Session) string {
 	switch m.step {
 	case accountStepConfirmDelete:
 		return "[delete] "
+	case accountStepCurrentPassword:
+		return "Current password: "
+	case accountStepNewPassword:
+		return "New password: "
+	case accountStepConfirmNewPassword:
+		return "Confirm new password: "
 	}
 	return "[account] "
 }
@@ -135,11 +158,26 @@ func (m *AccountMenu) OnEnter(s *telnet.Session) error {
 	return m.writeList(s)
 }
 
-func (m *AccountMenu) OnExit(_ *telnet.Session) error { return nil }
+// OnExit clears any in-progress password-change state so a torn-down
+// session never leaves password mode on (the next mode would inherit
+// it) or retains a bcrypt hash in the menu struct. Idempotent;
+// matches Create.OnExit.
+func (m *AccountMenu) OnExit(s *telnet.Session) error {
+	m.pendingNewHash = ""
+	s.SetPasswordMode(false)
+	return nil
+}
 
 func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string) error {
-	if m.step == accountStepConfirmDelete {
+	switch m.step {
+	case accountStepConfirmDelete:
 		return m.handleConfirmDelete(ctx, s, line)
+	case accountStepCurrentPassword:
+		return m.handleCurrentPassword(ctx, s, line)
+	case accountStepNewPassword:
+		return m.handleNewPassword(s, line)
+	case accountStepConfirmNewPassword:
+		return m.handleConfirmNewPassword(ctx, s, line)
 	}
 	fields := strings.Fields(strings.TrimSpace(line))
 	if len(fields) == 0 {
@@ -156,6 +194,8 @@ func (m *AccountMenu) Handle(ctx context.Context, s *telnet.Session, line string
 		return m.handleNew(s)
 	case "delete", "del", "remove":
 		return m.handleDelete(s, args)
+	case "password", "passwd":
+		return m.handlePassword(s)
 	case "news", "motd":
 		return m.handleNews(s)
 	case "help", "?":
@@ -413,6 +453,127 @@ func (m *AccountMenu) resolveOwned(arg string) *repo.Character {
 	return nil
 }
 
+// handlePassword opens the change-password substep flow. It enters
+// password-mode immediately so the very next keystroke (which becomes
+// the current-password line) is masked. The dispatcher repaints the
+// step-aware Prompt() automatically; no extra write here.
+//
+// Refuses with a "not configured" notice when the account repo isn't
+// wired (memory-only test paths). Production wiring always supplies it.
+func (m *AccountMenu) handlePassword(s *telnet.Session) error {
+	if m.accounts == nil {
+		return writeError(s, "Password change is not configured on this server.")
+	}
+	m.step = accountStepCurrentPassword
+	s.SetPasswordMode(true)
+	return nil
+}
+
+// handleCurrentPassword runs at accountStepCurrentPassword. cancel /
+// blank → reset to root. Otherwise re-fetch the account by the
+// snapshotted username (cheaper and safer than caching the hash on
+// the menu) and bcrypt-verify. Mismatch resets to root with a generic
+// notice; the user retypes `password` to retry. Match advances to
+// accountStepNewPassword keeping password mode on.
+func (m *AccountMenu) handleCurrentPassword(ctx context.Context, s *telnet.Session, line string) error {
+	if isCancelOrBlank(line) {
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Cancelled.\r\n"))
+	}
+	if m.accounts == nil {
+		// Defensive: handlePassword guards on this, but if accounts is
+		// cleared mid-flow, fail closed.
+		m.resetPasswordFlow(s)
+		return writeError(s, "Password change is not configured on this server.")
+	}
+	a, err := m.accounts.FindByUsername(ctx, m.accountUsername)
+	if err != nil {
+		slog.Warn("account_menu: find account for password change failed",
+			"account", s.AccountID, "err", err)
+		m.resetPasswordFlow(s)
+		return writeError(s, "Could not change password. Try again later.")
+	}
+	if !auth.Verify(a.PasswordHash, line) {
+		m.resetPasswordFlow(s)
+		return writeError(s, "Current password did not match.")
+	}
+	m.step = accountStepNewPassword
+	// Password mode stays on for the next prompt.
+	return nil
+}
+
+// handleNewPassword runs at accountStepNewPassword. cancel / blank →
+// reset to root. Otherwise hash via auth.Hash and stash on the menu.
+// Length-policy error wording matches Create.handlePassword so a user
+// who hits a too-short / too-long during chargen sees the same notice
+// during rotation.
+func (m *AccountMenu) handleNewPassword(s *telnet.Session, line string) error {
+	if isCancelOrBlank(line) {
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Cancelled.\r\n"))
+	}
+	hash, err := auth.Hash(line)
+	switch {
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Password too short (minimum 8 characters).\r\n"))
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Password too long (maximum 72 bytes).\r\n"))
+	case err != nil:
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Could not process password. Try again.\r\n"))
+	}
+	m.pendingNewHash = hash
+	m.step = accountStepConfirmNewPassword
+	// Password mode stays on for the confirm prompt.
+	return nil
+}
+
+// handleConfirmNewPassword runs at accountStepConfirmNewPassword.
+// Mirrors Create.handleConfirm: clears password mode first thing, then
+// verifies the typed line against the stashed hash. Match → persist
+// + audit + "Password changed.". Any other outcome (cancel, mismatch,
+// repo failure) resets to root with the appropriate notice.
+func (m *AccountMenu) handleConfirmNewPassword(ctx context.Context, s *telnet.Session, line string) error {
+	s.SetPasswordMode(false)
+	if isCancelOrBlank(line) {
+		m.resetPasswordFlow(s)
+		return s.WriteRaw([]byte("Cancelled.\r\n"))
+	}
+	if !auth.Verify(m.pendingNewHash, line) {
+		m.resetPasswordFlow(s)
+		return writeError(s, "Passwords did not match. Run 'password' to try again.")
+	}
+	if err := m.accounts.UpdatePasswordHash(ctx, s.AccountID, m.pendingNewHash); err != nil {
+		slog.Warn("account_menu: password update failed",
+			"account", s.AccountID, "err", err)
+		m.resetPasswordFlow(s)
+		return writeError(s, "Could not change password. Try again later.")
+	}
+	audit.RecordAccount(ctx, m.audits, s.AccountID, m.accountUsername,
+		"change-password", "", "")
+	m.resetPasswordFlow(s)
+	return s.WriteRaw([]byte("Password changed.\r\n"))
+}
+
+// resetPasswordFlow clears in-progress state and exits password mode.
+// Idempotent — safe to call from any step (including from within
+// handleConfirmNewPassword which already turned masking off).
+func (m *AccountMenu) resetPasswordFlow(s *telnet.Session) {
+	m.step = accountStepRoot
+	m.pendingNewHash = ""
+	s.SetPasswordMode(false)
+}
+
+// isCancelOrBlank captures the shared "user wants out" checks used at
+// every password-flow substep. Whitespace-only lines abort to match
+// the cancel-on-blank behavior of the delete-confirm step.
+func isCancelOrBlank(line string) bool {
+	in := strings.TrimSpace(line)
+	return in == "" || strings.EqualFold(in, "cancel") || strings.EqualFold(in, "abort")
+}
+
 func (m *AccountMenu) handleNews(s *telnet.Session) error {
 	if m.motd == nil {
 		return writeError(s, "News is not configured on this server.")
@@ -427,6 +588,7 @@ func (m *AccountMenu) writeHelp(s *telnet.Session) error {
 		"  play [name|#]     enter the world (no-arg picks the only character)\r\n" +
 		"  new               create a new character\r\n" +
 		"  delete <name|#>   permanently destroy a character (typed-name confirm)\r\n" +
+		"  password          change your account password\r\n" +
 		"  news              re-display the unread-news block\r\n" +
 		"  help              this list\r\n" +
 		"  quit              disconnect\r\n"

@@ -53,7 +53,7 @@ type Login struct {
 	account  *repo.Account // resolved after step 1; nil when no such user
 	motd     MOTDFunc      // optional MOTD/news hook fired by promoteToGame
 	catalog  *chargen.Catalog
-	items    repo.ItemRepo      // wired via SetItems; threaded to AccountMenu
+	items    repo.ItemRepo       // wired via SetItems; threaded to AccountMenu
 	audits   repo.AdminAuditRepo // wired via SetAudits; threaded to AccountMenu
 }
 
@@ -237,6 +237,7 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 	return postAuth(ctx, s, l.characters, l.motd, l.catalog, l.game, postAuthDeps{
 		items:           l.items,
 		audits:          l.audits,
+		accounts:        l.accounts,
 		sessions:        l.sessions,
 		accountUsername: l.account.Username,
 	})
