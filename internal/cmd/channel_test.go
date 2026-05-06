@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 var oocChannel = repo.Channel{ID: 1, Name: "ooc", Color: "cyan"}
@@ -95,6 +96,9 @@ func TestChannelsList_RendersStateForCaller(t *testing.T) {
 	sessions, alice, _, aOut, _ := commPair(t)
 	_ = sessions
 	alice.SetChannelMuted(map[string]bool{"gossip": true})
+	// Strip ANSI so test assertions don't fight the cfmt layer; the
+	// per-segment styling splits "ooc — on" across SGR boundaries.
+	alice.ColorLevel = telnet.ColorLevelNone
 	cat := []repo.Channel{
 		{Name: "ooc", Color: "cyan"},
 		{Name: "gossip", Color: "magenta"},
@@ -103,6 +107,9 @@ func TestChannelsList_RendersStateForCaller(t *testing.T) {
 	cmd := NewChannelsList(cat)
 	runCmd(t, cmd, alice, "")
 	got := aOut.String()
+	if !strings.Contains(got, "Channels") {
+		t.Fatalf("missing section header; got %q", got)
+	}
 	if !strings.Contains(got, "ooc — on") {
 		t.Fatalf("expected ooc on; got %q", got)
 	}

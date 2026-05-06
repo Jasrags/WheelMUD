@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -14,6 +15,10 @@ import (
 // character name and idle time, marks the caller "(you)". Class /
 // level / title columns are deferred until char-create populates
 // the underlying Character fields (ROADMAP §13).
+//
+// Rendering goes through internal/display so the section header
+// matches the chargen review and score sheet — names are yellow|bold,
+// idle suffixes muted gray, the "(you)" / wizinvis "*" markers cyan.
 func NewWho(sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
 		Name: "who",
@@ -21,43 +26,90 @@ func NewWho(sessions *session.Registry) *telnet.Command {
 		Auth: telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
 			snap := sessions.Snapshot()
-			rows := make([]string, 0, len(snap))
-			now := time.Now().UTC()
-			viewerIsAdmin := c.Session.AuthLevel >= telnet.AuthAdmin
-			for _, peer := range snap {
-				// wizinvis: hide invisible peers from non-admin viewers.
-				// Caller's own session is never hidden from itself.
-				if peer != c.Session && peer.IsHidden() && !viewerIsAdmin {
-					continue
-				}
-				_, name, _ := peer.InWorld()
-				if name == "" {
-					// Pre-character session — login or character-select.
-					// Show as "(connecting)" rather than the remote address
-					// so `who` can't be used to enumerate IPs.
-					name = "(connecting)"
-				}
-				idle := ""
-				if d := peer.IdleSince(now); d >= 30*time.Second {
-					idle = " idle " + formatIdle(d)
-				}
-				marker := ""
-				if peer == c.Session {
-					marker = " (you)"
-				}
-				// Admin-visible marker for hidden peers (including self
-				// when self is wizinvis), so the operator can tell at a
-				// glance who is currently invisible.
-				if peer.IsHidden() && viewerIsAdmin {
-					marker += " *"
-				}
-				rows = append(rows, "- "+name+marker+idle)
+			rows := collectWhoRows(c.Session, snap, time.Now().UTC())
+			sort.Slice(rows, func(i, j int) bool { return rows[i].sortKey < rows[j].sortKey })
+
+			if err := display.SectionHeader(c.Session,
+				fmt.Sprintf("Players online (%d)", len(rows))); err != nil {
+				return err
 			}
-			sort.Strings(rows)
-			header := fmt.Sprintf("%d player(s) online:\r\n", len(rows))
-			return c.Session.WritePaged([]byte(header + strings.Join(rows, "\r\n") + "\r\n"))
+			var b strings.Builder
+			for _, r := range rows {
+				b.WriteString(formatWhoRow(r))
+			}
+			return c.Session.WritePagedWrapped(b.String())
 		},
 	}
+}
+
+// whoRow is the materialized presentation of one peer session: the
+// pieces the row formatter splices into a cfmt-styled line. sortKey
+// is held separately so styling tags don't perturb sort order.
+type whoRow struct {
+	name    string
+	you     bool
+	hidden  bool
+	idle    string // "" when below the idle threshold
+	sortKey string
+}
+
+// collectWhoRows runs the visibility + display rules over a session
+// snapshot and returns a slice ready to format. Pulled out of the
+// command body so the wizinvis + idle + marker logic is testable
+// without spinning up a registry + dispatcher.
+func collectWhoRows(viewer *telnet.Session, snap map[int64]*telnet.Session, now time.Time) []whoRow {
+	rows := make([]whoRow, 0, len(snap))
+	viewerIsAdmin := viewer != nil && viewer.AuthLevel >= telnet.AuthAdmin
+	for _, peer := range snap {
+		// wizinvis: hide invisible peers from non-admin viewers.
+		// The caller's own session is always visible to itself.
+		if peer != viewer && peer.IsHidden() && !viewerIsAdmin {
+			continue
+		}
+		_, name, _ := peer.InWorld()
+		if name == "" {
+			// Pre-character session — login or character-select.
+			// "(connecting)" rather than remote address so who can't
+			// be used to enumerate IPs.
+			name = "(connecting)"
+		}
+		r := whoRow{name: name, sortKey: strings.ToLower(name)}
+		if d := peer.IdleSince(now); d >= 30*time.Second {
+			r.idle = formatIdle(d)
+		}
+		if peer == viewer {
+			r.you = true
+		}
+		// Admin-visible marker for hidden peers (including self when
+		// self is wizinvis), so the operator can see who is invisible.
+		if peer.IsHidden() && viewerIsAdmin {
+			r.hidden = true
+		}
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+// formatWhoRow emits one player line with cfmt styling. Defang
+// guards against a stored character name carrying cfmt syntax.
+func formatWhoRow(r whoRow) string {
+	var b strings.Builder
+	b.WriteString("  {{")
+	b.WriteString(display.Defang(r.name, "(unknown)"))
+	b.WriteString("}}::yellow|bold")
+	if r.you {
+		b.WriteString(" {{(you)}}::cyan")
+	}
+	if r.hidden {
+		b.WriteString(" {{*}}::cyan|bold")
+	}
+	if r.idle != "" {
+		b.WriteString(" {{idle ")
+		b.WriteString(r.idle)
+		b.WriteString("}}::gray")
+	}
+	b.WriteString("\r\n")
+	return b.String()
 }
 
 // formatIdle renders a duration as a short human-friendly string:

@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -99,6 +101,11 @@ func toggleChannel(c *telnet.Context, name string, characters repo.CharacterRepo
 
 // NewChannelsList builds the `channels` overview command: lists every
 // known channel with the caller's current on/off state.
+//
+// Rendering goes through internal/display so the section header
+// matches the chargen review / score sheet. Channel names render in
+// the channel's own color (so the visual key stays consistent with
+// broadcast lines), and on/off status renders green/gray.
 func NewChannelsList(channels []repo.Channel) *telnet.Command {
 	// Defensive: copy-and-sort so ordering is stable regardless of
 	// what the catalog source did.
@@ -109,16 +116,37 @@ func NewChannelsList(channels []repo.Channel) *telnet.Command {
 		Help: "List chat channels and your current on/off state",
 		Auth: telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
+			if err := display.SectionHeader(c.Session, "Channels"); err != nil {
+				return err
+			}
 			var b strings.Builder
-			b.WriteString("{{Channels:}}::white|bold\r\n")
 			for _, ch := range sorted {
-				state := "on"
-				if c.Session.IsChannelMuted(strings.ToLower(ch.Name)) {
-					state = "off"
-				}
-				b.WriteString("  " + ch.Name + " — " + state + "\r\n")
+				on := !c.Session.IsChannelMuted(strings.ToLower(ch.Name))
+				b.WriteString(formatChannelRow(ch, on))
 			}
 			return c.Session.WriteString(b.String())
 		},
 	}
+}
+
+// formatChannelRow emits one row of the channels overview:
+//
+//	  <name> — on    (channel-color name + green status)
+//	  <name> — off   (gray name + gray status)
+//
+// Names are defanged so a hostile catalog entry can't recolour
+// downstream rows. Color falls back to "cyan" if the channel row
+// left it blank, mirroring NewChannel.
+func formatChannelRow(ch repo.Channel, on bool) string {
+	color := ch.Color
+	if color == "" {
+		color = "cyan"
+	}
+	name := display.Defang(ch.Name, "(unnamed)")
+	if !on {
+		// Muted channels render quietly so the visual scan jumps to
+		// the active ones first.
+		return fmt.Sprintf("  {{%s}}::gray {{—}}::gray {{off}}::gray\r\n", name)
+	}
+	return fmt.Sprintf("  {{%s}}::%s {{—}}::gray {{on}}::green\r\n", name, color)
 }
