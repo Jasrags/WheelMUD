@@ -166,8 +166,8 @@ func TestChargenSkills_OverBudgetBumpRollsBack(t *testing.T) {
 
 // TestChargenSkills_InfoShorthand exercises `i <#>` and
 // `info <id>` on the skills picker — both should render the
-// per-skill detail screen with key ability spelled out + the
-// description from the catalog.
+// per-skill detail screen with the skill name, the key ability
+// spelled out, and a snippet of the description from the catalog.
 func TestChargenSkills_InfoShorthand(t *testing.T) {
 	f := skillsFixture(t)
 	mc := f.session.CurrentMode().(*CharacterCreate)
@@ -175,14 +175,47 @@ func TestChargenSkills_InfoShorthand(t *testing.T) {
 	if len(skills) == 0 {
 		t.Skip("no allowed skills in fixture")
 	}
-	// Pick a skill we know has a description (Bluff, since it's
-	// authored in skills.yaml + a class skill for noble/wanderer).
-	for _, in := range []string{"i 1", "info " + skills[0]} {
+	first := skills[0]
+	sk, ok := mc.catalog.Skill(first)
+	if !ok || sk == nil {
+		t.Fatalf("catalog missing first allowed skill %q", first)
+	}
+	wantName := sk.Name
+	wantAbility := abilityDisplayName(sk.Ability)
+	for _, in := range []string{"i 1", "info " + first} {
 		f.captured.Reset()
 		f.feed(in)
 		out := f.captured.String()
-		if !strings.Contains(out, "Key ability") {
-			t.Fatalf("input=%q expected 'Key ability' row:\n%s", in, out)
+		for _, want := range []string{wantName, "Key ability", wantAbility} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("input=%q missing %q in info render:\n%s",
+					in, want, out)
+			}
+		}
+	}
+}
+
+// TestAbilityDisplayName covers the token mapping including the
+// empty-string fallback that prevents a blank "Key ability" row
+// when a YAML entry sets no ability (e.g. Speak Language).
+func TestAbilityDisplayName(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+	}{
+		{"Str", "Strength"},
+		{"DEX", "Dexterity"},
+		{"con", "Constitution"},
+		{"Int", "Intelligence"},
+		{"Wis", "Wisdom"},
+		{"Cha", "Charisma"},
+		{"", "—"},
+		{"  ", "—"},
+		{"Cha ", "Charisma"}, // trailing whitespace tolerance
+		{"unknown", "unknown"},
+	} {
+		if got := abilityDisplayName(tc.in); got != tc.want {
+			t.Errorf("abilityDisplayName(%q) = %q, want %q",
+				tc.in, got, tc.want)
 		}
 	}
 }

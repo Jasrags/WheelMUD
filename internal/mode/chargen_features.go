@@ -392,9 +392,13 @@ func (m *CharacterCreate) writeSkillInfo(s *telnet.Session, sk *chargen.Skill) e
 
 // abilityDisplayName expands the YAML 3-letter ability token into
 // its full word for the skill info screen — players new to d20
-// may not recognise "Wis" or "Cha" on sight.
+// may not recognise "Wis" or "Cha" on sight. An empty token (a
+// catalog entry with no ability set, e.g. Speak Language) renders
+// as "—" so the row is visibly intentional rather than blank.
 func abilityDisplayName(token string) string {
-	switch strings.ToLower(token) {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "":
+		return "—"
 	case "str":
 		return "Strength"
 	case "dex":
