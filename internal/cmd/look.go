@@ -83,16 +83,29 @@ func pitchBlack(room repo.Room, clock *world.Clock) bool {
 // clock must be non-nil; tests pass a frozen-noon clock when lighting
 // isn't under test.
 func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) error {
+	out, err := renderRoomString(ctx, s, rooms, exits, items, mobs, clock)
+	if err != nil {
+		return err
+	}
+	return s.WriteString(out)
+}
+
+// renderRoomString builds the room render text without writing it, so
+// callers driving output to a foreign session (e.g., move.go's
+// chainFollowers, which must route through WriteAsync to preserve the
+// follower's prompt cache + line-edit replay) can splice the render
+// into a single async-write payload.
+func renderRoomString(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, clock *world.Clock) (string, error) {
 	if s.CurrentRoomID == 0 {
-		return s.WriteString("{{You are nowhere in particular.}}::red\r\n")
+		return "{{You are nowhere in particular.}}::red\r\n", nil
 	}
 
 	room, err := rooms.FindByID(ctx, s.CurrentRoomID)
 	if err != nil {
 		if errors.Is(err, repo.ErrRoomNotFound) {
-			return s.WriteString("{{The room around you has gone missing. Tell an admin.}}::red\r\n")
+			return "{{The room around you has gone missing. Tell an admin.}}::red\r\n", nil
 		}
-		return s.WriteString("{{Could not look around right now.}}::red\r\n")
+		return "{{Could not look around right now.}}::red\r\n", nil
 	}
 
 	// Pitch-black: render only the suppressed message. Items/mobs/desc
@@ -100,20 +113,20 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 	// daylight curve, weave). Day/night cycle drives this when a clock
 	// is wired; without a clock the legacy Dark+0 rule applies.
 	if pitchBlack(room, clock) {
-		return s.WriteString("{{It is pitch black — you can't see a thing.}}::gray\r\n")
+		return "{{It is pitch black — you can't see a thing.}}::gray\r\n", nil
 	}
 
 	exitsList, err := exits.ListFrom(ctx, room.ID)
 	if err != nil {
-		return s.WriteString("{{Could not look around right now.}}::red\r\n")
+		return "{{Could not look around right now.}}::red\r\n", nil
 	}
 	itemsList, err := items.ListInRoom(ctx, room.ID)
 	if err != nil {
-		return s.WriteString("{{Could not look around right now.}}::red\r\n")
+		return "{{Could not look around right now.}}::red\r\n", nil
 	}
 	mobsList, err := mobs.ListInRoom(ctx, room.ID)
 	if err != nil {
-		return s.WriteString("{{Could not look around right now.}}::red\r\n")
+		return "{{Could not look around right now.}}::red\r\n", nil
 	}
 
 	var b strings.Builder
@@ -184,7 +197,7 @@ func RenderRoom(ctx context.Context, s *telnet.Session, rooms repo.RoomRepo, exi
 		}
 		b.WriteString("\r\n")
 	}
-	return s.WriteString(b.String())
+	return b.String(), nil
 }
 
 // visibleExits drops Hidden exits from the list so look never reveals

@@ -38,7 +38,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			Help:    "Move " + name,
 			Auth:    telnet.AuthPlayer,
 			Run: func(c *telnet.Context) error {
-				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus, clock, sessions, 0)
+				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus, clock, sessions)
 			},
 		}
 	}
@@ -58,12 +58,11 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 
 // moveDir is the work behind every direction command. Pulled out as a
 // helper so each direction's Run is a one-liner and the move semantics
-// live in one place.
-//
-// followDepth tracks how many `chainFollowers` recursions led to this
-// call. A direct player move is depth 0; each chained follower
-// increments. Bounded by maxFollowDepth.
-func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, sessions *session.Registry, followDepth int) error {
+// live in one place. Chained followers do NOT re-enter this function —
+// they go through followAlong, which buffers all output for a single
+// peer.WriteAsync emission so the follower's prompt cache + line-edit
+// replay survive the chained move.
+func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, sessions *session.Registry) error {
 	s := c.Session
 	if s.CurrentRoomID == 0 {
 		return s.WriteRaw([]byte("You are nowhere — cannot move.\r\n"))
@@ -148,12 +147,14 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 	}
 
 	// Phase D #22 slice 3: chain followers. Any peer in fromRoomID
-	// whose Following() == s.CharacterID gets the same move attempt.
-	// Bounded recursion via followDepth (cap = maxFollowDepth) so an
-	// undetected cycle can never wedge the dispatcher.
-	if sessions != nil && followDepth < maxFollowDepth {
+	// whose Following() == s.CharacterID gets the same move attempt
+	// via followAlong (which routes output through WriteAsync so the
+	// follower's prompt cache + line-edit replay survive). Recursion
+	// for sub-followers (C follows B follows A) is bounded by
+	// maxFollowDepth inside chainFollowers.
+	if sessions != nil {
 		chainFollowers(c.Ctx, dir, fromRoomID, exit.ToRoomID, s, sessions,
-			rooms, exits, items, mobs, characters, bus, clock, followDepth)
+			rooms, exits, items, mobs, characters, bus, clock, 0)
 	}
 
 	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs, clock)
@@ -161,11 +162,14 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 
 // chainFollowers drives the auto-follow per-move chain. Snapshots
 // the registry, filters peers in fromRoomID following the leader,
-// and re-runs moveDir for each through the same code path so the
-// follower's own followers continue the chain. A failure to keep
-// up (locked door, sector gate, exit missing) emits a "couldn't
-// keep up" line and clears the relationship so the leader doesn't
-// drag a broken state forward.
+// and runs each move through followAlong, which buffers all output
+// (refusal text or destination render) into a single peer.WriteAsync
+// payload so the follower's prompt cache + line-edit replay survive
+// the chained move.
+//
+// After a follower successfully moves, recurse to chain any of
+// THEIR followers — bounded by depth < maxFollowDepth so an
+// unintended cycle can't wedge the dispatcher.
 func chainFollowers(ctx context.Context, dir string, fromRoomID, toRoomID int64, leader *telnet.Session, sessions *session.Registry, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, depth int) {
 	if leader == nil || leader.CharacterID == 0 {
 		return
@@ -183,33 +187,114 @@ func chainFollowers(ctx context.Context, dir string, fromRoomID, toRoomID int64,
 			// relationship stays — they may catch up later.
 			continue
 		}
-		ctxFollower := ctx
-		fc := &telnet.Context{
-			Ctx:     ctxFollower,
-			Session: peer,
-			Name:    dir,
-			Args:    nil,
-			Raw:     "",
+
+		moved := followAlong(ctx, peer, leader, dir, fromRoomID, toRoomID,
+			rooms, exits, items, mobs, characters, bus, clock)
+		if !moved {
+			continue
 		}
-		err := moveDir(fc, dir, rooms, exits, items, mobs, characters, bus, clock, sessions, depth+1)
-		if err != nil {
-			slog.Debug("chainFollowers: follower move failed",
-				"follower", peer.CharacterID, "leader", leader.CharacterID,
-				"dir", dir, "error", err)
-		}
-		if peer.CurrentRoomID != toRoomID {
-			// Follower couldn't keep up (door locked, sector gate,
-			// exit missing). Drop the relationship and tell them
-			// what happened so the leader doesn't keep dragging
-			// them through obstacles.
-			peer.SetFollowing(0)
-			leaderName := safeActor(leader)
-			if err := peer.WriteAsync(
-				"{{You couldn't keep up with " + leaderName + ". You stop following.}}::yellow\r\n"); err != nil {
-				slog.Debug("chainFollowers: notify failed", "follower", peer.CharacterID, "error", err)
-			}
+		// Sub-follower chain: peer (now in toRoomID) may itself have
+		// followers who were also in fromRoomID. Recurse with peer as
+		// the new leader.
+		if depth+1 < maxFollowDepth {
+			chainFollowers(ctx, dir, fromRoomID, toRoomID, peer, sessions,
+				rooms, exits, items, mobs, characters, bus, clock, depth+1)
 		}
 	}
+}
+
+// followAlong attempts to move `peer` `dir` into `toRoomID`,
+// accumulating refusal or render text into a single string and
+// emitting it via peer.WriteAsync. Returns true when the move
+// succeeded. On a refusal, peer.SetFollowing(0) is called so the
+// leader doesn't keep dragging a stuck follower through obstacles.
+func followAlong(ctx context.Context, peer, leader *telnet.Session, dir string, fromRoomID, toRoomID int64, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock) (moved bool) {
+	leaderName := safeActor(leader)
+	refuse := func(reason string) {
+		peer.SetFollowing(0)
+		msg := "{{You couldn't keep up with " + leaderName + ": " + reason + "}}::yellow\r\n"
+		if err := peer.WriteAsync(msg); err != nil {
+			slog.Debug("followAlong: notify failed", "follower", peer.CharacterID, "error", err)
+		}
+	}
+
+	exit, err := exits.FindByDirection(ctx, fromRoomID, dir)
+	if err != nil || exit.Flags.Hidden {
+		refuse("you can't go that way")
+		return false
+	}
+	if exit.Flags.NoPass {
+		refuse("an unseen force bars the way")
+		return false
+	}
+	if exit.Flags.Locked {
+		refuse("the door is locked")
+		return false
+	}
+	if exit.Flags.Closed {
+		refuse("the door is closed")
+		return false
+	}
+
+	// Sector gate: same per-mover capability check moveDir does.
+	dest, err := rooms.FindByID(ctx, exit.ToRoomID)
+	switch {
+	case err == nil:
+		if msg, blocked := sectorGate(dest.Sector, peer.Speed); blocked {
+			refuse(msg)
+			return false
+		}
+	case errors.Is(err, repo.ErrRoomNotFound):
+		// Stale exit; let the move attempt proceed so the follower
+		// still ends up co-located, matching moveDir's behaviour.
+	default:
+		slog.Warn("followAlong: dest room lookup failed",
+			"follower", peer.CharacterID, "to", exit.ToRoomID, "error", err)
+		refuse("something went wrong")
+		return false
+	}
+	if exit.ToRoomID != toRoomID {
+		// The exit in this direction goes somewhere other than where
+		// the leader ended up (leader teleported, hidden one-way
+		// connection, etc). Don't drag the follower into an unrelated
+		// room — refuse and clear so the relationship doesn't keep
+		// firing on every move.
+		refuse("you lose them in the press")
+		return false
+	}
+
+	if bus != nil && peer.CharacterID != 0 {
+		bus.Publish(ctx, world.PlayerLeft{
+			CharacterID: peer.CharacterID,
+			FromRoomID:  fromRoomID,
+			ToRoomID:    exit.ToRoomID,
+		})
+	}
+	peer.SetCurrentRoom(exit.ToRoomID)
+	if peer.CharacterID != 0 {
+		if err := characters.RecordRoom(ctx, peer.CharacterID, exit.ToRoomID); err != nil {
+			slog.Warn("followAlong: RecordRoom failed",
+				"follower", peer.CharacterID, "to", exit.ToRoomID, "error", err)
+		}
+	}
+	if bus != nil && peer.CharacterID != 0 {
+		bus.Publish(ctx, world.PlayerEntered{
+			CharacterID: peer.CharacterID,
+			FromRoomID:  fromRoomID,
+			ToRoomID:    exit.ToRoomID,
+		})
+	}
+
+	rendered, renderErr := renderRoomString(ctx, peer, rooms, exits, items, mobs, clock)
+	if renderErr != nil {
+		slog.Warn("followAlong: render failed",
+			"follower", peer.CharacterID, "to", exit.ToRoomID, "error", renderErr)
+	}
+	if err := peer.WriteAsync(rendered); err != nil {
+		slog.Debug("followAlong: render write failed",
+			"follower", peer.CharacterID, "error", err)
+	}
+	return true
 }
 
 // sectorGate returns a refusal message + true when the destination
