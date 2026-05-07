@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -126,21 +127,17 @@ func broadcastRoom(sessions *session.Registry, roomID int64, except *telnet.Sess
 	}
 }
 
-// safeActor returns the actor's character name with any byte that
-// could break cfmt parsing (`{`, `}`, `:`) stripped. character_create
-// already restricts names to `[A-Za-z0-9_-]` so this is defensive —
-// it stops a future loosening of the name policy from turning into a
-// terminal-control-sequence injection through verb broadcasts.
+// safeActor returns the actor's character name scrubbed for safe
+// inclusion in a cfmt-formatted broadcast (control bytes stripped,
+// `{{` / `}}` / `::` neutralised). Delegates to display.Defang —
+// see internal/display/defang.go. character_create already restricts
+// names to `[A-Za-z0-9_-]`, so this is defensive against a future
+// loosening of the name policy.
 func safeActor(s *telnet.Session) string {
-	name := s.CharacterName
-	if name == "" {
+	if s == nil {
 		return "Someone"
 	}
-	if !strings.ContainsAny(name, "{}:") {
-		return name
-	}
-	r := strings.NewReplacer("{", "", "}", "", ":", "")
-	return r.Replace(name)
+	return display.Defang(s.CharacterName, "Someone")
 }
 
 // resolveDoor pulls the exit named by c.Args[0] from the session's

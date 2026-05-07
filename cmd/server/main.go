@@ -18,6 +18,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/db"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/help"
 	"github.com/Jasrags/WheelMUD/internal/mob"
@@ -240,6 +241,52 @@ func main() {
 	combatMgr.SetDecayer(corpseDecay)
 	buckets.Decay.Subscribe(corpseDecay.Tick)
 
+	// Phase D #18 follow-up: flee verb. The mover lives in cmd/ so it
+	// has access to sessions + RenderRoom; combat invokes it from
+	// resolveAction without holding the manager lock. RNG defaults to
+	// time-seeded; tests override.
+	combatMgr.SetFleeMover(cmd.NewFleeMover(rooms, exits, items, mobs, characters, sessions, bus, clock, nil))
+
+	// Phase D #18 follow-up: combat broadcasts for parry / stance /
+	// flee. CombatHit / CombatMiss subscribers landed in #18 slice 1;
+	// these three add the new room-visible lines. Each subscriber
+	// snapshots names via best-effort repo lookups so a despawned
+	// participant still produces readable output.
+	combatBroadcast := func(roomID int64, msg string) {
+		for _, peer := range sessions.Snapshot() {
+			if peer == nil || peer.CurrentRoomID != roomID {
+				continue
+			}
+			if err := peer.WriteAsync(msg); err != nil {
+				slog.Debug("combat: broadcast write failed", "error", err)
+			}
+		}
+	}
+	eventbus.Subscribe[combat.CombatStance](bus, func(ctx context.Context, ev combat.CombatStance) {
+		name := combatActorName(ctx, ev.Actor, characters, mobs)
+		switch ev.Kind {
+		case "parry":
+			combatBroadcast(ev.RoomID, "{{"+name+" raises a weapon to parry.}}::yellow\r\n")
+		}
+	})
+	eventbus.Subscribe[combat.CombatParry](bus, func(ctx context.Context, ev combat.CombatParry) {
+		def := combatActorName(ctx, ev.Defender, characters, mobs)
+		atk := combatActorName(ctx, ev.Attacker, characters, mobs)
+		combatBroadcast(ev.RoomID, "{{"+def+" parries "+atk+"'s blow!}}::cyan\r\n")
+	})
+	eventbus.Subscribe[combat.CombatFlee](bus, func(ctx context.Context, ev combat.CombatFlee) {
+		if ev.Success {
+			// Source-room broadcast lands inline from the FleeMover so
+			// the third-person line is colocated with the actual move.
+			// The CombatFlee subscriber only emits failure feedback so
+			// peers see the tense beat ("an orc tries to flee but is
+			// cut off!").
+			return
+		}
+		name := combatActorName(ctx, ev.Actor, characters, mobs)
+		combatBroadcast(ev.RoomID, "{{"+name+" tries to flee but is cut off!}}::yellow\r\n")
+	})
+
 	// srv is constructed before buildRegistry so the shutdown / reboot
 	// admin commands can wire to srv as a ShutdownController. newInitial
 	// is filled in below once gameMode (which depends on the registry)
@@ -461,6 +508,30 @@ func parseLogLevel(s string) (slog.Level, bool) {
 	}
 }
 
+// combatActorName resolves an ActorRef to a display name for combat
+// broadcasts. Best-effort: a despawned/logged-out participant falls
+// back to "Someone" / "A creature" so the broadcast still reads.
+// Routes through display.Defang so a builder-authored mob name (or
+// future loosened character-name policy) can't smuggle cfmt markers
+// or control bytes into a {{...}} broadcast.
+func combatActorName(ctx context.Context, ref combat.ActorRef, chars repo.CharacterRepo, mobs repo.MobInstanceRepo) string {
+	switch ref.Kind {
+	case combat.ActorKindCharacter:
+		ch, err := chars.GetByID(ctx, ref.ID)
+		if err == nil {
+			return display.Defang(ch.Core.Name, "Someone")
+		}
+		return "Someone"
+	case combat.ActorKindMob:
+		mob, err := mobs.GetByID(ctx, ref.ID)
+		if err == nil {
+			return display.Defang(mob.Core.Name, "A creature")
+		}
+		return "A creature"
+	}
+	return "Someone"
+}
+
 func closeDB(conn *sql.DB) {
 	if err := conn.Close(); err != nil {
 		slog.Warn("DB close error", "error", err)
@@ -545,6 +616,12 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		cmd.NewFlee(combatMgr),
+		cmd.NewParry(combatMgr, characters, sessions),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(

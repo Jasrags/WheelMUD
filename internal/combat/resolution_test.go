@@ -25,7 +25,7 @@ func TestRollAttack_NaturalOneAlwaysMisses(t *testing.T) {
 	// Seed 0: rng.Intn(20) returns 14 (15 raw). Force a controlled
 	// stream by using a stub rng feeding 1.
 	rng := rand.New(rand.NewSource(stubSeedForRoll(1)))
-	roll := RollAttack(rng, newAttacker(20, 10), newDefender(0), repo.WeaponStats{})
+	roll := RollAttack(rng, newAttacker(20, 10), newDefender(0), repo.WeaponStats{}, false)
 	if roll.Hit {
 		t.Fatalf("nat 1 must miss: %+v", roll)
 	}
@@ -47,7 +47,7 @@ func TestRollAttack_NaturalTwentyAlwaysHits(t *testing.T) {
 	rng := rand.New(rand.NewSource(stubSeedForRoll(20)))
 	// Attacker with 0 BAB / 0 Str-mod against a 999 defense — only
 	// the natural-20 short-circuit makes this hit.
-	roll := RollAttack(rng, newAttacker(10, 0), newDefender(999), repo.WeaponStats{})
+	roll := RollAttack(rng, newAttacker(10, 0), newDefender(999), repo.WeaponStats{}, false)
 	if !roll.Hit {
 		t.Fatalf("nat 20 must hit: %+v", roll)
 	}
@@ -56,13 +56,13 @@ func TestRollAttack_NaturalTwentyAlwaysHits(t *testing.T) {
 func TestRollAttack_Threshold(t *testing.T) {
 	rng := rand.New(rand.NewSource(stubSeedForRoll(15)))
 	// 15 + BAB 5 + Str mod 0 (Str 10) = 20 vs Defense 20 → hit.
-	roll := RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{})
+	roll := RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false)
 	if !roll.Hit {
 		t.Fatalf("total>=defense must hit: %+v", roll)
 	}
 	rng = rand.New(rand.NewSource(stubSeedForRoll(10)))
 	// 10 + 5 + 0 = 15 vs Defense 20 → miss.
-	roll = RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{})
+	roll = RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false)
 	if roll.Hit {
 		t.Fatalf("total<defense must miss: %+v", roll)
 	}
@@ -72,7 +72,7 @@ func TestRollAttack_CritThreshold(t *testing.T) {
 	stats := repo.WeaponStats{ThreatLow: 18}
 	for _, raw := range []int{17, 18, 19, 20} {
 		rng := rand.New(rand.NewSource(stubSeedForRoll(raw)))
-		roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats)
+		roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false)
 		if !roll.Hit {
 			t.Fatalf("raw=%d expected hit: %+v", raw, roll)
 		}

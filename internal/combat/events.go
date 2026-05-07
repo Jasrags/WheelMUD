@@ -106,6 +106,40 @@ type CombatXPAwarded struct {
 	Killed  ActorRef
 }
 
+// CombatParry fires when a defender's parrying stance deflects an
+// incoming attack. Parry / Attack are the two opposed-roll totals
+// (d20 + BAB + ability mod). The defender's stance is consumed by
+// the trigger; the attacker is set flat-footed for one round.
+type CombatParry struct {
+	RoomID   int64
+	Defender ActorRef
+	Attacker ActorRef
+	Parry    int
+	Attack   int
+}
+
+// CombatStance fires when an actor enters a combat stance (currently
+// only "parry"). Subscribers compose room broadcasts off this so the
+// resolver doesn't need to know about cfmt or session plumbing.
+type CombatStance struct {
+	RoomID int64
+	Actor  ActorRef
+	Kind   string // "parry" today; future "defend" / "charge"
+}
+
+// CombatFlee fires when an ActionFlee resolves — whether the actor
+// successfully retreated or was caught. Direction / ToRoomID are
+// populated only on Success; Reason carries a short token from the
+// FleeMover ("moved", "no_exits", "all_blocked", "rolled_failure").
+type CombatFlee struct {
+	RoomID    int64
+	Actor     ActorRef
+	Success   bool
+	Direction string
+	ToRoomID  int64
+	Reason    string
+}
+
 // CorpseDecayed fires once when the Decayer sweeps a corpse out of
 // the world. RoomID is where the corpse was at decay time (and where
 // the crumble line was broadcast); ItemID is the deleted corpse row.

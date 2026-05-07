@@ -89,13 +89,16 @@ func critMult(stats repo.WeaponStats) int {
 
 // RollAttack rolls d20 + BAB + Str-mod against defender.Defense. A
 // natural 1 always misses; a natural 20 always hits. A roll in the
-// weapon's threat range (defaulting to 20) flags IsCrit.
-func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.WeaponStats) AttackRoll {
+// weapon's threat range (defaulting to 20) flags IsCrit. When
+// flatFootedDefender is true the defender's effective Defense is
+// reduced by max(0, DexMod) — the standard WoT/d20 flat-footed AC
+// penalty.
+func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.WeaponStats, flatFootedDefender bool) AttackRoll {
 	raw := rng.Intn(20) + 1
 	abilityMod := int(attacker.Abilities.StrMod())
 	total := raw + int(attacker.BAB) + abilityMod
 
-	hit := total >= int(defender.Defense)
+	hit := total >= int(effectiveDefense(defender, flatFootedDefender))
 	switch raw {
 	case 1:
 		hit = false
@@ -109,6 +112,30 @@ func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.Wea
 		Hit:    hit,
 		IsCrit: hit && raw >= threatLow(stats),
 	}
+}
+
+// effectiveDefense returns defender.Defense reduced by the defender's
+// positive Dex modifier when flatFooted is true. A negative DexMod
+// already counts against Defense at character-build time, so we don't
+// double-subtract on the FlatFooted path.
+func effectiveDefense(defender creature.Core, flatFooted bool) int16 {
+	if !flatFooted {
+		return defender.Defense
+	}
+	dex := int16(defender.Abilities.DexMod())
+	if dex <= 0 {
+		return defender.Defense
+	}
+	return defender.Defense - dex
+}
+
+// RollParry rolls a defender's opposed parry total: d20 + BAB +
+// DexMod. The Manager compares this against the attacker's AttackRoll
+// total — strictly greater wins for the defender, ties go to the
+// attacker (matching the d20 contested-roll convention).
+func RollParry(rng *rand.Rand, defender creature.Core) int {
+	raw := rng.Intn(20) + 1
+	return raw + int(defender.BAB) + int(defender.Abilities.DexMod())
 }
 
 // RollDamage rolls weapon damage + Str-mod. On crit, the result is

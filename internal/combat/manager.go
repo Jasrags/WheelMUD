@@ -42,6 +42,7 @@ type Manager struct {
 	templates repo.MobTemplateRepo // optional; nil disables XP rewards
 	items     repo.ItemRepo        // optional; nil disables weapon-stat lookup + corpse spawn
 	decayer   *Decayer             // optional; nil leaves corpses lingering until admin purge
+	fleeMover FleeMover            // optional; nil makes ActionFlee fail with reason="no_mover"
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -319,7 +320,16 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			})
 		}
 	}()
-	if action.Kind != ActionAttack {
+	switch action.Kind {
+	case ActionParry:
+		m.resolveParry(ctx, roomID, round, actor)
+		return
+	case ActionFlee:
+		m.resolveFlee(ctx, roomID, actor)
+		return
+	case ActionAttack:
+		// fall through
+	default:
 		return
 	}
 	atkCore, err := m.resolveCore(ctx, actor)
@@ -346,14 +356,64 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		}
 	}
 
+	// Snapshot defender FlatFooted flag and parrying stance under the
+	// manager lock so the gates observe a stable view; mutations below
+	// re-acquire to flip flat-footed / clear parry. Safe to drop the
+	// lock before the RNG section because ParryingUntil and
+	// FlatFootedUntil are only written by the Manager itself under
+	// m.mu.Lock(), so no concurrent writer can tear the snapshot.
+	m.mu.Lock()
+	defenderFlatFooted := false
+	defenderParrying := false
+	if f, ok := m.fights[roomID]; ok {
+		if v, has := f.FlatFootedUntil[action.Target]; has && v >= round {
+			defenderFlatFooted = true
+		}
+		if v, has := f.ParryingUntil[action.Target]; has && v >= round {
+			defenderParrying = true
+		}
+	}
+	m.mu.Unlock()
+
 	m.rngMu.Lock()
-	roll := RollAttack(m.rng, atkCore, defCore, stats)
+	roll := RollAttack(m.rng, atkCore, defCore, stats, defenderFlatFooted)
+	parried := false
+	parryTotal := 0
+	if roll.Hit && defenderParrying {
+		parryTotal = RollParry(m.rng, defCore)
+		if parryTotal > roll.Total {
+			parried = true
+		}
+	}
 	var dealt int32
-	if roll.Hit {
+	if roll.Hit && !parried {
 		raw := RollDamage(m.rng, atkCore, stats, roll.IsCrit)
 		dealt = applyDamage(&defCore, raw, weaponPrimaryDamageType(stats))
 	}
 	m.rngMu.Unlock()
+
+	if parried {
+		// Stance consumed; attacker is flat-footed for one round.
+		m.mu.Lock()
+		if f, ok := m.fights[roomID]; ok {
+			delete(f.ParryingUntil, action.Target)
+			if f.FlatFootedUntil == nil {
+				f.FlatFootedUntil = make(map[ActorRef]int)
+			}
+			f.FlatFootedUntil[actor] = round + 1
+		}
+		m.mu.Unlock()
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatParry{
+				RoomID:   roomID,
+				Defender: action.Target,
+				Attacker: actor,
+				Parry:    parryTotal,
+				Attack:   roll.Total,
+			})
+		}
+		return
+	}
 
 	if !roll.Hit {
 		if m.bus != nil {
@@ -689,6 +749,72 @@ const corpseDecayDuration = 5 * time.Minute
 func (m *Manager) corpseExternalID(mob creature.MobInstance) string {
 	return "corpse-" + strconv.FormatInt(mob.ID, 10) + "-" +
 		strconv.FormatInt(m.now().UTC().UnixNano(), 10)
+}
+
+// resolveParry applies the parrying stance for the actor. The stance
+// is round-keyed and consumed by the next incoming attack against
+// the actor (see the parry gate in resolveAction). A no-op when the
+// fight has been ended between Tick's snapshot and this call.
+func (m *Manager) resolveParry(ctx context.Context, roomID int64, round int, actor ActorRef) {
+	m.mu.Lock()
+	if f, ok := m.fights[roomID]; ok {
+		if f.ParryingUntil == nil {
+			f.ParryingUntil = make(map[ActorRef]int)
+		}
+		f.ParryingUntil[actor] = round
+	}
+	m.mu.Unlock()
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatStance{
+			RoomID: roomID,
+			Actor:  actor,
+			Kind:   "parry",
+		})
+	}
+}
+
+// resolveFlee delegates the actual room transition + roll to the
+// injected FleeMover and records the outcome on the fight. On
+// success the actor is added to f.Fled so pruneDead clears them on
+// the next pulse; the fight then auto-ends naturally if no
+// participants remain. CombatFlee always publishes — failure is part
+// of the contract so the verb can give the player feedback.
+func (m *Manager) resolveFlee(ctx context.Context, roomID int64, actor ActorRef) {
+	mover := m.snapFleeMover()
+	var res FleeResult
+	if mover == nil {
+		res = FleeResult{Reason: "no_mover"}
+	} else {
+		res = mover.AttemptFlee(ctx, roomID, actor)
+	}
+	if res.Success {
+		m.mu.Lock()
+		if f, ok := m.fights[roomID]; ok {
+			if f.Fled == nil {
+				f.Fled = make(map[ActorRef]struct{})
+			}
+			f.Fled[actor] = struct{}{}
+		}
+		m.mu.Unlock()
+	}
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatFlee{
+			RoomID:    roomID,
+			Actor:     actor,
+			Success:   res.Success,
+			Direction: res.Direction,
+			ToRoomID:  res.ToRoomID,
+			Reason:    res.Reason,
+		})
+	}
+}
+
+// snapFleeMover snapshots the mover under the lock so callers don't
+// race a concurrent SetFleeMover.
+func (m *Manager) snapFleeMover() FleeMover {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.fleeMover
 }
 
 // Stop ends every active fight (publishing CombatEnded with

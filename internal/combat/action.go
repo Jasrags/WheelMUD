@@ -10,6 +10,17 @@ const (
 	ActionNone ActionKind = iota
 	// ActionAttack rolls a melee attack against Target this round.
 	ActionAttack
+	// ActionParry sets the actor into a parrying stance for the rest of
+	// this round. The next incoming attack against the actor triggers
+	// an opposed roll; on success the attack is negated and the
+	// attacker becomes flat-footed for one round. Stance is consumed
+	// after one trigger.
+	ActionParry
+	// ActionFlee attempts to retreat from the active fight. On
+	// resolution the Manager hands off to its FleeMover; success
+	// moves the actor to a neighbouring room and prunes them from
+	// the fight order on the next pulse.
+	ActionFlee
 )
 
 // Action is one combatant's queued intent for the current round. The

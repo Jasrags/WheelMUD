@@ -392,9 +392,16 @@ func TestDoor_SafeActorStripsCfmtBytes(t *testing.T) {
 	if strings.Contains(out, "}}::red") || strings.Contains(out, "{{boom") {
 		t.Fatalf("unsanitized cfmt reached witness: %q", out)
 	}
-	// `{`, `}`, `:` stripped → "Eve}}::red {{boom}}::" → "Evered boom".
-	if !strings.Contains(out, "Evered boom opens the north door") {
-		t.Fatalf("safeActor produced unexpected name; got %q", out)
+	// display.Defang neutralises by inserting a space inside cfmt
+	// markers — "Eve}}::red {{boom}}::" → "Eve} }: :red { {boom} }: :".
+	// The exact whitespace doesn't matter; what matters is that no
+	// surviving "{{" / "}}" / "::" remains and the original prose
+	// fragments stay readable.
+	if !strings.Contains(out, "Eve") || !strings.Contains(out, "boom") {
+		t.Fatalf("safeActor lost the readable name fragments: %q", out)
+	}
+	if !strings.Contains(out, "opens the north door") {
+		t.Fatalf("door verb broadcast missing trailing text: %q", out)
 	}
 }
 
