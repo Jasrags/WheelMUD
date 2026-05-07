@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -28,6 +29,7 @@ func NewAttack(
 	mobs repo.MobInstanceRepo,
 	characters repo.CharacterRepo,
 	sessions *session.Registry,
+	groups *group.Manager,
 ) *telnet.Command {
 	return &telnet.Command{
 		Name:    "attack",
@@ -89,7 +91,8 @@ func NewAttack(
 						"char", peer.CharacterID, "error", err)
 					return s.WriteString("{{They slip from your focus.}}::red\r\n")
 				}
-				if msg, ok := pvpRefusalReason(roomErr == nil, room, char, targetChar); !ok {
+				sameGroup := groups != nil && groups.SameGroup(s.CharacterID, targetChar.ID)
+				if msg, ok := pvpRefusalReason(roomErr == nil, room, char, targetChar, sameGroup); !ok {
 					return s.WriteString(msg)
 				}
 				defender = ActorRefForCharacter(targetChar.ID)
@@ -156,13 +159,19 @@ func ActorRefForMob(id int64) combat.ActorRef {
 //	   roomKnown=false; we fail closed on the safety gate rather
 //	   than let a transient rooms.FindByID error open a PvP path
 //	   the room flag would have closed.
-//	2. attacker below newbie cap
-//	3. target below newbie cap
-//	4. attacker has not opted in
-//	5. target has not opted in
-func pvpRefusalReason(roomKnown bool, room repo.Room, attacker, defender repo.Character) (string, bool) {
+//	2. same-group comrade — Phase D #22 slice 2; precedes the
+//	   newbie cap so a refusal cites the group bond rather than
+//	   the level gate.
+//	3. attacker below newbie cap
+//	4. target below newbie cap
+//	5. attacker has not opted in
+//	6. target has not opted in
+func pvpRefusalReason(roomKnown bool, room repo.Room, attacker, defender repo.Character, sameGroup bool) (string, bool) {
 	if !roomKnown || room.Flags.NoPVP {
 		return "{{These grounds are sanctified — no violence between travelers here.}}::yellow\r\n", false
+	}
+	if sameGroup {
+		return "{{" + defender.Name + " is a comrade — you won't strike them.}}::yellow\r\n", false
 	}
 	if characterLevel(attacker) < NewbiePvPLevelCap {
 		return "{{You are still too green for the killing fields.}}::yellow\r\n", false

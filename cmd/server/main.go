@@ -627,7 +627,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions)); err != nil {
+	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions, groups)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewGroup(groups, sessions)); err != nil {

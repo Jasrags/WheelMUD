@@ -386,9 +386,17 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `ClearForCharacter`. New verb `group <invite|accept|decline|
     leave|kick|disband>` plus bare `group` roster. Logout cleanup
     threads through `handleConnection`'s teardown defer in
-    `cmd/server/main.go`. Slices 2–4 layer on top:
-    same-group PvP refusal, `follow <player>` chain on move,
-    shared XP split via combat `GroupResolver` ctor option.
+    `cmd/server/main.go`.
+    **SLICE 2 LANDED 2026-05-07.** Same-group PvP refusal:
+    `pvpRefusalReason` gains a `sameGroup bool` parameter and a
+    new gate (priority 2, between NoPVP and the newbie cap) that
+    refuses with `"X is a comrade — you won't strike them."`.
+    `NewAttack` factory threads `*group.Manager`; `cmd/server/
+    main.go` passes the live manager. Tests cover the comrade
+    line, ungrouped pairs (positive control), and nil-manager
+    backwards-compat. Slices 3–4 layer on top: `follow <player>`
+    chain on move, shared XP split via combat `GroupResolver`
+    ctor option.
 
 After D: full "kill a thing, get XP, find loot, repeat" loop.
 

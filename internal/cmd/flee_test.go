@@ -27,7 +27,7 @@ func TestFlee_QueuesActionFleeWhenFighting(t *testing.T) {
 	_, alice, _, aOut, _ := commPair(t)
 	// Open a fight first via the attack verb so the queue plumbing is
 	// the same as production.
-	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 	runCmd(t, atk, alice, "trolloc")
 	aOut.Reset()
 

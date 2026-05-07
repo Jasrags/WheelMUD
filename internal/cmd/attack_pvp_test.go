@@ -8,6 +8,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -61,7 +62,7 @@ func newAttackPvPFixture(t *testing.T, nopvp bool, alice, bob pvpSide) attackPvP
 func runAttackOnPlayer(t *testing.T, fx attackPvPFixture, target string) (aOut, bOut string, fightStarted bool) {
 	t.Helper()
 	sessions, alice, _, aOutBuf, bOutBuf := commPair(t)
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, nil)
 	runCmd(t, c, alice, target)
 	return aOutBuf.String(), bOutBuf.String(), fx.mgr.Active(alice.CurrentRoomID)
 }
@@ -112,7 +113,7 @@ func TestAttackPvP_BystanderSeesThirdPerson(t *testing.T) {
 	carolSess.CurrentRoomID = 1
 	sessions.Bind(carolSess.AccountID, carolSess)
 
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, nil)
 	runCmd(t, c, alice, "bob")
 
 	got := carolBuf.String()
@@ -253,7 +254,7 @@ func TestAttackPvP_OrdinalDisambiguates(t *testing.T) {
 	jasmineSess.CurrentRoomID = 1
 	sessions.Bind(jasmineSess.AccountID, jasmineSess)
 
-	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+	c := NewAttack(mgr, rooms, mobs, chars, sessions, nil)
 
 	// Bare "jas" — first hit by CharacterID ascending is Jason (id 2).
 	runCmd(t, c, alice, "jas")
@@ -315,7 +316,7 @@ func TestAttackPvP_OrdinalSkipsSelf(t *testing.T) {
 	peerSess.CurrentRoomID = 1
 	sessions.Bind(peerSess.AccountID, peerSess)
 
-	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+	c := NewAttack(mgr, rooms, mobs, chars, sessions, nil)
 
 	// alice (the actor) is named Jason but should be skipped; the
 	// peer Jason resolves instead. The seeded character used by the
@@ -377,7 +378,7 @@ func TestAttackPvP_OrdinalRespectsRoomFilter(t *testing.T) {
 	jasmineSess.CurrentRoomID = 2
 	sessions.Bind(jasmineSess.AccountID, jasmineSess)
 
-	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+	c := NewAttack(mgr, rooms, mobs, chars, sessions, nil)
 
 	// Only Jason is in the room — "2.jas" must miss, not pick Jasmine.
 	runCmd(t, c, alice, "2.jas")
@@ -466,6 +467,70 @@ func TestMatchPlayer_DeterministicOrder(t *testing.T) {
 		if !ok || got != jason {
 			t.Fatalf("iter %d: MatchPlayer jas = %v ok=%v, want Jason (lowest id)", i, got, ok)
 		}
+	}
+}
+
+// TestAttackPvP_SameGroupRefused — Phase D #22 slice 2. Two opted-
+// in, level-OK characters who share a party must refuse with the
+// comrade line.
+func TestAttackPvP_SameGroupRefused(t *testing.T) {
+	fx := newAttackPvPFixture(t, false,
+		pvpSide{"Alice", 10, true},
+		pvpSide{"Bob", 10, true})
+	sessions, alice, bob, aOutBuf, _ := commPair(t)
+
+	groups := group.New()
+	if err := groups.Invite(alice.CharacterID, alice.CharacterName, bob.CharacterID, bob.CharacterName); err != nil {
+		t.Fatalf("Invite: %v", err)
+	}
+	if _, err := groups.Accept(bob.CharacterID, bob.CharacterName); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, groups)
+	runCmd(t, c, alice, "bob")
+
+	if got := aOutBuf.String(); !strings.Contains(got, "Bob is a comrade") {
+		t.Fatalf("missing comrade refusal: %q", got)
+	}
+	if fx.mgr.Active(alice.CurrentRoomID) {
+		t.Fatal("same-group attack must not start a fight")
+	}
+}
+
+// TestAttackPvP_DifferentGroupsAllowed — positive control.
+func TestAttackPvP_DifferentGroupsAllowed(t *testing.T) {
+	fx := newAttackPvPFixture(t, false,
+		pvpSide{"Alice", 10, true},
+		pvpSide{"Bob", 10, true})
+	sessions, alice, _, _, _ := commPair(t)
+
+	groups := group.New()
+	// Alice in solo group; Bob ungrouped — they aren't co-grouped.
+	if err := groups.Invite(alice.CharacterID, alice.CharacterName, 999, "Phantom"); err != nil {
+		t.Fatalf("Invite phantom: %v", err)
+	}
+
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, groups)
+	runCmd(t, c, alice, "bob")
+
+	if !fx.mgr.Active(alice.CurrentRoomID) {
+		t.Fatal("ungrouped pair must be able to fight")
+	}
+}
+
+// TestAttackPvP_NilGroupManagerNoOp — backwards compat: nil
+// groups arg behaves identically to slice-1.
+func TestAttackPvP_NilGroupManagerNoOp(t *testing.T) {
+	fx := newAttackPvPFixture(t, false,
+		pvpSide{"Alice", 10, true},
+		pvpSide{"Bob", 10, true})
+	sessions, alice, _, _, _ := commPair(t)
+
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, nil)
+	runCmd(t, c, alice, "bob")
+	if !fx.mgr.Active(alice.CurrentRoomID) {
+		t.Fatal("nil groups must not block a valid PvP attack")
 	}
 }
 

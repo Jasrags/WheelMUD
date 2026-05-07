@@ -74,7 +74,7 @@ func newAttackFixture(t *testing.T, peaceful bool) attackFixture {
 func TestAttack_NoArgsRefuses(t *testing.T) {
 	fx := newAttackFixture(t, false)
 	_, alice, _, aOut, _ := commPair(t)
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 	runCmd(t, c, alice, "")
 	if !strings.Contains(aOut.String(), "Attack what?") {
 		t.Fatalf("missing usage refusal: %q", aOut.String())
@@ -87,7 +87,7 @@ func TestAttack_NoArgsRefuses(t *testing.T) {
 func TestAttack_TargetNotFound(t *testing.T) {
 	fx := newAttackFixture(t, false)
 	_, alice, _, aOut, _ := commPair(t)
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 	runCmd(t, c, alice, "ghost")
 	if !strings.Contains(aOut.String(), "don't see them here") {
 		t.Fatalf("missing not-found refusal: %q", aOut.String())
@@ -100,7 +100,7 @@ func TestAttack_TargetNotFound(t *testing.T) {
 func TestAttack_PeacefulRoomRefuses(t *testing.T) {
 	fx := newAttackFixture(t, true)
 	_, alice, _, aOut, _ := commPair(t)
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 	runCmd(t, c, alice, "trolloc")
 	if !strings.Contains(aOut.String(), "profound peace") {
 		t.Fatalf("missing peace refusal: %q", aOut.String())
@@ -117,7 +117,7 @@ func TestAttack_StartsFightAndQueuesAction(t *testing.T) {
 	// with the first character seeded in newAttackFixture (memory
 	// repo IDs from 1).
 	sessions, alice, _, aOut, bOut := commPair(t)
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, nil)
 	runCmd(t, c, alice, "trolloc")
 
 	if !strings.Contains(aOut.String(), "ready an attack") {
@@ -156,7 +156,7 @@ func TestAttack_ReQueuesWithoutRestartingFight(t *testing.T) {
 	if err := fx.mobs.UpdateRoom(context.Background(), mob2.ID, 1); err != nil {
 		t.Fatalf("place mob2: %v", err)
 	}
-	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 
 	runCmd(t, c, alice, "trolloc")
 	fight, ok := fx.mgr.Get(alice.CurrentRoomID)

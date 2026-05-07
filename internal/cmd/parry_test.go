@@ -23,7 +23,7 @@ func TestParry_RefusesWithoutFight(t *testing.T) {
 func TestParry_RefusesWithoutWeapon(t *testing.T) {
 	fx := newAttackFixture(t, false)
 	_, alice, _, aOut, _ := commPair(t)
-	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions)
+	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, fx.sessions, nil)
 	runCmd(t, atk, alice, "trolloc")
 	aOut.Reset()
 
@@ -59,7 +59,7 @@ func TestParry_QueuesActionParryWithWeapon(t *testing.T) {
 	}
 
 	// Open a fight via attack so Manager.Active(roomID) is true.
-	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions)
+	atk := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions, nil)
 	runCmd(t, atk, alice, "trolloc")
 	aOut.Reset()
 	bOut.Reset()
