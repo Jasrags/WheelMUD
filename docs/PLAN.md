@@ -310,10 +310,33 @@ investment / new-weave learning intentionally **stay in old Phase D**
     left the room. No `attack` verb yet — that's #18 — and no
     persistence (server restart drops in-flight fights, acceptable
     for V1).
-17. **Damage types & resistances** (§11). DR / resists already exist on
-    `creature.Core`; just plumb the math.
-18. **Hit/miss/dodge/parry rolls** (§11). `d20 + bab + ability` vs
-    Defense. Reads `WeaponStats.ThreatLow` / `CritMult`.
+17. ~~**Damage types & resistances** (§11). DR / resists already exist on
+    `creature.Core`; just plumb the math.~~ **LANDED 2026-05-07** as the
+    minimal slice bundled with #18: `internal/combat/resolution.go`'s
+    `applyDamage` walks `Core.DR` (flat clamp) then `Core.Resists`
+    (percent modifier, negative = vuln) and routes subdual damage to
+    `Core.Subdual`. The B/P/S → `creature.DamageType` mapper lives
+    next to it. Bypass keywords + magic/cold-iron tags + per-resist
+    type-tag parsing are deferred follow-ups.
+18. ~~**Hit/miss/dodge/parry rolls** (§11). `d20 + bab + ability` vs
+    Defense. Reads `WeaponStats.ThreatLow` / `CritMult`.~~ **LANDED
+    2026-05-07.** New `internal/combat/resolution.go`
+    (`RollAttack` / `RollDamage` / `applyDamage` pure functions),
+    per-`Fight` `Actions map[ActorRef]Action` queue with
+    `Manager.EnqueueAction` / `PendingAction`, `Tick` resolver that
+    pops the active actor's queued action, rolls hit/miss/crit,
+    applies damage, and writes HP back via `MobInstanceRepo.UpdateLive`
+    / `CharacterRepo.RecordCore`. `CombatHit` / `CombatMiss` /
+    `ActionResolved` events. New `attack <target>` verb (alias `kill`)
+    that resolves the room mob via `MatchMob`, starts (or reuses) the
+    fight, queues `ActionAttack` with the wielded weapon. Refused in
+    Peaceful rooms. Re-issuing while a fight is in progress switches
+    the queued target without restarting initiative.
+    `CharacterRepo.GetByID` added (sqlite + memory + shared test) so
+    `Manager.resolveCore` can load player participants.
+    Deferred follow-ups: parry check (needs FlatFooted state machine),
+    two-weapon / off-hand attacks, iterative attacks at +6/+11/+16,
+    ranged / thrown weapons, `flee`, combat prompt repaint.
 19. **Death / corpses / looting / XP grant** (§11). At HP ≤ 0 drop a
     corpse item carrying the inventory list, schedule decay tick,
     award XP to attackers.

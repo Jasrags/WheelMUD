@@ -59,6 +59,26 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/get_by_id", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		created, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Nynaeve"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		got, err := cr.GetByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("get by id: %v", err)
+		}
+		if got.ID != created.ID || got.Name != "Nynaeve" {
+			t.Fatalf("got %+v", got)
+		}
+		if _, err := cr.GetByID(ctx, created.ID+999); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing id: err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/list_by_account_orders_recent_first", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

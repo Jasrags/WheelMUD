@@ -149,6 +149,10 @@ type CharacterRepo interface {
 	// FindByName resolves a character by case-insensitive name.
 	// Returns ErrCharacterNotFound when missing.
 	FindByName(ctx context.Context, name string) (Character, error)
+	// GetByID resolves a character by primary key. Returns
+	// ErrCharacterNotFound when no row matches. Used by combat to
+	// resolve participant Cores without going through name lookups.
+	GetByID(ctx context.Context, id int64) (Character, error)
 	// ListByAccount returns the account's characters, ordered by
 	// last_played_at descending (nulls last) then by name.
 	ListByAccount(ctx context.Context, accountID int64) ([]Character, error)

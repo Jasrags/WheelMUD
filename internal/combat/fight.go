@@ -26,6 +26,11 @@ type Fight struct {
 	Order     []ActorEntry // sorted descending
 	ActiveIdx int          // index into Order; advances on Tick
 	StartedAt time.Time
+
+	// Actions is the per-actor queue of intents for the current round.
+	// Lazily initialized by EnqueueAction. Resolved + cleared by the
+	// Manager's Tick after the active actor's action lands.
+	Actions map[ActorRef]Action
 }
 
 // Active returns the actor whose turn is currently being resolved,

@@ -34,7 +34,7 @@ func seedManager(t *testing.T, seed int64) (*Manager, *repo.MemoryMobInstanceRep
 			t.Fatalf("seed mob: %v", err)
 		}
 	}
-	mgr := New(bus, chars, mobs)
+	mgr := New(bus, chars, mobs, repo.NewMemoryItemRepo())
 	mgr.SetRNG(rand.New(rand.NewSource(seed)))
 	mgr.SetClock(func() time.Time { return time.Unix(0, 0).UTC() })
 	return mgr, mobs, bus

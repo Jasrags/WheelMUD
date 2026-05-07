@@ -872,23 +872,36 @@ will need on top of those tables.
       participant-presence check (slice 2 — needs session
       registry threading), Fight persistence across reboot
       (currently in-memory only).
-- [ ] Damage types and resistances — WoT damage kinds: physical
-      `slash/pierce/bludgeon` (each weapon entry tags one), plus
-      One-Power / energy types from weave effects (`fire/cold/
-      lightning/air/earth/spirit`), `subdual` (separate pool, see
-      §9), and `taint` (Shadow corruption, bypasses most resists).
-      Mobs and items carry `[]Resist{Type, Pct}` and `damage_reduction`
-      (flat `DR x/—` or `DR x/<bypass>` keyword); `applyDamage(target,
-      dmg, type)` applies DR first, then `1 - resist + vuln`.
-      Negative resist = vulnerability. Surface in `examine`.
-- [ ] Hit/miss/dodge/parry rolls — attacker rolls `d20 + bab +
-      ability_mod + size_mod` vs defender **`defense`** (§9 — class
-      bonus + Dex + size + armor + shield + dodge). On hit, optional
-      parry check if wielding a weapon and not flat-footed. Crit on
-      natural 20 confirmed by a second roll vs defense (doubles
-      dice, weapon-specific threat range/multiplier); fumble on
-      natural 1 drops the weapon or grants AoO. All rolls go through
-      a single `combat.Roll` seam for deterministic tests.
+- [x] Damage types and resistances — minimal slice landed
+      2026-05-07 with #18: `applyDamage(target, amount, dt)` walks
+      `Core.DR` (flat clamp) then `Core.Resists` (percent modifier,
+      negative = vulnerability), routes subdual into `Core.Subdual`.
+      `weaponPrimaryDamageType` maps WeaponStats B/P/S → enum.
+      Pending: Bypass-keyword DR (magic / cold-iron tags), per-resist
+      type-tag parsing, `examine` surfacing of resists/DR, weave-
+      sourced energy types.
+- [x] Hit/miss/dodge/parry rolls — landed 2026-05-07 (Phase D #18,
+      slice 1). `internal/combat/resolution.go` — `RollAttack`
+      (d20 + BAB + Str-mod vs Defense; nat-1 always misses, nat-20
+      always hits; crit threshold from `WeaponStats.ThreatLow`,
+      multiplier from `CritMult`) and `RollDamage` (weapon dice +
+      Str-mod, multiplied on crit, floored at 1). Per-`Fight`
+      `Actions map[ActorRef]Action` queue with
+      `Manager.EnqueueAction`; `Tick` resolves the active actor's
+      queued action and writes HP back via
+      `MobInstanceRepo.UpdateLive` / `CharacterRepo.RecordCore`.
+      `CombatHit` / `CombatMiss` / `ActionResolved` events.
+      New `attack <target>` verb (alias `kill`) — refused in
+      Peaceful rooms; re-issuing while a fight is in progress
+      switches the queued target without restarting initiative.
+      `CharacterRepo.GetByID` added (sqlite + memory + shared
+      test) so `Manager.resolveCore` can load player participants.
+      Pending: parry check (needs FlatFooted state machine), crit-
+      confirmation roll, fumble (drop / AoO), iterative attacks at
+      BAB +6/+11/+16, two-weapon / off-hand, ranged / thrown
+      weapons, `flee`, combat prompt repaint, single
+      `combat.Roll` seam for deterministic tests beyond the
+      stub-seed pattern used today.
 - [ ] Aggro / threat tables — `Fight.Threat map[CreatureID]int`,
       damage adds threat 1:1, healing adds threat to the healer
       from every hostile in the room scaled by 0.5. NPCs retarget

@@ -43,3 +43,39 @@ const (
 	ReasonNoParticipants = "no_participants"
 	ReasonManagerStop    = "manager_stop"
 )
+
+// CombatHit fires when a queued attack lands. Damage is the post-DR /
+// post-resist amount actually subtracted from defender HP. Weapon is
+// the item id of the wielded weapon at resolve time (0 = unarmed).
+// Subscribers compose the room broadcast and the per-session feedback
+// off this event so the resolver stays a pure stateless function.
+type CombatHit struct {
+	RoomID   int64
+	Attacker ActorRef
+	Defender ActorRef
+	Damage   int32
+	Weapon   int64
+	IsCrit   bool
+}
+
+// CombatMiss fires when a queued attack rolls below the defender's
+// Defense. RollTotal is the d20 + bab + ability_mod; Defense is the
+// value the roll was compared against.
+type CombatMiss struct {
+	RoomID    int64
+	Attacker  ActorRef
+	Defender  ActorRef
+	RollTotal int
+	Defense   int16
+}
+
+// ActionResolved fires whether the queued action was an attack that
+// hit, missed, or was a no-op (target gone). Mirrors RoundStarted —
+// subscribers that just want "the active actor finished their turn"
+// don't have to fan out across CombatHit / CombatMiss.
+type ActionResolved struct {
+	RoomID int64
+	Round  int
+	Actor  ActorRef
+	Kind   ActionKind
+}

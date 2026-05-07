@@ -221,7 +221,7 @@ func main() {
 	// and emits CombatStarted / RoundStarted / CombatEnded events.
 	// Verbs (#18) and damage math (#17/#18) consume this spine but
 	// are not in this slice.
-	combatMgr := combat.New(bus, characters, mobs)
+	combatMgr := combat.New(bus, characters, mobs, items)
 	buckets.Combat.Subscribe(combatMgr.Tick)
 
 	// srv is constructed before buildRegistry so the shutdown / reboot
@@ -251,7 +251,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -451,7 +451,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -526,6 +526,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewEquipment(items, characters),
 		cmd.NewSpawn(items, mobTemplates, mobs, characters, sessions, audits),
 	); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(

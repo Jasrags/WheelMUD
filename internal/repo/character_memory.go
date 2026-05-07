@@ -61,6 +61,17 @@ func (r *MemoryCharacterRepo) FindByName(_ context.Context, name string) (Charac
 	return *c, nil
 }
 
+func (r *MemoryCharacterRepo) GetByID(_ context.Context, id int64) (Character, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			return *c, nil
+		}
+	}
+	return Character{}, ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) ListByAccount(_ context.Context, accountID int64) ([]Character, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

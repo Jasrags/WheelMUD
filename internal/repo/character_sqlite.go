@@ -101,6 +101,15 @@ func (r *SQLiteCharacterRepo) FindByName(ctx context.Context, name string) (Char
 	return c, err
 }
 
+func (r *SQLiteCharacterRepo) GetByID(ctx context.Context, id int64) (Character, error) {
+	row := r.db.QueryRowContext(ctx, characterSelect+` WHERE id = ?`, id)
+	c, err := scanCharacter(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Character{}, ErrCharacterNotFound
+	}
+	return c, err
+}
+
 func (r *SQLiteCharacterRepo) ListByAccount(ctx context.Context, accountID int64) ([]Character, error) {
 	rows, err := r.db.QueryContext(ctx,
 		characterSelect+` WHERE account_id = ? ORDER BY last_played_at DESC NULLS LAST, name_lower`,

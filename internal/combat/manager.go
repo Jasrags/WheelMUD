@@ -38,6 +38,7 @@ type Manager struct {
 	bus   *eventbus.Bus
 	chars repo.CharacterRepo
 	mobs  repo.MobInstanceRepo
+	items repo.ItemRepo // optional; nil disables weapon-stat lookup
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -47,13 +48,15 @@ type Manager struct {
 // New constructs a Manager. bus is required (events are how downstream
 // systems learn about fights); chars / mobs are required for
 // participant resolution at Start time and the auto-end check at
-// Tick time.
-func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo) *Manager {
+// Tick time. items is optional; pass nil for tests that don't need
+// equipped-weapon resolution and unarmed defaults are fine.
+func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo, items repo.ItemRepo) *Manager {
 	return &Manager{
 		fights: make(map[int64]*Fight),
 		bus:    bus,
 		chars:  chars,
 		mobs:   mobs,
+		items:  items,
 		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
 		now:    time.Now,
 	}
@@ -252,6 +255,7 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 	}
 	round := f.Round
 	active := f.Order[f.ActiveIdx].Ref
+	pending, hasAction := f.popAction(active)
 	m.mu.Unlock()
 
 	if m.bus != nil {
@@ -259,6 +263,106 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 			RoomID: roomID,
 			Round:  round,
 			Active: active,
+		})
+	}
+
+	if hasAction {
+		m.resolveAction(ctx, roomID, round, active, pending)
+	}
+}
+
+// resolveAction is the active actor's slice-1 turn handler. Today it
+// handles ActionAttack only; future kinds (flee / weave / kick) slot
+// in as additional cases. Errors loading participants or items are
+// logged and swallowed — combat continues, the swing just doesn't
+// land. This mirrors the spawn / item-transfer "fail-safe, log
+// loudly" stance.
+func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, actor ActorRef, action Action) {
+	defer func() {
+		if m.bus != nil {
+			m.bus.Publish(ctx, ActionResolved{
+				RoomID: roomID,
+				Round:  round,
+				Actor:  actor,
+				Kind:   action.Kind,
+			})
+		}
+	}()
+	if action.Kind != ActionAttack {
+		return
+	}
+	atkCore, err := m.resolveCore(ctx, actor)
+	if err != nil {
+		slog.Warn("combat: resolve attacker failed",
+			"room", roomID, "actor", actor, "error", err)
+		return
+	}
+	defCore, err := m.resolveCore(ctx, action.Target)
+	if err != nil {
+		// Target gone (fled, despawned, logged out).
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatMiss{
+				RoomID: roomID, Attacker: actor, Defender: action.Target,
+			})
+		}
+		return
+	}
+	stats := unarmedDamage
+	if action.WeaponID != 0 && m.items != nil {
+		it, err := m.items.GetByID(ctx, action.WeaponID)
+		if err == nil {
+			stats = weaponStatsFor(&it)
+		}
+	}
+
+	m.rngMu.Lock()
+	roll := RollAttack(m.rng, atkCore, defCore, stats)
+	var dealt int32
+	if roll.Hit {
+		raw := RollDamage(m.rng, atkCore, stats, roll.IsCrit)
+		dealt = applyDamage(&defCore, raw, weaponPrimaryDamageType(stats))
+	}
+	m.rngMu.Unlock()
+
+	if !roll.Hit {
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatMiss{
+				RoomID:    roomID,
+				Attacker:  actor,
+				Defender:  action.Target,
+				RollTotal: roll.Total,
+				Defense:   defCore.Defense,
+			})
+		}
+		return
+	}
+
+	// Persist mutated HP/subdual back to the live row so subsequent
+	// attacks observe the new value. RecordCore is the same path
+	// status / regen ticks use.
+	switch action.Target.Kind {
+	case ActorKindMob:
+		if err := m.mobs.UpdateLive(ctx, action.Target.ID,
+			defCore.HPCurrent, defCore.Subdual, defCore.Conditions, defCore.Position); err != nil {
+			slog.Warn("combat: mob hp write-back failed",
+				"room", roomID, "mob", action.Target.ID, "error", err)
+		}
+	case ActorKindCharacter:
+		if err := m.chars.RecordCore(ctx, action.Target.ID,
+			defCore.HPCurrent, defCore.Subdual, defCore.Conditions, defCore.Position); err != nil {
+			slog.Warn("combat: char hp write-back failed",
+				"room", roomID, "char", action.Target.ID, "error", err)
+		}
+	}
+
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatHit{
+			RoomID:   roomID,
+			Attacker: actor,
+			Defender: action.Target,
+			Damage:   dealt,
+			Weapon:   action.WeaponID,
+			IsCrit:   roll.IsCrit,
 		})
 	}
 }
@@ -287,25 +391,11 @@ var errUnknownActorKind = errors.New("unknown actor kind")
 func (m *Manager) resolveCore(ctx context.Context, ref ActorRef) (creature.Core, error) {
 	switch ref.Kind {
 	case ActorKindCharacter:
-		// CharacterRepo doesn't expose GetByID today — only
-		// FindByName. The slice 2 follow-up that adds the `attack`
-		// verb will route through the session registry which already
-		// holds the resolved Character; for now Start callers must
-		// resolve the Character themselves and pass the ref. As a
-		// transitional path we accept that participants are known to
-		// the caller and do a defensive empty-name lookup that
-		// returns ErrCharacterNotFound for any non-zero id (the
-		// memory repo doesn't index by id and the sqlite repo
-		// likewise lacks a getter). When #18 lands we'll add
-		// CharacterRepo.GetByID and route through it.
-		//
-		// For slice 1 we return a zero Core for character refs so
-		// the unit tests can validate Manager mechanics without a
-		// dummy GetByID. This is intentional — the rolled
-		// Initiative will use 0 InitMod / 0 DexMod for characters,
-		// which is not a balance concern because there is no damage
-		// math yet.
-		return creature.Core{}, nil
+		ch, err := m.chars.GetByID(ctx, ref.ID)
+		if err != nil {
+			return creature.Core{}, err
+		}
+		return ch.Core, nil
 	case ActorKindMob:
 		mob, err := m.mobs.GetByID(ctx, ref.ID)
 		if err != nil {
