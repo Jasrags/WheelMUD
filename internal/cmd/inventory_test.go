@@ -66,7 +66,7 @@ func TestInventory_EmptyShowsNothing(t *testing.T) {
 	if !strings.Contains(out, "empty purse") {
 		t.Fatalf("missing empty purse line; got %q", out)
 	}
-	if !strings.Contains(out, "light load") {
+	if !strings.Contains(out, "unencumbered") {
 		t.Fatalf("missing load tag; got %q", out)
 	}
 }

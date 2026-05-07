@@ -63,8 +63,12 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 				str = 10 // safe default until char-create stamps abilities
 			}
 			load, heavy := LoadFor(str, carried)
-			b.WriteString(fmt.Sprintf("{{Carrying:}}::yellow|bold {{%g lbs / %g lbs}}::white {{(%s)}}::gray\r\n",
-				carried, heavy, loadName(load)))
+			label := loadName(load)
+			if carried == 0 {
+				label = "unencumbered"
+			}
+			b.WriteString(fmt.Sprintf("{{Carrying:}}::yellow|bold {{%.1f lbs / %.1f lbs}}::white {{(%s)}}::gray\r\n",
+				carried, heavy, label))
 
 			b.WriteString("{{Coin:}}::yellow|bold ")
 			if char.Coin == 0 {
