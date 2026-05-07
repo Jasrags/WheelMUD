@@ -38,6 +38,48 @@ func xpValueForChallenge(code creature.ChallengeCode) int64 {
 	return 100
 }
 
+// expandTallyByGroup rewrites the per-actor damage tally so each
+// character contributor's damage is divvied up among their in-room
+// group teammates (incl. the dealer themselves). Non-character
+// actors pass through untouched. A nil resolver, or a resolver that
+// returns ≤ 1 member for everyone, returns the input unchanged.
+//
+// The split is integer division; the dealer keeps the remainder so
+// totals don't drift across rounding.
+func expandTallyByGroup(tally map[ActorRef]int32, roomID int64, resolver GroupResolver) map[ActorRef]int32 {
+	if resolver == nil || len(tally) == 0 {
+		return tally
+	}
+	out := make(map[ActorRef]int32, len(tally))
+	mutated := false
+	for ref, dmg := range tally {
+		if ref.Kind != ActorKindCharacter || dmg <= 0 {
+			out[ref] = dmg
+			continue
+		}
+		members := resolver(ref.ID, roomID)
+		if len(members) <= 1 {
+			out[ref] = dmg
+			continue
+		}
+		mutated = true
+		share := dmg / int32(len(members))
+		remainder := dmg - share*int32(len(members))
+		for _, memberID := range members {
+			memberRef := ActorRef{Kind: ActorKindCharacter, ID: memberID}
+			contrib := share
+			if memberID == ref.ID {
+				contrib += remainder
+			}
+			out[memberRef] += contrib
+		}
+	}
+	if !mutated {
+		return tally
+	}
+	return out
+}
+
 // allocateXP splits totalXP across attackers proportional to their
 // recorded damage tally. Returns a stable map of per-actor awards.
 // Actors with zero recorded damage are excluded. When the tally is

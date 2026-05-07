@@ -375,8 +375,8 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `parseOrdinal`/`nameMatches`. `attack 2.jas` now picks the
     second matching peer. Deferred follow-ups: tab-completion for
     `attack` player targets, `consider <player>`.
-22. **Group / party** (§11). `group` invites, `follow`, shared XP
-    split, peaceful-on-group-leader.
+22. ~~**Group / party** (§11). `group` invites, `follow`, shared XP
+    split, peaceful-on-group-leader.~~ **CLOSED 2026-05-07.**
     **SLICE 1 LANDED 2026-05-07.** New `internal/group` package:
     `Group` aggregate (Leader + Members map), `Manager` keyed by
     leader CharacterID with reverse `byCharacter` index, in-memory
@@ -405,8 +405,20 @@ investment / new-weave learning intentionally **stay in old Phase D**
     failure (locked door, sector gate, missing exit) the
     relationship clears with a "couldn't keep up" notice. Logout
     cleanup of `followingID` is implicit (session goes away).
-    Slice 4 layers shared XP split via combat `GroupResolver`
-    ctor option.
+    **SLICE 4 LANDED 2026-05-07.** Shared XP split. New
+    `combat.GroupResolver = func(charID, roomID int64) []int64`
+    type and `Manager.SetGroupResolver` setter (mirrors
+    `SetDecayer`/`SetFleeMover`). `cmd/server/main.go` wires the
+    live `groups.MembersInRoom` resolver into the combat manager.
+    `handleMobDeath` now calls `expandTallyByGroup(tallySnap,
+    roomID, resolver)` before `allocateXP`, splitting each
+    character contributor's damage equally across in-room party
+    members (remainder credits to the dealer so totals don't
+    drift). Non-character actors (mobs, future NPC allies) pass
+    through unchanged. Nil resolver = pre-slice-4 solo behaviour.
+    Tests cover solo, 2-member split, remainder, partial in-room,
+    non-character passthrough, nil-resolver no-op, and two-dealer
+    accumulation.
 
 After D: full "kill a thing, get XP, find loot, repeat" loop.
 

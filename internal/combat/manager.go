@@ -41,8 +41,9 @@ type Manager struct {
 	mobs      repo.MobInstanceRepo
 	templates repo.MobTemplateRepo // optional; nil disables XP rewards
 	items     repo.ItemRepo        // optional; nil disables weapon-stat lookup + corpse spawn
-	decayer   *Decayer             // optional; nil leaves corpses lingering until admin purge
-	fleeMover FleeMover            // optional; nil makes ActionFlee fail with reason="no_mover"
+	decayer    *Decayer            // optional; nil leaves corpses lingering until admin purge
+	fleeMover  FleeMover           // optional; nil makes ActionFlee fail with reason="no_mover"
+	groupShare GroupResolver       // optional; nil = solo split (each kill credits the dealer only)
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -86,6 +87,25 @@ func (m *Manager) SetRNG(r *rand.Rand) {
 	m.rngMu.Lock()
 	defer m.rngMu.Unlock()
 	m.rng = r
+}
+
+// GroupResolver expands a damage-dealer's character id into the set
+// of co-located group members (including the dealer themselves)
+// who should share that dealer's slice of the kill XP. A nil resolver
+// (or a resolver that returns a single-element slice) yields the
+// pre-slice-4 solo split.
+//
+// roomID lets the resolver filter by where the kill happened so a
+// teammate AFK in town doesn't piggy-back on a far-away fight.
+type GroupResolver func(charID, roomID int64) []int64
+
+// SetGroupResolver wires the group XP-split hook. Optional — when
+// unset, kill XP goes 1:1 to the damage dealers. cmd/server/main.go
+// passes group.Manager.MembersInRoom.
+func (m *Manager) SetGroupResolver(fn GroupResolver) {
+	m.mu.Lock()
+	m.groupShare = fn
+	m.mu.Unlock()
 }
 
 // SetClock injects a deterministic time source. Tests use this; the
@@ -656,6 +676,14 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 	}
 	m.mu.Unlock()
 
+	// Phase D #22 slice 4: expand each character contributor's tally
+	// across their in-room group teammates so kill XP shares with
+	// the party. Mob and unknown-kind contributors pass through
+	// unchanged. A nil resolver short-circuits to the solo path.
+	m.mu.Lock()
+	resolver := m.groupShare
+	m.mu.Unlock()
+	tallySnap = expandTallyByGroup(tallySnap, roomID, resolver)
 	awards := allocateXP(tallySnap, xpValueForChallenge(tmpl.ChallengeCode), killer)
 	for ref, amount := range awards {
 		if ref.Kind != ActorKindCharacter || amount <= 0 {

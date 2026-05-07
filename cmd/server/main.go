@@ -229,9 +229,12 @@ func main() {
 
 	// Phase D #22: in-memory party manager. State is process-level
 	// and dropped on restart, mirroring the in-flight Fight model.
-	// Threaded into the group/follow/attack verbs and (slice 4) the
-	// combat XP-split path.
+	// Threaded into the group/follow/attack verbs and the combat
+	// XP-split path.
 	groups := group.New()
+	combatMgr.SetGroupResolver(func(charID, roomID int64) []int64 {
+		return groups.MembersInRoom(charID, roomID, sessions)
+	})
 
 	// Phase D #19 slice 2: corpse decay. Sweeper deletes corpse rows
 	// 5 min after they spawn (constant lives in internal/combat) and
