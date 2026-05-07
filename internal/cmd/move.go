@@ -1,15 +1,23 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
+
+// maxFollowDepth caps how deep the chain-on-move recursion will
+// follow a follower's followers. Mirrors the segment-cap pattern
+// in telnet.Registry.Dispatch — the typical depth is 1–2; the cap
+// is a defence against accidental loops.
+const maxFollowDepth = 16
 
 // NewMoveFamily builds the ten direction commands — cardinals
 // (north/south/east/west), vertical (up/down), and diagonals
@@ -22,7 +30,7 @@ import (
 //
 // bus may be nil during tests that don't care about event emission;
 // moveDir tolerates a nil bus.
-func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock) []*telnet.Command {
+func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, sessions *session.Registry) []*telnet.Command {
 	build := func(name, dir string) *telnet.Command {
 		return &telnet.Command{
 			Name:    name,
@@ -30,7 +38,7 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			Help:    "Move " + name,
 			Auth:    telnet.AuthPlayer,
 			Run: func(c *telnet.Context) error {
-				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus, clock)
+				return moveDir(c, dir, rooms, exits, items, mobs, characters, bus, clock, sessions, 0)
 			},
 		}
 	}
@@ -51,7 +59,11 @@ func NewMoveFamily(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 // moveDir is the work behind every direction command. Pulled out as a
 // helper so each direction's Run is a one-liner and the move semantics
 // live in one place.
-func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock) error {
+//
+// followDepth tracks how many `chainFollowers` recursions led to this
+// call. A direct player move is depth 0; each chained follower
+// increments. Bounded by maxFollowDepth.
+func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, sessions *session.Registry, followDepth int) error {
 	s := c.Session
 	if s.CurrentRoomID == 0 {
 		return s.WriteRaw([]byte("You are nowhere — cannot move.\r\n"))
@@ -135,7 +147,69 @@ func moveDir(c *telnet.Context, dir string, rooms repo.RoomRepo, exits repo.Exit
 		})
 	}
 
+	// Phase D #22 slice 3: chain followers. Any peer in fromRoomID
+	// whose Following() == s.CharacterID gets the same move attempt.
+	// Bounded recursion via followDepth (cap = maxFollowDepth) so an
+	// undetected cycle can never wedge the dispatcher.
+	if sessions != nil && followDepth < maxFollowDepth {
+		chainFollowers(c.Ctx, dir, fromRoomID, exit.ToRoomID, s, sessions,
+			rooms, exits, items, mobs, characters, bus, clock, followDepth)
+	}
+
 	return RenderRoom(c.Ctx, s, rooms, exits, items, mobs, clock)
+}
+
+// chainFollowers drives the auto-follow per-move chain. Snapshots
+// the registry, filters peers in fromRoomID following the leader,
+// and re-runs moveDir for each through the same code path so the
+// follower's own followers continue the chain. A failure to keep
+// up (locked door, sector gate, exit missing) emits a "couldn't
+// keep up" line and clears the relationship so the leader doesn't
+// drag a broken state forward.
+func chainFollowers(ctx context.Context, dir string, fromRoomID, toRoomID int64, leader *telnet.Session, sessions *session.Registry, rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, bus *eventbus.Bus, clock *world.Clock, depth int) {
+	if leader == nil || leader.CharacterID == 0 {
+		return
+	}
+	for _, peer := range sessions.Snapshot() {
+		if peer == nil || peer == leader {
+			continue
+		}
+		if peer.Following() != leader.CharacterID {
+			continue
+		}
+		if peer.CurrentRoomID != fromRoomID {
+			// Follower wasn't co-located when the leader left;
+			// they don't auto-chase from another room. The
+			// relationship stays — they may catch up later.
+			continue
+		}
+		ctxFollower := ctx
+		fc := &telnet.Context{
+			Ctx:     ctxFollower,
+			Session: peer,
+			Name:    dir,
+			Args:    nil,
+			Raw:     "",
+		}
+		err := moveDir(fc, dir, rooms, exits, items, mobs, characters, bus, clock, sessions, depth+1)
+		if err != nil {
+			slog.Debug("chainFollowers: follower move failed",
+				"follower", peer.CharacterID, "leader", leader.CharacterID,
+				"dir", dir, "error", err)
+		}
+		if peer.CurrentRoomID != toRoomID {
+			// Follower couldn't keep up (door locked, sector gate,
+			// exit missing). Drop the relationship and tell them
+			// what happened so the leader doesn't keep dragging
+			// them through obstacles.
+			peer.SetFollowing(0)
+			leaderName := safeActor(leader)
+			if err := peer.WriteAsync(
+				"{{You couldn't keep up with " + leaderName + ". You stop following.}}::yellow\r\n"); err != nil {
+				slog.Debug("chainFollowers: notify failed", "follower", peer.CharacterID, "error", err)
+			}
+		}
+	}
 }
 
 // sectorGate returns a refusal message + true when the destination

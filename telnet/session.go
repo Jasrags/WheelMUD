@@ -120,6 +120,12 @@ type Session struct {
 	// Read in foreign goroutines (other dispatchers iterating
 	// Snapshot()), so guarded by crossMu like channelMuted.
 	hidden bool
+	// followingID is the CharacterID of the player this session is
+	// auto-following — set by the `follow` verb and consumed by the
+	// move verb's chainFollowers helper. Zero when not following.
+	// Cross-goroutine read (move-time iteration of Snapshot), so
+	// guarded by crossMu.
+	followingID int64
 
 	// writeMu is the single serializer for everything visible on the
 	// wire and for the line-edit state that drives async-write redraws.
@@ -331,6 +337,21 @@ func (s *Session) ToggleHidden() bool {
 	defer s.crossMu.Unlock()
 	s.hidden = !s.hidden
 	return s.hidden
+}
+
+// Following returns the CharacterID of the player this session is
+// auto-following, or 0 when not following.
+func (s *Session) Following() int64 {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.followingID
+}
+
+// SetFollowing replaces the auto-follow target. Pass 0 to stop.
+func (s *Session) SetFollowing(id int64) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.followingID = id
 }
 
 // IdleSince returns now - LastInputAt, or zero when no command has

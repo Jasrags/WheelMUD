@@ -394,8 +394,18 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `NewAttack` factory threads `*group.Manager`; `cmd/server/
     main.go` passes the live manager. Tests cover the comrade
     line, ungrouped pairs (positive control), and nil-manager
-    backwards-compat. Slices 3–4 layer on top: `follow <player>`
-    chain on move, shared XP split via combat `GroupResolver`
+    backwards-compat.
+    **SLICE 3 LANDED 2026-05-07.** `follow <player>` + `unfollow`
+    verbs plus chain-on-move. New `Session.followingID` (crossMu-
+    guarded, `Following()` / `SetFollowing()` helpers). Verb
+    refuses unless target is same-party + same-room + non-cycling
+    (walks the leader's chain up to maxFollowDepth=16). Move verb
+    re-runs `moveDir` for every co-located peer following the
+    leader; recursion bounded by `followDepth`; on a per-follower
+    failure (locked door, sector gate, missing exit) the
+    relationship clears with a "couldn't keep up" notice. Logout
+    cleanup of `followingID` is implicit (session goes away).
+    Slice 4 layers shared XP split via combat `GroupResolver`
     ctor option.
 
 After D: full "kill a thing, get XP, find loot, repeat" loop.

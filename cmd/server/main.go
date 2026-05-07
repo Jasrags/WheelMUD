@@ -588,7 +588,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewExamine(items, mobs)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus, clock)...); err != nil {
+	if err := r.Register(cmd.NewMoveFamily(rooms, exits, items, mobs, characters, bus, clock, sessions)...); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
@@ -631,6 +631,12 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewGroup(groups, sessions)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		cmd.NewFollow(groups, sessions),
+		cmd.NewUnfollow(),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(
