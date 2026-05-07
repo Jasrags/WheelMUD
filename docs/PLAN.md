@@ -298,8 +298,18 @@ investment / new-weave learning intentionally **stay in old Phase D**
 
 ## Phase D — Combat MVP
 
-16. **Initiative + round tick** (§11). Wire a `combat` tick bucket;
-    per-room `Fight` state.
+16. ~~**Initiative + round tick** (§11). Wire a `combat` tick bucket;
+    per-room `Fight` state.~~ **LANDED 2026-05-06.** New
+    `internal/combat` package: per-room `Fight` aggregate with
+    initiative-ordered actor list (d20 + DexMod + InitMod, ties
+    broken by raw-d20 then ActorRef.ID), `Manager` keyed by RoomID
+    with `Start` / `End` / `Get` / `Tick` / `Stop`, and typed
+    `CombatStarted` / `RoundStarted` / `CombatEnded` events on the
+    eventbus. Subscribed to `tick.Buckets.Combat` (4s default
+    cadence). Auto-ends a fight when every mob participant has
+    left the room. No `attack` verb yet — that's #18 — and no
+    persistence (server restart drops in-flight fights, acceptable
+    for V1).
 17. **Damage types & resistances** (§11). DR / resists already exist on
     `creature.Core`; just plumb the math.
 18. **Hit/miss/dodge/parry rolls** (§11). `d20 + bab + ability` vs

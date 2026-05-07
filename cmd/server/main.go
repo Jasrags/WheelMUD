@@ -16,6 +16,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
+	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/help"
@@ -61,6 +62,7 @@ type server struct {
 	saves      *persist.Manager
 	news       *news.Catalog
 	chargen    *chargen.Catalog
+	combat     *combat.Manager
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -214,6 +216,14 @@ func main() {
 	restocker := world.NewRestocker(shops)
 	buckets.AreaReset.Subscribe(restocker.Tick)
 
+	// §11 / Phase D #16 combat tick spine. Manager owns per-room
+	// Fight aggregates, advances Round on every Combat-bucket pulse,
+	// and emits CombatStarted / RoundStarted / CombatEnded events.
+	// Verbs (#18) and damage math (#17/#18) consume this spine but
+	// are not in this slice.
+	combatMgr := combat.New(bus, characters, mobs)
+	buckets.Combat.Subscribe(combatMgr.Tick)
+
 	// srv is constructed before buildRegistry so the shutdown / reboot
 	// admin commands can wire to srv as a ShutdownController. newInitial
 	// is filled in below once gameMode (which depends on the registry)
@@ -233,6 +243,7 @@ func main() {
 		saves:      saves,
 		news:       newsCatalog,
 		chargen:    chargenCatalog,
+		combat:     combatMgr,
 		closed:     make(chan struct{}),
 	}
 
@@ -363,6 +374,11 @@ func (srv *server) shutdown() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		srv.saves.FlushAll(ctx)
 		cancel()
+	}
+	// End every active fight so subscribers (eventbus, future
+	// HP-persist) see CombatEnded before the bus stops below.
+	if srv.combat != nil {
+		srv.combat.Stop(context.Background())
 	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()

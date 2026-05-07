@@ -182,6 +182,28 @@ type Abilities struct {
 	Cha AbilityScore
 }
 
+// AbilityMod returns the d20 ability modifier floor((s-10)/2).
+// Go integer division truncates toward zero, so an explicit branch
+// for odd negative scores keeps -1 from rounding up to 0.
+// Matches the floor convention used throughout the chargen pipeline.
+func AbilityMod(score int8) int16 {
+	diff := int16(score) - 10
+	if diff < 0 && diff%2 != 0 {
+		return (diff - 1) / 2
+	}
+	return diff / 2
+}
+
+// StrMod / DexMod / ConMod / IntMod / WisMod / ChaMod return the d20
+// ability modifier for that ability's Current score. Combat / skills
+// / weave-resolution all read these.
+func (a Abilities) StrMod() int16 { return AbilityMod(a.Str.Current) }
+func (a Abilities) DexMod() int16 { return AbilityMod(a.Dex.Current) }
+func (a Abilities) ConMod() int16 { return AbilityMod(a.Con.Current) }
+func (a Abilities) IntMod() int16 { return AbilityMod(a.Int.Current) }
+func (a Abilities) WisMod() int16 { return AbilityMod(a.Wis.Current) }
+func (a Abilities) ChaMod() int16 { return AbilityMod(a.Cha.Current) }
+
 // Saves are the d20 saving throws.
 type Saves struct {
 	Fort int16

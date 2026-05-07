@@ -851,7 +851,7 @@ will need on top of those tables.
 
 ## 11. Combat
 
-- [ ] Initiative / round structure — combat ticks off the `combat`
+- [~] Initiative / round structure — combat ticks off the `combat`
       bucket from §8 (default 4 s). On `attack <target>` push both
       participants into a `Fight` aggregate keyed by room; each pulse
       resolves one round per combatant in initiative order
@@ -859,6 +859,19 @@ will need on top of those tables.
       Players queue one combat-mode action (`flee`, `kick`,
       `weave <name>`) per round. Multi-attack at BAB +6/+11/+16
       grants extra iterative attacks at −5 each.
+      **Spine landed 2026-05-06** — new `internal/combat` package
+      with per-room `Fight`, initiative roll
+      (`d20 + DexMod + InitMod`, ties broken by raw-d20 then
+      ActorRef.ID), `Manager` (`Start`/`End`/`Get`/`Tick`/`Stop`)
+      subscribed to `tick.Buckets.Combat`, and typed
+      `CombatStarted` / `RoundStarted` / `CombatEnded` events on
+      the eventbus. Auto-ends fights when every mob participant
+      has left the room. Pending: `attack` verb (#18), action
+      queue per round (`flee`, `kick`, `weave`), iterative
+      attacks at BAB +6/+11/+16, mid-fight join, character
+      participant-presence check (slice 2 — needs session
+      registry threading), Fight persistence across reboot
+      (currently in-memory only).
 - [ ] Damage types and resistances — WoT damage kinds: physical
       `slash/pierce/bludgeon` (each weapon entry tags one), plus
       One-Power / energy types from weave effects (`fire/cold/
