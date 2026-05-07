@@ -69,8 +69,9 @@ func NewAttack(
 
 			actor := ActorRefForCharacter(s.CharacterID)
 			var (
-				defender   combat.ActorRef
-				targetName string
+				defender    combat.ActorRef
+				targetName  string
+				targetPeer  *telnet.Session // non-nil for player targets only
 			)
 
 			if mobOK {
@@ -81,6 +82,7 @@ func NewAttack(
 				if peer == nil {
 					return s.WriteString("{{You don't see them here.}}::yellow\r\n")
 				}
+				targetPeer = peer
 				targetChar, err := characters.GetByID(c.Ctx, peer.CharacterID)
 				if err != nil {
 					slog.Error("attack: target char lookup failed",
@@ -116,7 +118,18 @@ func NewAttack(
 			}
 
 			actorName := safeActor(s)
-			broadcastRoom(sessions, s.CurrentRoomID, s,
+			// Defender-specific second-person line lets a player notice
+			// they're being attacked without having to parse the room's
+			// third-person narration. Mobs (targetPeer == nil) keep the
+			// single broadcastRoom call.
+			if targetPeer != nil {
+				if err := targetPeer.WriteAsync(
+					"{{" + actorName + " readies an attack against you!}}::red\r\n"); err != nil {
+					slog.Debug("attack: defender notify failed",
+						"to", targetName, "error", err)
+				}
+			}
+			broadcastRoomExcept2(sessions, s.CurrentRoomID, s, targetPeer,
 				"{{"+actorName+" moves to attack "+targetName+".}}::red\r\n")
 			return s.WriteString("{{You ready an attack against " + targetName + ".}}::red\r\n")
 		},

@@ -9,6 +9,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/telnet"
 )
 
 // attackPvPFixture stages a room (optionally nopvp), commPair-aligned
@@ -75,8 +76,14 @@ func TestAttackPvP_BothOptedInLevelOK_StartsFight(t *testing.T) {
 	if !strings.Contains(a, "ready an attack against Bob") {
 		t.Fatalf("missing self echo: %q", a)
 	}
-	if !strings.Contains(b, "Alice moves to attack Bob") {
-		t.Fatalf("missing peer broadcast: %q", b)
+	// Defender-side reverse broadcast: Bob receives a second-person red
+	// line and must NOT see the third-person room narration (that's for
+	// uninvolved bystanders only).
+	if !strings.Contains(b, "Alice readies an attack against you!") {
+		t.Fatalf("missing defender second-person line: %q", b)
+	}
+	if strings.Contains(b, "moves to attack") {
+		t.Fatalf("defender should not see third-person bystander line: %q", b)
 	}
 	got, ok := fx.mgr.PendingAction(1, ActorRefForCharacter(1))
 	if !ok {
@@ -84,6 +91,39 @@ func TestAttackPvP_BothOptedInLevelOK_StartsFight(t *testing.T) {
 	}
 	if got.Target.Kind != combat.ActorKindCharacter || got.Target.ID != 2 {
 		t.Fatalf("target = %+v, want char ID=2", got.Target)
+	}
+}
+
+// TestAttackPvP_BystanderSeesThirdPerson confirms the room narration
+// still reaches uninvolved peers — only attacker + defender are
+// excluded. Adds a third "Carol" session bound into the same room.
+func TestAttackPvP_BystanderSeesThirdPerson(t *testing.T) {
+	fx := newAttackPvPFixture(t, false,
+		pvpSide{"Alice", 10, true},
+		pvpSide{"Bob", 10, true})
+	sessions, alice, _, _, bOutBuf := commPair(t)
+
+	carolSess, carolBuf := bufSession(t)
+	carolSess.AccountID = 300
+	carolSess.AuthLevel = telnet.AuthPlayer
+	carolSess.CharacterID = 99
+	carolSess.CharacterName = "Carol"
+	carolSess.CurrentRoomID = 1
+	sessions.Bind(carolSess.AccountID, carolSess)
+
+	c := NewAttack(fx.mgr, fx.rooms, fx.mobs, fx.characters, sessions)
+	runCmd(t, c, alice, "bob")
+
+	got := carolBuf.String()
+	if !strings.Contains(got, "Alice moves to attack Bob") {
+		t.Fatalf("bystander missing third-person line: %q", got)
+	}
+	if strings.Contains(got, "readies an attack against you") {
+		t.Fatalf("bystander should not see defender second-person line: %q", got)
+	}
+	// Sanity: defender path still works alongside.
+	if !strings.Contains(bOutBuf.String(), "readies an attack against you") {
+		t.Fatalf("defender second-person line missing: %q", bOutBuf.String())
 	}
 }
 

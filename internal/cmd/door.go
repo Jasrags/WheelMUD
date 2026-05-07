@@ -113,16 +113,25 @@ func playerHasKey(ctx context.Context, s *telnet.Session, exit repo.Exit, items 
 // are logged at debug — one peer's broken pipe must not stop the
 // announcement from reaching the rest of the room.
 func broadcastRoom(sessions *session.Registry, roomID int64, except *telnet.Session, msg string) {
+	broadcastRoomExcept2(sessions, roomID, except, nil, msg)
+}
+
+// broadcastRoomExcept2 is broadcastRoom with two excluded sessions.
+// Used when a verb has already written a specialised line to one
+// recipient (e.g. the defender of an attack gets a second-person
+// "X readies an attack against you!" line) and wants the third-person
+// room narration to skip both the actor and that recipient.
+func broadcastRoomExcept2(sessions *session.Registry, roomID int64, a, b *telnet.Session, msg string) {
 	if sessions == nil || roomID == 0 {
 		return
 	}
 	for _, peer := range sessions.Snapshot() {
 		_, peerName, peerRoom := peer.InWorld()
-		if peer == except || peerRoom != roomID {
+		if peer == a || peer == b || peerRoom != roomID {
 			continue
 		}
 		if err := peer.WriteAsync(msg); err != nil {
-			slog.Debug("door: peer write failed", "to", peerName, "error", err)
+			slog.Debug("room broadcast: peer write failed", "to", peerName, "error", err)
 		}
 	}
 }

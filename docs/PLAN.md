@@ -366,9 +366,9 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `room.flags.peaceful`; add `pvp` flag on character.
     **Slice 1 landed 2026-05-07** — migration 0037 +
     `characters.pvp` + `pvp` verb + `attack <player>` guard
-    (nopvp room, newbie cap 10, both-side opt-in). Pending:
-    `who` PvP tag, target-side reverse broadcast, player
-    keyword ordinals.
+    (nopvp room, newbie cap 10, both-side opt-in). `who` PvP tag
+    landed 2026-05-07; defender-side reverse broadcast landed
+    2026-05-07. Pending: player keyword ordinals.
 22. **Group / party** (§11). `group` invites, `follow`, shared XP
     split, peaceful-on-group-leader.
 
