@@ -239,6 +239,20 @@ func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, ba
 	return ErrCoinConflict
 }
 
+func (r *SQLiteCharacterRepo) RecordXP(ctx context.Context, id int64, xp int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET xp = ? WHERE id = ?`,
+		xp, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record xp: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters SET prompt_template = ? WHERE id = ?`,

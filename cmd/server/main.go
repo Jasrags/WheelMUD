@@ -221,7 +221,7 @@ func main() {
 	// and emits CombatStarted / RoundStarted / CombatEnded events.
 	// Verbs (#18) and damage math (#17/#18) consume this spine but
 	// are not in this slice.
-	combatMgr := combat.New(bus, characters, mobs, items)
+	combatMgr := combat.New(bus, characters, mobs, mobTemplates, items)
 	buckets.Combat.Subscribe(combatMgr.Tick)
 
 	// srv is constructed before buildRegistry so the shutdown / reboot

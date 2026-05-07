@@ -79,3 +79,29 @@ type ActionResolved struct {
 	Actor  ActorRef
 	Kind   ActionKind
 }
+
+// CombatDeath fires once when a participant's HP falls to zero or
+// below and the death handler has run. CorpseID is the item id of
+// the corpse spawned in the room (zero when the death path could
+// not create one — e.g. item-repo failure). Killer is the ActorRef
+// whose hit dropped HP to zero; ActorKindUnknown when the kill came
+// from a non-combat source like environmental damage (#19 slice 1
+// always passes the attacker).
+type CombatDeath struct {
+	RoomID   int64
+	Victim   ActorRef
+	Killer   ActorRef
+	CorpseID int64
+}
+
+// CombatXPAwarded fires once per attacker that earns a share of the
+// kill XP. Subscribers (combat prompt, level-up watcher, audit log)
+// can observe per-actor awards without re-deriving the tally. Total
+// is the value added to the character's xp column; the new running
+// total is not carried.
+type CombatXPAwarded struct {
+	RoomID  int64
+	Awardee ActorRef
+	Amount  int64
+	Killed  ActorRef
+}

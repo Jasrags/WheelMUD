@@ -337,9 +337,23 @@ investment / new-weave learning intentionally **stay in old Phase D**
     Deferred follow-ups: parry check (needs FlatFooted state machine),
     two-weapon / off-hand attacks, iterative attacks at +6/+11/+16,
     ranged / thrown weapons, `flee`, combat prompt repaint.
-19. **Death / corpses / looting / XP grant** (§11). At HP ≤ 0 drop a
-    corpse item carrying the inventory list, schedule decay tick,
-    award XP to attackers.
+19. **Death / corpses / looting / XP grant** (§11). Slice 1 LANDED
+    2026-05-07: mob HP ≤ 0 spawns a corpse container in the room
+    via `ItemRepo.Create`, despawns the mob (`UpdateRoom(0)` +
+    `Delete`), and awards XP weighted by damage to character
+    attackers from a per-`Fight` `DamageTally map[ActorRef]int32`.
+    Per-template XP value comes from a hard-coded
+    `xpValueForChallenge(ChallengeCode)` table (A=100 → I=38400).
+    `CombatDeath` / `CombatXPAwarded` events. `Fight.Dead` set is
+    pruned from `Order` at the top of the next `tickRoom` so
+    `ActiveIdx` math observes a stable order during resolution; the
+    fight auto-ends when `Order` empties. New
+    `CharacterRepo.RecordXP` (sqlite + memory + shared test).
+    Deferred to slice 2: corpse decay tick + `items.decay_expires_at`
+    column, mob inventory transfer into corpse, player death &
+    bound-room respawn + XP-debt penalty, mob respawn via §9 zone
+    reset, looting verbs (`get from corpse` already works through
+    existing container plumbing — no new verb needed).
 20. **Aggro / threat tables** (§11). Per-`Fight`
     `threat[CreatureID]int`.
 21. **PvE / PvP zones + safe zones** (§11). Reuse existing

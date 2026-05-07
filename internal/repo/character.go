@@ -190,6 +190,11 @@ type CharacterRepo interface {
 	// the caller should refuse the verb with "your balance changed".
 	// ErrCharacterNotFound is returned when the row is missing.
 	RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error
+	// RecordXP persists the character's total XP after an award.
+	// Combat / quest reward paths call this; the value passed is the
+	// new absolute total, not a delta. Returns ErrCharacterNotFound
+	// when no row matches id.
+	RecordXP(ctx context.Context, id int64, xp int64) error
 	// RecordPromptTemplate persists the per-character prompt override.
 	// Empty tmpl means "fall back to the server default". Returns
 	// ErrCharacterNotFound when no row matches id.

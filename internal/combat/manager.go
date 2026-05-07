@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"strconv"
 	"sync"
 	"time"
 
@@ -35,10 +36,11 @@ type Manager struct {
 	mu     sync.RWMutex
 	fights map[int64]*Fight // roomID → fight
 
-	bus   *eventbus.Bus
-	chars repo.CharacterRepo
-	mobs  repo.MobInstanceRepo
-	items repo.ItemRepo // optional; nil disables weapon-stat lookup
+	bus       *eventbus.Bus
+	chars     repo.CharacterRepo
+	mobs      repo.MobInstanceRepo
+	templates repo.MobTemplateRepo // optional; nil disables XP rewards
+	items     repo.ItemRepo        // optional; nil disables weapon-stat lookup + corpse spawn
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -48,17 +50,20 @@ type Manager struct {
 // New constructs a Manager. bus is required (events are how downstream
 // systems learn about fights); chars / mobs are required for
 // participant resolution at Start time and the auto-end check at
-// Tick time. items is optional; pass nil for tests that don't need
-// equipped-weapon resolution and unarmed defaults are fine.
-func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo, items repo.ItemRepo) *Manager {
+// Tick time. templates and items are optional; tests that don't
+// exercise the death / corpse / XP path can pass nil and the
+// resolver falls back to safe no-ops (no corpse, no XP, mob still
+// despawns).
+func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo, templates repo.MobTemplateRepo, items repo.ItemRepo) *Manager {
 	return &Manager{
-		fights: make(map[int64]*Fight),
-		bus:    bus,
-		chars:  chars,
-		mobs:   mobs,
-		items:  items,
-		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
-		now:    time.Now,
+		fights:    make(map[int64]*Fight),
+		bus:       bus,
+		chars:     chars,
+		mobs:      mobs,
+		templates: templates,
+		items:     items,
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		now:       time.Now,
 	}
 }
 
@@ -249,6 +254,21 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		m.mu.Unlock()
 		return
 	}
+	// Prune actors that died on the previous round before advancing.
+	// Done up here (not inline in resolveAction) so ActiveIdx math
+	// observes a stable Order for the duration of resolveAction.
+	f.pruneDead()
+	if len(f.Order) == 0 {
+		// Last participant fell — close the fight cleanly. Mirrors
+		// the auto-end-on-no-mobs path above; just driven by death
+		// rather than presence.
+		delete(m.fights, roomID)
+		m.mu.Unlock()
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatEnded{RoomID: roomID, Reason: ReasonNoParticipants})
+		}
+		return
+	}
 	f.Round++
 	if f.Round > 1 {
 		f.ActiveIdx = (f.ActiveIdx + 1) % len(f.Order)
@@ -355,6 +375,18 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		}
 	}
 
+	// Bump the per-attacker damage tally. Used by handleMobDeath to
+	// allocate XP. Held under m.mu so a concurrent fight-end can't
+	// see a half-mutated map.
+	m.mu.Lock()
+	if f, ok := m.fights[roomID]; ok {
+		if f.DamageTally == nil {
+			f.DamageTally = make(map[ActorRef]int32)
+		}
+		f.DamageTally[actor] += dealt
+	}
+	m.mu.Unlock()
+
 	if m.bus != nil {
 		m.bus.Publish(ctx, CombatHit{
 			RoomID:   roomID,
@@ -364,6 +396,14 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			Weapon:   action.WeaponID,
 			IsCrit:   roll.IsCrit,
 		})
+	}
+
+	// Slice 1 of #19: only mob death triggers the corpse + XP path.
+	// Player death (#19 slice 2) sticks with the existing HP write-
+	// back; the character is unconscious / disabled but still in the
+	// fight order until respawn lands.
+	if defCore.HPCurrent <= 0 && action.Target.Kind == ActorKindMob {
+		m.handleMobDeath(ctx, actor, action.Target)
 	}
 }
 
@@ -453,6 +493,180 @@ func (m *Manager) fightHasLiveParticipants(ctx context.Context, roomID int64, or
 		}
 	}
 	return false
+}
+
+// handleMobDeath runs the slice-1 mob death pipeline:
+//
+//  1. Snapshot the per-attacker damage tally and mark the mob dead
+//     so the next tickRoom call prunes it from Order.
+//  2. Spawn a corpse container item in the mob's room (best-effort —
+//     a repo failure logs and continues so the kill still resolves).
+//  3. Despawn the mob: clear room then Delete. Trail rows cascade.
+//  4. Award XP weighted by damage to character attackers; publish
+//     CombatXPAwarded per share. Mob attackers (NPC vs NPC) earn
+//     no XP — characters only.
+//  5. Publish CombatDeath last so subscribers see the corpse id.
+//
+// Failures inside any step are logged via slog but never abort the
+// pipeline. The contract: once HP ≤ 0 lands, the mob is gone from
+// the world by the time tickRoom next fires, even if the corpse or
+// XP write-back fizzled.
+func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
+	// Resolve mob + template under no lock — repo IO must not run
+	// under m.mu (same rule as tickRoom).
+	mob, err := m.mobs.GetByID(ctx, victim.ID)
+	if err != nil {
+		slog.Warn("combat: dead mob lookup failed",
+			"mob", victim.ID, "error", err)
+		// Still flag it dead so Order prunes; the body just won't
+		// have a corpse. Scope the mark to fights we know about by
+		// scanning every room — the mob row is gone so we can't read
+		// its CurrentRoomID.
+		m.markDeadAllRooms(victim)
+		return
+	}
+
+	var tmpl creature.MobTemplate
+	if m.templates != nil && mob.TemplateID != 0 {
+		t, err := m.templates.GetByID(ctx, mob.TemplateID)
+		if err != nil {
+			slog.Warn("combat: dead mob template lookup failed",
+				"mob", victim.ID, "template", mob.TemplateID, "error", err)
+		} else {
+			tmpl = t
+		}
+	}
+
+	corpseID := m.spawnCorpse(ctx, mob)
+
+	// Despawn: clear room first (records a final trail row, frees
+	// any presence-keyed lookups) then delete. Failure of either
+	// path is logged but doesn't gate the rest of the kill.
+	if err := m.mobs.UpdateRoom(ctx, victim.ID, 0); err != nil {
+		slog.Warn("combat: mob room-clear failed",
+			"mob", victim.ID, "error", err)
+	}
+	if err := m.mobs.Delete(ctx, victim.ID); err != nil {
+		slog.Warn("combat: mob delete failed",
+			"mob", victim.ID, "error", err)
+	}
+
+	// Snapshot the tally + mark dead under the lock so a parallel
+	// resolveAction on the same fight doesn't see a half-cleared
+	// state.
+	roomID := mob.Core.CurrentRoomID
+	m.mu.Lock()
+	var tallySnap map[ActorRef]int32
+	if f, ok := m.fights[roomID]; ok {
+		if f.Dead == nil {
+			f.Dead = make(map[ActorRef]struct{})
+		}
+		f.Dead[victim] = struct{}{}
+		if len(f.DamageTally) > 0 {
+			tallySnap = make(map[ActorRef]int32, len(f.DamageTally))
+			for k, v := range f.DamageTally {
+				tallySnap[k] = v
+			}
+		}
+	}
+	m.mu.Unlock()
+
+	awards := allocateXP(tallySnap, xpValueForChallenge(tmpl.ChallengeCode), killer)
+	for ref, amount := range awards {
+		if ref.Kind != ActorKindCharacter || amount <= 0 {
+			continue
+		}
+		ch, err := m.chars.GetByID(ctx, ref.ID)
+		if err != nil {
+			slog.Warn("combat: xp recipient lookup failed",
+				"char", ref.ID, "error", err)
+			continue
+		}
+		newTotal := ch.XP + amount
+		if err := m.chars.RecordXP(ctx, ref.ID, newTotal); err != nil {
+			slog.Warn("combat: xp write-back failed",
+				"char", ref.ID, "error", err)
+			continue
+		}
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatXPAwarded{
+				RoomID:  roomID,
+				Awardee: ref,
+				Amount:  amount,
+				Killed:  victim,
+			})
+		}
+	}
+
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatDeath{
+			RoomID:   roomID,
+			Victim:   victim,
+			Killer:   killer,
+			CorpseID: corpseID,
+		})
+	}
+}
+
+// markDeadAllRooms is the lock-acquiring helper used when
+// handleMobDeath can't load the mob row (so its CurrentRoomID is
+// unknown) but still needs Order pruning to happen on the next tick.
+// Scans every active fight; pruneDead is idempotent so over-marking
+// is harmless. Prefer the room-scoped path inside the snapshot
+// section of handleMobDeath when the room id is known.
+func (m *Manager) markDeadAllRooms(victim ActorRef) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range m.fights {
+		if f.Dead == nil {
+			f.Dead = make(map[ActorRef]struct{})
+		}
+		f.Dead[victim] = struct{}{}
+	}
+}
+
+// spawnCorpse creates a container item in the mob's room and returns
+// its id. Returns 0 when the item repo is unavailable or Create
+// fails — the death pipeline tolerates a body-less kill rather than
+// rolling back the despawn.
+func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int64 {
+	if m.items == nil || mob.Core.CurrentRoomID == 0 {
+		return 0
+	}
+	name := mob.Core.Name
+	if name == "" {
+		name = "creature"
+	}
+	corpse := repo.Item{
+		ExternalID: m.corpseExternalID(mob),
+		Name:       "corpse of " + name,
+		ShortDesc:  "The corpse of " + name + " lies here.",
+		RoomID:     mob.Core.CurrentRoomID,
+		Type:       repo.ItemTypeContainer,
+		Stats: &repo.ContainerStats{
+			CapacityLbs:  500,
+			CapacityCuFt: 50,
+		},
+	}
+	created, err := m.items.Create(ctx, corpse)
+	if err != nil {
+		slog.Warn("combat: corpse spawn failed",
+			"mob", mob.ID, "room", mob.Core.CurrentRoomID, "error", err)
+		return 0
+	}
+	return created.ID
+}
+
+// corpseExternalID builds a unique ExternalID for the corpse so the
+// items.external_id UNIQUE constraint can't bite a back-to-back kill
+// of the same mob name. Format: corpse-<mobid>-<unix-nano>. The mob
+// id pins the lineage; the timestamp suffix dedupes within a single
+// mob's instance lifetime if the row was somehow reused. Uses m.now
+// (rather than time.Now directly) so tests with an injected clock
+// produce deterministic ids — same pattern as Fight.StartedAt.
+func (m *Manager) corpseExternalID(mob creature.MobInstance) string {
+	return "corpse-" + strconv.FormatInt(mob.ID, 10) + "-" +
+		strconv.FormatInt(m.now().UTC().UnixNano(), 10)
 }
 
 // Stop ends every active fight (publishing CombatEnded with

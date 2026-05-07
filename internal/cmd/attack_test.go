@@ -64,7 +64,7 @@ func newAttackFixture(t *testing.T, peaceful bool) attackFixture {
 	}); err != nil {
 		t.Fatalf("seed char: %v", err)
 	}
-	mgr := combat.New(eventbus.New(), chars, mobs, repo.NewMemoryItemRepo())
+	mgr := combat.New(eventbus.New(), chars, mobs, repo.NewMemoryMobTemplateRepo(), repo.NewMemoryItemRepo())
 	return attackFixture{
 		mgr: mgr, rooms: rooms, mobs: mobs, characters: chars,
 		sessions: session.NewRegistry(), mob: mob,

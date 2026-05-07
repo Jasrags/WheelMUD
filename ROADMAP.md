@@ -907,13 +907,25 @@ will need on top of those tables.
       from every hostile in the room scaled by 0.5. NPCs retarget
       to highest-threat each round. Taunts add a flat bonus;
       `feign death` zeroes threat from one source.
-- [ ] Death, corpses, looting, XP award — at HP ≤ 0: drop a
-      `corpse_of_<name>` container item containing all worn/held
-      items + carried gold, decay timer (5 min for player, 10 min
-      for mob), award XP to all attackers weighted by damage dealt,
-      mob respawns via the §9 zone reset, player respawns at
-      bound/temple room with a death penalty (XP debt or stat
-      drain — pick one and document).
+- [~] Death, corpses, looting, XP award — slice 1 landed
+      2026-05-07 (Phase D #19, mob death only). HP ≤ 0 on a mob:
+      spawn a `corpse of <name>` `ItemTypeContainer` in the room
+      (currently empty — inventory transfer pending), despawn the
+      mob (`UpdateRoom(0)` + `Delete`), award XP weighted by
+      `Fight.DamageTally` to character attackers; killer collects
+      the rounding remainder. Per-template XP value comes from a
+      hard-coded `xpValueForChallenge(ChallengeCode)` table
+      (A=100 → I=38400) — moving to a YAML field on MobTemplate is
+      a follow-up. New `CharacterRepo.RecordXP`. `CombatDeath` /
+      `CombatXPAwarded` events. `Fight.Dead` set pruned from
+      `Order` at top of next `tickRoom` so ActiveIdx math observes
+      a stable slice during resolution; fight auto-ends when Order
+      empties. Pending: corpse decay timer + new tick bucket,
+      transfer mob inventory + carried gold into the corpse,
+      player death (despawn → bound/temple room respawn → XP-debt
+      penalty), mob respawn via §9 zone reset (depends on Phase F),
+      looting (`get from corpse` already works via existing
+      container plumbing).
 - [ ] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in

@@ -217,6 +217,18 @@ func (r *MemoryCharacterRepo) RecordCoin(_ context.Context, id int64, coin, bank
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordXP(_ context.Context, id int64, xp int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.XP = xp
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, tmpl string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

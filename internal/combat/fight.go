@@ -31,6 +31,61 @@ type Fight struct {
 	// Lazily initialized by EnqueueAction. Resolved + cleared by the
 	// Manager's Tick after the active actor's action lands.
 	Actions map[ActorRef]Action
+
+	// DamageTally accumulates the total post-DR/post-resist damage
+	// each actor has dealt over the lifetime of the fight. Used to
+	// allocate XP weighted by contribution when a mob dies. Lazily
+	// initialized in resolveAction. Pre-cursor to #20 threat tables.
+	DamageTally map[ActorRef]int32
+
+	// Dead is the set of actors that have hit HP ≤ 0 inside this
+	// fight. Populated by the death handler; consumed by tickRoom at
+	// the top of the next pulse to prune Order before ActiveIdx
+	// advances. Mutating Order in-flight inside resolveAction would
+	// shift indices under the Tick caller, so the prune is deferred.
+	Dead map[ActorRef]struct{}
+}
+
+// pruneDead removes every entry in Dead from Order and clears the
+// set. Caller must hold the Manager write lock. Re-clamps ActiveIdx
+// so it never points past the new end of Order. Returns true when
+// at least one actor was removed.
+func (f *Fight) pruneDead() bool {
+	if len(f.Dead) == 0 {
+		return false
+	}
+	out := make([]ActorEntry, 0, len(f.Order))
+	removedBefore := 0
+	for i, e := range f.Order {
+		if _, dead := f.Dead[e.Ref]; dead {
+			if i <= f.ActiveIdx {
+				removedBefore++
+			}
+			continue
+		}
+		out = append(out, e)
+	}
+	f.Order = out
+	f.Dead = nil
+	if len(f.Order) == 0 {
+		f.ActiveIdx = 0
+		return true
+	}
+	// Walk ActiveIdx back by however many dead entries sat at-or-
+	// before it so the next round's "(ActiveIdx+1) % len(Order)"
+	// resumes on the actor that would have come after the killed
+	// one rather than skipping a turn. When the active actor itself
+	// died (ActiveIdx underflows), clamp to -1 so the next round-
+	// advance lands on index 0 — the new head — rather than wrapping
+	// forward and silently skipping the head's first turn.
+	f.ActiveIdx -= removedBefore
+	if f.ActiveIdx < 0 {
+		f.ActiveIdx = -1
+	}
+	if f.ActiveIdx >= len(f.Order) {
+		f.ActiveIdx = -1
+	}
+	return true
 }
 
 // Active returns the actor whose turn is currently being resolved,
@@ -39,6 +94,14 @@ type Fight struct {
 // this branch is only reachable through direct field manipulation
 // in tests).
 func (f *Fight) Active() ActorRef {
+	if f.ActiveIdx < 0 {
+		// pruneDead may park ActiveIdx at -1 when the active actor
+		// itself was killed; the next round-advance lands on index 0.
+		// External readers (debug verbs, tests) that peek between
+		// prune and round-advance get the zero ref instead of a
+		// panic.
+		return ActorRef{}
+	}
 	if len(f.Order) == 0 {
 		return ActorRef{}
 	}

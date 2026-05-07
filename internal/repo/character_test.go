@@ -59,6 +59,26 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_xp", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Aviendha"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if err := cr.RecordXP(ctx, c.ID, 1500); err != nil {
+			t.Fatalf("record xp: %v", err)
+		}
+		got, _ := cr.GetByID(ctx, c.ID)
+		if got.XP != 1500 {
+			t.Fatalf("xp = %d, want 1500", got.XP)
+		}
+		if err := cr.RecordXP(ctx, c.ID+999, 100); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing id: err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/get_by_id", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)
