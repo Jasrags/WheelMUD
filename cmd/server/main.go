@@ -686,6 +686,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewScore(characters, chargenCatalog)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewXP(characters)); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
