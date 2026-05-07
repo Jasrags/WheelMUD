@@ -835,6 +835,75 @@ func TestLoadAndSync_BankerRejectsBadHour(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_TrainerRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"city/zone.yaml":  &fstest.MapFile{Data: []byte("id: city\nname: City\n")},
+		"city/rooms.yaml": &fstest.MapFile{Data: []byte("- id: city.hall\n  starter: true\n  name: Hall\n  long: A training hall.\n")},
+		"city/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: city.weaponmaster
+  room: city.hall
+  name: Lan the Weaponmaster
+  short: a hardened weaponmaster
+  trainer:
+    class: armsman
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	templates := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := templates.GetByExternalID(ctx, "city.weaponmaster")
+	if err != nil {
+		t.Fatalf("template lookup: %v", err)
+	}
+
+	trainers := repo.NewSQLiteTrainerRepo(conn)
+	tr, err := trainers.GetByMobTemplateID(ctx, tpl.ID)
+	if err != nil {
+		t.Fatalf("trainer lookup: %v", err)
+	}
+	if tr.ClassID != "armsman" {
+		t.Fatalf("trainer class wrong: %+v", tr)
+	}
+}
+
+func TestLoadAndSync_TrainerRejectsEmptyClass(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.trainer
+  room: z.r
+  name: Mystery Trainer
+  trainer:
+    class: ""
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on empty trainer.class")
+	}
+	if !strings.Contains(err.Error(), "trainer.class") {
+		t.Fatalf("err = %q, want it to mention trainer.class", err)
+	}
+}
+
 func TestLoadAndSync_ShopRejectsUnknownItem(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

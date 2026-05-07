@@ -132,6 +132,7 @@ func main() {
 	logins := repo.NewSQLiteAccountLoginRepo(conn)
 	shops := repo.NewSQLiteShopRepo(conn)
 	bankers := repo.NewSQLiteBankerRepo(conn)
+	trainers := repo.NewSQLiteTrainerRepo(conn)
 
 	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
 		slog.Error("World load failed", "error", err)
@@ -326,7 +327,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -550,7 +551,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -687,6 +688,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewXP(characters)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewTrain(characters, mobs, mobTemplates, trainers, chargenCatalog)); err != nil {
 		return nil, err
 	}
 	return r, nil

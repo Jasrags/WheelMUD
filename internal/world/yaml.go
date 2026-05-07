@@ -213,6 +213,13 @@ type Mob struct {
 	// min-deposit, no item vault.
 	Banker *Banker `yaml:"banker,omitempty"`
 
+	// Trainer, if present, marks this mob as a class trainer
+	// (Phase E #23). The loader inserts the matching `trainers`
+	// row keyed to the mob_template. V1 carries the chargen class
+	// the trainer can teach; level commits run at the cmd-layer
+	// `train` verb against CharacterRepo.
+	Trainer *Trainer `yaml:"trainer,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 }
@@ -242,6 +249,15 @@ type ShopStock struct {
 type Banker struct {
 	OpenHour  *int `yaml:"open_hour,omitempty"`
 	CloseHour *int `yaml:"close_hour,omitempty"`
+}
+
+// Trainer is the optional `trainer:` sub-block on a mob YAML entry.
+// Class is a chargen catalog id (e.g. "armsman", "wilder"). The
+// loader validates the format at boot; the runtime `train` verb
+// resolves it against the live *chargen.Catalog so a content swap
+// doesn't require a DB migration.
+type Trainer struct {
+	Class string `yaml:"class"`
 }
 
 // World is the parsed-and-validated set of every zone the loader saw.

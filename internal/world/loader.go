@@ -484,6 +484,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
 	shops := repo.NewSQLiteShopRepo(tx)
 	bankers := repo.NewSQLiteBankerRepo(tx)
+	trainers := repo.NewSQLiteTrainerRepo(tx)
 
 	for _, m := range mobs {
 		roomID := roomIDs[m.Room]
@@ -531,6 +532,22 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 				return fmt.Errorf("insert banker for mob %q: %w", m.ID, err)
 			}
 		}
+		if m.Trainer != nil {
+			if err := insertTrainer(ctx, trainers, created.ID, m); err != nil {
+				return fmt.Errorf("insert trainer for mob %q: %w", m.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// insertTrainer materializes one `trainer:` YAML block into a trainers
+// row. Class id has already cleared validateTrainer (non-empty,
+// external-id charset).
+func insertTrainer(ctx context.Context, trainers repo.TrainerRepo, mobTemplateID int64, m Mob) error {
+	cfg := repo.Trainer{MobTemplateID: mobTemplateID, ClassID: m.Trainer.Class}
+	if _, err := trainers.Create(ctx, cfg); err != nil {
+		return err
 	}
 	return nil
 }

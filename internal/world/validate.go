@@ -288,6 +288,27 @@ func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 				return err
 			}
 		}
+		if m.Trainer != nil {
+			if err := validateTrainer(m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateTrainer checks the optional `trainer:` block: class must be
+// a non-empty external-id (Phase E #23). Cross-referencing against the
+// chargen catalog happens at the cmd-layer `train` verb so a content
+// swap of the catalog doesn't require a DB migration.
+func validateTrainer(m Mob) error {
+	if m.Trainer.Class == "" {
+		return fmt.Errorf("%s:%d: mob %q trainer.class is empty",
+			m.SourceFile, m.Line, m.ID)
+	}
+	if !validExternalID(m.Trainer.Class) {
+		return fmt.Errorf("%s:%d: mob %q trainer.class %q has invalid format",
+			m.SourceFile, m.Line, m.ID, m.Trainer.Class)
 	}
 	return nil
 }
