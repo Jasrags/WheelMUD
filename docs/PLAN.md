@@ -377,6 +377,18 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `attack` player targets, `consider <player>`.
 22. **Group / party** (§11). `group` invites, `follow`, shared XP
     split, peaceful-on-group-leader.
+    **SLICE 1 LANDED 2026-05-07.** New `internal/group` package:
+    `Group` aggregate (Leader + Members map), `Manager` keyed by
+    leader CharacterID with reverse `byCharacter` index, in-memory
+    state, `MaxGroupSize = 6`, leader-leaves-disbands. Manager
+    methods: `Invite`/`Accept`/`Decline`/`Leave`/`Kick`/`Disband`/
+    `Of`/`SameGroup`/`MembersInRoom`/`PendingInvite`/
+    `ClearForCharacter`. New verb `group <invite|accept|decline|
+    leave|kick|disband>` plus bare `group` roster. Logout cleanup
+    threads through `handleConnection`'s teardown defer in
+    `cmd/server/main.go`. Slices 2–4 layer on top:
+    same-group PvP refusal, `follow <player>` chain on move,
+    shared XP split via combat `GroupResolver` ctor option.
 
 After D: full "kill a thing, get XP, find loot, repeat" loop.
 

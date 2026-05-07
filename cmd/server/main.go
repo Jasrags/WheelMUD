@@ -17,6 +17,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
+	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
@@ -64,6 +65,7 @@ type server struct {
 	news       *news.Catalog
 	chargen    *chargen.Catalog
 	combat     *combat.Manager
+	groups     *group.Manager
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -225,6 +227,12 @@ func main() {
 	combatMgr := combat.New(bus, characters, mobs, mobTemplates, items)
 	buckets.Combat.Subscribe(combatMgr.Tick)
 
+	// Phase D #22: in-memory party manager. State is process-level
+	// and dropped on restart, mirroring the in-flight Fight model.
+	// Threaded into the group/follow/attack verbs and (slice 4) the
+	// combat XP-split path.
+	groups := group.New()
+
 	// Phase D #19 slice 2: corpse decay. Sweeper deletes corpse rows
 	// 5 min after they spawn (constant lives in internal/combat) and
 	// emits a "crumble" line via WriteAsync to room peers.
@@ -307,6 +315,7 @@ func main() {
 		news:       newsCatalog,
 		chargen:    chargenCatalog,
 		combat:     combatMgr,
+		groups:     groups,
 		closed:     make(chan struct{}),
 	}
 
@@ -314,7 +323,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -538,7 +547,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -621,6 +630,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewGroup(groups, sessions)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(
 		cmd.NewFlee(combatMgr),
 		cmd.NewParry(combatMgr, characters, sessions),
@@ -677,6 +689,12 @@ func (srv *server) handleConnection(s *telnet.Session) {
 	defer func() {
 		if s.AccountID != 0 {
 			srv.sessions.Unbind(s.AccountID, s)
+		}
+		// Phase D #22: drop any party membership / pending invite
+		// the disconnecting character was party to. Leader-leaves
+		// disbands; a member departure shrinks. No-op for guests.
+		if s.CharacterID != 0 && srv.groups != nil {
+			srv.groups.ClearForCharacter(s.CharacterID)
 		}
 	}()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
