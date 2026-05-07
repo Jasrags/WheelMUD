@@ -1,0 +1,12 @@
+-- 0037_characters_pvp.sql
+--
+-- Phase D #21 slice 1: per-character PvP opt-in flag. Backs the
+-- `pvp` verb and the player-target branch of `attack`. Default 0
+-- means existing characters and newly created ones are PvE-only;
+-- the player has to explicitly type `pvp on` to consent. The room-
+-- side `nopvp` flag (migration 0001 / RoomFlags.NoPVP) is the other
+-- half of the gate — `attack <player>` refuses unless both flags
+-- agree and both sides are above the newbie level cap.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+ALTER TABLE characters ADD COLUMN pvp INTEGER NOT NULL DEFAULT 0;

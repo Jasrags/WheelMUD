@@ -267,6 +267,20 @@ func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordPvP(ctx context.Context, id int64, on bool) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET pvp = ? WHERE id = ?`,
+		boolToInt(on), id,
+	)
+	if err != nil {
+		return fmt.Errorf("record pvp: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) MarkNewsSeen(ctx context.Context, id int64, when time.Time) error {
 	if when.IsZero() {
 		// Defensive: a zero time would store the "never seen" sentinel
@@ -346,6 +360,7 @@ func scanCharacter(s scanner) (Character, error) {
 		// treats as a no-op (Channeling stays nil — correct for
 		// non-channeler classes and the implicit pre-0033 default).
 		channelingNS sql.NullString
+		pvpInt       int
 	)
 	dest := []any{
 		&c.ID, &c.AccountID, &c.Name, &c.NameLower, &c.CreatedAt, &lastPlayed, &c.CurrentRoomID,
@@ -357,7 +372,7 @@ func scanCharacter(s scanner) (Character, error) {
 		&fatigue, &idle, &login,
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
 		&j.channelSettings, &channelingNS,
-		&newsSeenSecs)...)
+		&newsSeenSecs, &pvpInt)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
@@ -389,6 +404,7 @@ func scanCharacter(s scanner) (Character, error) {
 	if newsSeenSecs > 0 {
 		c.LastNewsSeen = time.Unix(newsSeenSecs, 0).UTC()
 	}
+	c.PvP = pvpInt != 0
 	if err := j.unmarshalInto(&c); err != nil {
 		return Character{}, err
 	}

@@ -49,6 +49,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		channel_settings_json, channeling_json,
 		prompt_template,
 		last_news_seen,
+		pvp,
 		auth_level`
 
 // charCoreValues returns the bound-parameter slice for the Core
@@ -117,6 +118,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		channelSettingsJSON, channelingJSON,
 		c.PromptTemplate,
 		newsSeenSeconds(c.LastNewsSeen),
+		boolToInt(c.PvP),
 		c.AuthLevel,
 	}
 }
@@ -143,6 +145,7 @@ func charPlayerScanDest(c *Character,
 	// SQL NULL on pre-0033 rows scans cleanly. See scanCharacter.
 	channelingJSON *sql.NullString,
 	lastNewsSeenSec *int64,
+	pvpInt *int,
 ) []any {
 	return []any{
 		&c.Race, &c.Background, classLevelsJSON,
@@ -156,6 +159,7 @@ func charPlayerScanDest(c *Character,
 		channelSettingsJSON, channelingJSON,
 		&c.PromptTemplate,
 		lastNewsSeenSec,
+		pvpInt,
 		&c.AuthLevel,
 	}
 }

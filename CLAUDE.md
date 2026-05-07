@@ -219,6 +219,18 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `session.Registry.Snapshot()` for the active-session list. Single-
   session-per-account makes `kick` a no-op today; the path is
   forward-wired for multi-session work.
+  0037 added `characters.pvp` (INTEGER NOT NULL DEFAULT 0) backing
+  §D #21 slice 1 (PvP opt-in). The `pvp` verb toggles via
+  `CharacterRepo.RecordPvP`; `attack <player>` resolves a peer in
+  the same room from `session.Registry` and runs the guard order
+  (NoPVP room → attacker newbie → target newbie → attacker opt-in
+  → target opt-in) before queueing an `ActionAttack` against an
+  `ActorRefForCharacter(id)` defender. Newbie cap is
+  `cmd.NewbiePvPLevelCap = 10`; `cmd.characterLevel(ch)` sums
+  `ClassLevels` values. The pvp column slots between
+  `last_news_seen` and `auth_level` in `charPlayerColumns` —
+  auth_level stays last for the SQLite first-character bootstrap
+  CASE expression in `Create`.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/

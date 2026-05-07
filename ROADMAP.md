@@ -933,10 +933,20 @@ will need on top of those tables.
       penalty), mob respawn via §9 zone reset (depends on Phase F),
       looting (`get from corpse` already works via existing
       container plumbing).
-- [ ] PvE vs PvP rules and safe zones — `pvp` flag on character
+- [~] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in
       still blocked. Newbie level cap (e.g. <10) immune.
+      **Slice 1 landed 2026-05-07** — migration 0037 added
+      `characters.pvp` (default 0); `pvp` verb (`pvp [on|off]`)
+      toggles via `CharacterRepo.RecordPvP`; `attack <player>`
+      resolves a peer in the same room from `session.Registry`
+      and runs the guard order (nopvp room → attacker newbie →
+      target newbie → attacker opt-in → target opt-in). Newbie
+      cap is `NewbiePvPLevelCap = 10`. `characterLevel(ch)`
+      sums `ClassLevels` values. Pending: PvP tag in `who`,
+      reverse-broadcast filter for the target, ordinal player
+      keywords (`2.alice`), `consider <player>`.
 - [ ] Group / party mechanics — `group <name>` invites, `follow
       <name>` / `unfollow`, leader's moves auto-pull followers
       (subject to AC/exit checks). XP split among in-room group

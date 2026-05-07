@@ -241,6 +241,18 @@ func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, 
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.PvP = on
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) Delete(_ context.Context, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

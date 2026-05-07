@@ -567,6 +567,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewPrompt(characters, defaultPromptTemplate)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewPvP(characters)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewHelp(r, helpCatalog)); err != nil {
 		return nil, err
 	}

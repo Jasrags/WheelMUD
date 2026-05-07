@@ -115,6 +115,14 @@ type Character struct {
 	// for the character's One Power affiliation.
 	Channeling *creature.Channeling
 
+	// PvP is the player's opt-in for character-vs-character combat.
+	// Default false — `attack <player>` is refused unless both the
+	// attacker and the defender have toggled this on (via the `pvp`
+	// verb). Persisted as INTEGER 0/1 (migration 0037). Room-side
+	// `nopvp` and the newbie level cap are independent gates checked
+	// at the verb layer; this flag is only the consent half.
+	PvP bool
+
 	// AuthLevel mirrors telnet.AuthLevel as a plain uint8 to avoid
 	// coupling the repo package to telnet. Use the AuthLevel*
 	// constants below. postauth.promoteToGame copies this onto
@@ -199,6 +207,10 @@ type CharacterRepo interface {
 	// Empty tmpl means "fall back to the server default". Returns
 	// ErrCharacterNotFound when no row matches id.
 	RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error
+	// RecordPvP toggles the character's PvP opt-in flag. Persists to
+	// characters.pvp (migration 0037). Returns ErrCharacterNotFound
+	// when no row matches id.
+	RecordPvP(ctx context.Context, id int64, on bool) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.
