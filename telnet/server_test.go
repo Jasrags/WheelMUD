@@ -26,8 +26,8 @@ func (m *scriptedMode) Handle(_ context.Context, s *Session, line string) error 
 	return s.WriteRaw([]byte("ack:" + line + "\r\n"))
 }
 func (m *scriptedMode) Prompt(_ context.Context, _ *Session) string { return "> " }
-func (m *scriptedMode) OnEnter(_ *Session) error { return nil }
-func (m *scriptedMode) OnExit(_ *Session) error  { m.closed.Store(true); return nil }
+func (m *scriptedMode) OnEnter(_ *Session) error                    { return nil }
+func (m *scriptedMode) OnExit(_ *Session) error                     { m.closed.Store(true); return nil }
 
 func (m *scriptedMode) snapshot() []string {
 	m.mu.Lock()
@@ -160,8 +160,8 @@ func (m *ctxObservingMode) Handle(ctx context.Context, s *Session, _ string) err
 	return nil
 }
 func (m *ctxObservingMode) Prompt(_ context.Context, _ *Session) string { return "> " }
-func (m *ctxObservingMode) OnEnter(_ *Session) error { return nil }
-func (m *ctxObservingMode) OnExit(_ *Session) error  { return nil }
+func (m *ctxObservingMode) OnEnter(_ *Session) error                    { return nil }
+func (m *ctxObservingMode) OnExit(_ *Session) error                     { return nil }
 
 func (m *ctxObservingMode) ctx() context.Context {
 	m.mu.Lock()
@@ -297,8 +297,8 @@ func (b *blockingMode) Handle(_ context.Context, _ *Session, _ string) error {
 	return nil
 }
 func (b *blockingMode) Prompt(_ context.Context, _ *Session) string { return "" }
-func (b *blockingMode) OnEnter(_ *Session) error { return nil }
-func (b *blockingMode) OnExit(_ *Session) error  { return nil }
+func (b *blockingMode) OnEnter(_ *Session) error                    { return nil }
+func (b *blockingMode) OnExit(_ *Session) error                     { return nil }
 
 // terminalMode signals end-of-session from Handle without writing a prompt.
 type terminalMode struct{ closed bool }
@@ -309,8 +309,8 @@ func (m *terminalMode) Handle(_ context.Context, s *Session, _ string) error {
 	return ErrSessionEnded
 }
 func (m *terminalMode) Prompt(_ context.Context, _ *Session) string { return "should-not-write> " }
-func (m *terminalMode) OnEnter(_ *Session) error { return nil }
-func (m *terminalMode) OnExit(_ *Session) error  { return nil }
+func (m *terminalMode) OnEnter(_ *Session) error                    { return nil }
+func (m *terminalMode) OnExit(_ *Session) error                     { return nil }
 
 func TestRunSession_ErrSessionEndedStopsDispatcher(t *testing.T) {
 	s, peer := newPipeSession(t)

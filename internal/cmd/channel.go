@@ -131,8 +131,8 @@ func NewChannelsList(channels []repo.Channel) *telnet.Command {
 
 // formatChannelRow emits one row of the channels overview:
 //
-//	  <name> — on    (channel-color name + green status)
-//	  <name> — off   (gray name + gray status)
+//	<name> — on    (channel-color name + green status)
+//	<name> — off   (gray name + gray status)
 //
 // Names are defanged so a hostile catalog entry can't recolour
 // downstream rows. Color falls back to "cyan" if the channel row

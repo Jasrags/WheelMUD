@@ -39,8 +39,8 @@ const (
 // keep a fat-finger spawn from flooding the room.
 func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
-		Name:    "spawn",
-		Help:    "Spawn a mob or item from a template",
+		Name: "spawn",
+		Help: "Spawn a mob or item from a template",
 		Long: "Usage: spawn mob <external_id> [count]\n" +
 			"       spawn item <external_id> [count]\n\n" +
 			"Count defaults to 1 and is capped at " + strconv.Itoa(spawnCountMax) + ".",
@@ -192,7 +192,6 @@ func announceSpawn(s *telnet.Session, sessions *session.Registry, name string, c
 		fmt.Sprintf("{{%s gestures and summons %s.}}::cyan\r\n", actor, subject))
 	return s.WriteString(fmt.Sprintf("{{Spawned %s here.}}::cyan\r\n", tag))
 }
-
 
 // completeSpawn offers `mob` / `item` on slot 0; on slot 1 routes to
 // the matching ListExternalIDs (mob templates or item rows). Slot 2

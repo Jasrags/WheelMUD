@@ -23,8 +23,8 @@ func newZonesFix(t *testing.T) zonesFix {
 
 	emonds := z.Insert(repo.Zone{
 		ExternalID: "emonds_field", Name: "Emond's Field",
-		Builder:        "jrags",
-		MinLevel:       1, MaxLevel: 5,
+		Builder:  "jrags",
+		MinLevel: 1, MaxLevel: 5,
 		ResetIntervalS: 900,
 		ResetMode:      repo.ZoneResetEmpty,
 		Climate:        "temperate",

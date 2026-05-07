@@ -637,8 +637,8 @@ func TestLoadAndSync_ValidationFailures(t *testing.T) {
 			wantErrs: []string{"duplicate item id"},
 		},
 		{
-			name: "no zones",
-			fs:   fstest.MapFS{},
+			name:     "no zones",
+			fs:       fstest.MapFS{},
 			wantErrs: []string{"no zone.yaml"},
 		},
 	}

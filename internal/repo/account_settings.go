@@ -8,11 +8,11 @@ package repo
 //
 // Each field is consumed at a single application point (see
 // docs in mode/postauth.go and mode/account_menu.go):
-//   * ColorOverride   — promoteToGame replaces Session.ColorLevel
-//   * PromptDefault   — CharacterCreate stamps onto Character.PromptTemplate
-//   * WidthOverride   — promoteToGame clamps Session.Width
-//   * Locale          — account-menu list formatter (LastPlayedAt)
-//   * MOTDAlways      — postauth + AccountMenu.handleNews bypass last_news gate
+//   - ColorOverride   — promoteToGame replaces Session.ColorLevel
+//   - PromptDefault   — CharacterCreate stamps onto Character.PromptTemplate
+//   - WidthOverride   — promoteToGame clamps Session.Width
+//   - Locale          — account-menu list formatter (LastPlayedAt)
+//   - MOTDAlways      — postauth + AccountMenu.handleNews bypass last_news gate
 type AccountSettings struct {
 	// ColorOverride, when non-empty, replaces the TERM-detected
 	// Session.ColorLevel after auth. Valid values: "none", "basic",

@@ -302,7 +302,9 @@ func sectorCfmtStyle(s repo.Sector) string {
 
 // sectorLegendLine formats the per-sector palette line shared by the
 // player `map` and admin `zonemap` legends. Format:
-//   `  {{Legend:}}::cyan {{[C]}}::white|bold city · {{[F]}}::... \r\n`
+//
+//	`  {{Legend:}}::cyan {{[C]}}::white|bold city · {{[F]}}::... \r\n`
+//
 // One trailing CRLF; callers concatenate further legend lines after.
 func sectorLegendLine() string {
 	var b strings.Builder
@@ -563,4 +565,3 @@ func directionBetween(ctx context.Context, exits repo.ExitRepo, from, to int64) 
 	}
 	return "", false
 }
-

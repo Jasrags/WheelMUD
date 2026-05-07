@@ -196,4 +196,3 @@ func firstHeading(body string) string {
 	}
 	return ""
 }
-

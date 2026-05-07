@@ -63,7 +63,7 @@ type Background struct {
 	Race              string            `yaml:"race"` // "human" | "ogier"
 	HomeLanguage      string            `yaml:"home_language"`
 	BonusLanguages    []string          `yaml:"bonus_languages"`
-	BonusFeats        []string          `yaml:"bonus_feats"` // feat IDs
+	BonusFeats        []string          `yaml:"bonus_feats"`       // feat IDs
 	BackgroundSkills  []string          `yaml:"background_skills"` // skill IDs
 	SkillRestriction  string            `yaml:"skill_restriction,omitempty"`
 	WeaponRestriction string            `yaml:"weapon_restriction,omitempty"`
@@ -146,15 +146,15 @@ type Skill struct {
 // consumable/light/key/tool; clothing/food/trade_good/trash carry no
 // Stats. Currency strings parse via currency.Parse.
 type ItemTemplate struct {
-	ID      string         `yaml:"id"`
-	Name    string         `yaml:"name"`
-	Short   string         `yaml:"short"`
-	Type    repo.ItemType  `yaml:"type"`
-	Weight  float64        `yaml:"weight"`
-	Value   string         `yaml:"value"` // currency.Parse — "5mk", "100mk"
+	ID      string           `yaml:"id"`
+	Name    string           `yaml:"name"`
+	Short   string           `yaml:"short"`
+	Type    repo.ItemType    `yaml:"type"`
+	Weight  float64          `yaml:"weight"`
+	Value   string           `yaml:"value"` // currency.Parse — "5mk", "100mk"
 	Quality repo.ItemQuality `yaml:"quality"`
-	Flags   []string       `yaml:"flags"`
-	Stats   map[string]any `yaml:"stats"`
+	Flags   []string         `yaml:"flags"`
+	Stats   map[string]any   `yaml:"stats"`
 
 	// Resolved values stamped by the loader — never set in YAML.
 	parsedValue currency.Amount

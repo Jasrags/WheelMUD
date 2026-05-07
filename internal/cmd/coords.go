@@ -184,4 +184,3 @@ func formatCoordSummary(s world.CoordSummary) string {
 	b.WriteString("  {{Run `coords issues` for the offending room ids.}}::gray\r\n")
 	return b.String()
 }
-

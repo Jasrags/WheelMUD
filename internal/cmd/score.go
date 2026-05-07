@@ -144,8 +144,8 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog) err
 // writeAbilities renders the six-stat block as two indented rows so
 // the modifier column is easy to scan:
 //
-//	  STR 14 (+2)   DEX 12 (+1)   CON 10 (+0)
-//	  INT 13 (+1)   WIS 11 (+0)   CHA  9 (-1)
+//	STR 14 (+2)   DEX 12 (+1)   CON 10 (+0)
+//	INT 13 (+1)   WIS 11 (+0)   CHA  9 (-1)
 func writeAbilities(s *telnet.Session, a creature.Abilities) error {
 	type row struct {
 		key   string

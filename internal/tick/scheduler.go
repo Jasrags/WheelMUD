@@ -51,14 +51,14 @@ func (s *Subscription) Cancel() {
 // subscriptions on each tick. The zero value is not usable; construct
 // with New.
 type Scheduler struct {
-	hz       int
-	now      func() time.Time
-	newChan  func(d time.Duration) (<-chan time.Time, func())
-	logger   *slog.Logger
+	hz      int
+	now     func() time.Time
+	newChan func(d time.Duration) (<-chan time.Time, func())
+	logger  *slog.Logger
 
-	mu       sync.Mutex
-	subs     map[uint64]*subscription
-	nextID   uint64
+	mu     sync.Mutex
+	subs   map[uint64]*subscription
+	nextID uint64
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -69,11 +69,11 @@ type Scheduler struct {
 }
 
 type subscription struct {
-	id       uint64
-	every    time.Duration
-	next     time.Time
-	once     bool
-	handler  HandlerFunc
+	id      uint64
+	every   time.Duration
+	next    time.Time
+	once    bool
+	handler HandlerFunc
 }
 
 // Option configures a Scheduler.

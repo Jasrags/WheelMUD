@@ -21,10 +21,10 @@ func Tokenize(s string) ([]string, error) {
 		return nil, nil
 	}
 	var (
-		out    []string
-		cur    strings.Builder
-		inTok  bool
-		quote  byte // 0, '"', or '\''
+		out   []string
+		cur   strings.Builder
+		inTok bool
+		quote byte // 0, '"', or '\''
 	)
 	flush := func() {
 		if inTok {

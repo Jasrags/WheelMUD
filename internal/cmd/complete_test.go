@@ -53,15 +53,15 @@ func TestCompleterSlot(t *testing.T) {
 
 func TestSplitOrdinalPartial(t *testing.T) {
 	cases := []struct {
-		in           string
-		wantPrefix   string
-		wantKeyword  string
+		in          string
+		wantPrefix  string
+		wantKeyword string
 	}{
 		{"swo", "", "swo"},
 		{"2.swo", "2.", "swo"},
 		{"12.swo", "12.", "swo"},
 		{"2.", "2.", ""},
-		{".swo", "", ".swo"},   // leading dot, not an ordinal
+		{".swo", "", ".swo"},     // leading dot, not an ordinal
 		{"2a.swo", "", "2a.swo"}, // non-numeric prefix → plain keyword
 		{"", "", ""},
 	}

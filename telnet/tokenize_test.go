@@ -99,9 +99,9 @@ func TestSplitOnSemicolonUnbalanced(t *testing.T) {
 
 func TestCompletionPartialQuoteAware(t *testing.T) {
 	tests := []struct {
-		in       string
-		partial  string
-		inQuote  bool
+		in      string
+		partial string
+		inQuote bool
 	}{
 		{"", "", false},
 		{"loo", "loo", false},

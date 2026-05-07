@@ -159,10 +159,11 @@ func TestDeriveCoords_AnchorNotOverwritten(t *testing.T) {
 // keeps the room's coord; the conflicted later path is reported.
 //
 // Layout (ids):  1 -n-> 2
-//                |       |
-//                e       e
-//                v       v
-//                3 -n-> 4
+//
+//	|       |
+//	e       e
+//	v       v
+//	3 -n-> 4
 //
 // Path A: 1 → n → 2 → e → 4   gives 4 = (1, 1, 0)
 // Path B: 1 → e → 3 → n → 4   gives 4 = (1, 1, 0)

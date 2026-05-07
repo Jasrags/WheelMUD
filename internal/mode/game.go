@@ -117,12 +117,12 @@ func (g *Game) Prompt(parent context.Context, s *telnet.Session) string {
 // values. We narrow on the actual unsafe sequences:
 //
 //   - `{{`     — opens a styled span; break it so a room name can't
-//                start one that the user's template never closes.
+//     start one that the user's template never closes.
 //   - `}}::`   — closes a styled span and consumes a style selector;
-//                this is the only sequence that can recolor the rest
-//                of the user's prompt. Standalone `}}` or `::` are
-//                harmless on their own and stay verbatim so legitimate
-//                text like "Lv:: 5" or "}}note" survives.
+//     this is the only sequence that can recolor the rest
+//     of the user's prompt. Standalone `}}` or `::` are
+//     harmless on their own and stay verbatim so legitimate
+//     text like "Lv:: 5" or "}}note" survives.
 //
 // Player-authored templates (`prompt set`) are rendered verbatim —
 // color is the feature.

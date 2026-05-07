@@ -128,9 +128,9 @@ func writeStepHeader(s *telnet.Session, step chargenStep) error {
 // writeRule, writeFieldRow, writeError, writeOK delegate to the
 // internal/display equivalents so chargen substeps and the rest of
 // the codebase share one rendering path.
-func writeRule(s *telnet.Session) error               { return display.Rule(s) }
-func writeError(s *telnet.Session, msg string) error  { return display.Error(s, msg) }
-func writeOK(s *telnet.Session, msg string) error     { return display.OK(s, msg) }
+func writeRule(s *telnet.Session) error              { return display.Rule(s) }
+func writeError(s *telnet.Session, msg string) error { return display.Error(s, msg) }
+func writeOK(s *telnet.Session, msg string) error    { return display.OK(s, msg) }
 
 // writeFieldRow renders a chargen-styled label/value row. The gutter
 // is held constant so chargen sub-screens align visually even when
@@ -149,4 +149,3 @@ func defangChargenField(in string) string {
 	}
 	return display.Defang(in, "")
 }
-

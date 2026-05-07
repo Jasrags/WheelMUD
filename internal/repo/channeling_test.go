@@ -16,20 +16,20 @@ func runChannelingRepoTests(t *testing.T, name string, newRepo func(t *testing.T
 
 	sample := func() creature.Channeling {
 		return creature.Channeling{
-			GenderSource:     creature.SourceSaidar,
-			ChannelerType:    creature.ChannelerInitiate,
-			Affinities:       creature.PowerSet(1<<creature.PowerFire | 1<<creature.PowerSpirit),
-			Talents:          []creature.TalentID{1, 4, 7},
-			WeavesKnown:      []creature.WeaveRef{{ID: 100, Rarity: creature.RarityCommon}, {ID: 250, Rarity: creature.RarityRare}},
-			Slots:            [10]creature.SlotPool{{Cur: 4, Max: 4}, {Cur: 3, Max: 3}, {Cur: 2, Max: 2}},
-			Embraced:         true,
-			EmbracedSince:    time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
-			Madness:          0, // female channeler
-			Stilled:          false,
-			BondedWarderID:   42,
-			HeldAngrealID:    7,
-			AesSedaiOaths:    creature.OathTruth | creature.OathNoWeapon,
-			Ageless:          true,
+			GenderSource:   creature.SourceSaidar,
+			ChannelerType:  creature.ChannelerInitiate,
+			Affinities:     creature.PowerSet(1<<creature.PowerFire | 1<<creature.PowerSpirit),
+			Talents:        []creature.TalentID{1, 4, 7},
+			WeavesKnown:    []creature.WeaveRef{{ID: 100, Rarity: creature.RarityCommon}, {ID: 250, Rarity: creature.RarityRare}},
+			Slots:          [10]creature.SlotPool{{Cur: 4, Max: 4}, {Cur: 3, Max: 3}, {Cur: 2, Max: 2}},
+			Embraced:       true,
+			EmbracedSince:  time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+			Madness:        0, // female channeler
+			Stilled:        false,
+			BondedWarderID: 42,
+			HeldAngrealID:  7,
+			AesSedaiOaths:  creature.OathTruth | creature.OathNoWeapon,
+			Ageless:        true,
 		}
 	}
 

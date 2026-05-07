@@ -594,5 +594,3 @@ func TestSQLiteCharacterRepo(t *testing.T) {
 	runCharacterRepoTests(t, "sqlite", mk)
 	runRecordCoinVersionTests(t, "sqlite", mk)
 }
-
-

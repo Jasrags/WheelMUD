@@ -11,7 +11,7 @@ import (
 type MemoryShopRepo struct {
 	mu        sync.RWMutex
 	nextID    int64
-	shops     map[int64]Shop // by id
+	shops     map[int64]Shop  // by id
 	byMobTpl  map[int64]int64 // mob_template_id -> shop_id
 	stockNext int64
 	stock     map[int64][]ShopStockRow // shop_id -> rows (unsorted)

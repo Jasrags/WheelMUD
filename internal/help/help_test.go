@@ -32,13 +32,13 @@ func TestParseFrontMatter(t *testing.T) {
 		wantBody  string
 	}{
 		{
-			name: "ok minimal",
-			raw: "---\nid: foo\ntitle: Foo\n---\nbody\n",
+			name:   "ok minimal",
+			raw:    "---\nid: foo\ntitle: Foo\n---\nbody\n",
 			wantID: "foo", wantTitle: "Foo", wantBody: "body\n",
 		},
 		{
-			name: "ok keywords",
-			raw: "---\nid: combat\ntitle: Combat\nkeywords: fight, attack ,KILL\n---\nb\n",
+			name:   "ok keywords",
+			raw:    "---\nid: combat\ntitle: Combat\nkeywords: fight, attack ,KILL\n---\nb\n",
 			wantID: "combat", wantTitle: "Combat",
 			wantKW:   []string{"fight", "attack", "kill"},
 			wantBody: "b\n",
@@ -173,14 +173,14 @@ func TestLookup(t *testing.T) {
 		wantID  string
 		wantErr error
 	}{
-		{q: "combat", wantID: "combat"},                  // exact id
-		{q: "fight", wantID: "combat"},                   // keyword
-		{q: "weave", wantID: "channeling"},               // keyword
-		{q: "comb", wantID: "combat"},                    // unique prefix
-		{q: "channeli", wantID: "channeling"},            // unique prefix
-		{q: "ch", wantErr: ErrAmbiguousTopic},            // ambiguous
-		{q: "nosuch", wantErr: ErrUnknownTopic},          // unknown
-		{q: "", wantErr: ErrUnknownTopic},                // empty
+		{q: "combat", wantID: "combat"},         // exact id
+		{q: "fight", wantID: "combat"},          // keyword
+		{q: "weave", wantID: "channeling"},      // keyword
+		{q: "comb", wantID: "combat"},           // unique prefix
+		{q: "channeli", wantID: "channeling"},   // unique prefix
+		{q: "ch", wantErr: ErrAmbiguousTopic},   // ambiguous
+		{q: "nosuch", wantErr: ErrUnknownTopic}, // unknown
+		{q: "", wantErr: ErrUnknownTopic},       // empty
 	}
 	for _, tt := range tests {
 		t.Run(tt.q, func(t *testing.T) {

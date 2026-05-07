@@ -83,9 +83,9 @@ func TestFormat(t *testing.T) {
 		{100, "1mk"},
 		{1000, "1gc"},
 		{1234, "1gc 2mk 3sp 4cp"},
-		{1004, "1gc 4cp"},   // skipped denominations omitted
-		{305, "3mk 5cp"},    // ditto, with leading mk
-		{-15, "-1sp 5cp"},   // sign on the whole expression
+		{1004, "1gc 4cp"}, // skipped denominations omitted
+		{305, "3mk 5cp"},  // ditto, with leading mk
+		{-15, "-1sp 5cp"}, // sign on the whole expression
 	}
 	for _, tc := range cases {
 		if got := tc.amt.Format(); got != tc.want {
@@ -122,7 +122,7 @@ func TestParse(t *testing.T) {
 		want Amount
 	}{
 		{"0", 0},
-		{"50", 50},                // bare integer = cp
+		{"50", 50}, // bare integer = cp
 		{"5cp", 5},
 		{"10sp", 100},
 		{"1mk", 100},
@@ -150,11 +150,11 @@ func TestParse_Errors(t *testing.T) {
 	}{
 		{"", ErrEmpty},
 		{"   ", ErrEmpty},
-		{"5xx", ErrInvalidFormat},   // unknown denomination
-		{"abc", ErrInvalidFormat},   // no number
-		{"sp", ErrInvalidFormat},    // suffix only
+		{"5xx", ErrInvalidFormat},     // unknown denomination
+		{"abc", ErrInvalidFormat},     // no number
+		{"sp", ErrInvalidFormat},      // suffix only
 		{"5sp 5sp", ErrInvalidFormat}, // duplicate denomination
-		{"1.5mk", ErrInvalidFormat}, // no fractions
+		{"1.5mk", ErrInvalidFormat},   // no fractions
 	}
 	for _, tc := range cases {
 		_, err := Parse(tc.in)

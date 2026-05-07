@@ -160,4 +160,3 @@ func sectorGate(sector repo.Sector, speed creature.Speed) (string, bool) {
 		return "", false
 	}
 }
-

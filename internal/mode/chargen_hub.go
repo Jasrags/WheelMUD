@@ -25,11 +25,11 @@ import (
 // for non-channeler classes but never disappears, so the sheet stays
 // visually stable as the player tweaks earlier choices.
 type hubRow struct {
-	number    int        // 1-based display number; 0 for the n/a channeling row
-	label     string     // left-column label
-	status    string     // right-column status (chosen value or "— not chosen —")
+	number    int    // 1-based display number; 0 for the n/a channeling row
+	label     string // left-column label
+	status    string // right-column status (chosen value or "— not chosen —")
 	target    chargenStep
-	available bool       // false → row renders dimmed and refuses selection
+	available bool // false → row renders dimmed and refuses selection
 }
 
 // writeHub renders the build hub. When draftComplete is true and the
@@ -492,4 +492,3 @@ func raceLabel(race string) string {
 	}
 	return race
 }
-

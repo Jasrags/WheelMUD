@@ -97,4 +97,3 @@ func clearPrompt(c *telnet.Context, characters repo.CharacterRepo) error {
 	}
 	return c.Session.WriteRaw([]byte("Reverted to server default.\r\n"))
 }
-

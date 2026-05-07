@@ -3,10 +3,10 @@
 // The setting uses four coins, all stored on the Amount type as a
 // signed 64-bit count of copper pennies (the base unit):
 //
-//	  copper penny (cp) = 1   cp     — laborer's daily candle
-//	  silver penny (sp) = 10  cp     — laborer's daily wage
-//	  silver mark  (mk) = 100 cp     — standard unit of wealth
-//	  gold crown   (gc) = 1000 cp    — banker / noble denomination
+//	copper penny (cp) = 1   cp     — laborer's daily candle
+//	silver penny (sp) = 10  cp     — laborer's daily wage
+//	silver mark  (mk) = 100 cp     — standard unit of wealth
+//	gold crown   (gc) = 1000 cp    — banker / noble denomination
 //
 // All conversions live in the `ratio` table; use the helpers (New,
 // Parse, Format, Split, In) instead of multiplying by hand so a

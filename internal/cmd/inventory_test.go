@@ -344,7 +344,7 @@ func TestPut_NoDropToFloorContainerRefuses(t *testing.T) {
 	f.items.Insert(repo.Item{
 		ExternalID: "ring", Name: "a cursed ring",
 		OwnerCharacterID: f.alice.CharacterID, Weight: 0.1,
-		Flags:            repo.FlagNoDrop,
+		Flags: repo.FlagNoDrop,
 	})
 	runCmd(t, NewPut(f.items, f.characters, f.sessions), f.alice, "ring in chest")
 	if !strings.Contains(f.aOut.String(), "won't budge") {

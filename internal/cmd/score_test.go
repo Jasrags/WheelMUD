@@ -172,7 +172,7 @@ func TestScoreAbilityMod_Floor(t *testing.T) {
 
 func TestClassLine_MultiClassOrderingByLevelDesc(t *testing.T) {
 	got := classLine(map[creature.Class]int8{
-		creature.ClassArmsman: 2,
+		creature.ClassArmsman:  2,
 		creature.ClassWoodsman: 5,
 	}, nil)
 	if !strings.HasPrefix(got, "Woodsman lvl 5") {

@@ -166,8 +166,8 @@ func TestRegistry_LookupExact(t *testing.T) {
 		wantErr error
 	}{
 		{verb: "look", want: "look"},
-		{verb: "LOOK", want: "look"}, // case-insensitive
-		{verb: "l", want: "look"},    // alias
+		{verb: "LOOK", want: "look"},             // case-insensitive
+		{verb: "l", want: "look"},                // alias
 		{verb: "lo", wantErr: ErrUnknownCommand}, // no prefix fallback
 		{verb: "he", wantErr: ErrUnknownCommand}, // even when prefix is unique
 		{verb: "zzz", wantErr: ErrUnknownCommand},

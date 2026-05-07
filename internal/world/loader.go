@@ -597,4 +597,3 @@ func insertShop(ctx context.Context, shops repo.ShopRepo, mobTemplateID int64, m
 	}
 	return nil
 }
-

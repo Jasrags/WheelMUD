@@ -24,7 +24,9 @@ func NewSQLiteShopRepo(db DBTX) *SQLiteShopRepo {
 
 const shopSelectCols = `id, mob_template_id, buy_types_json, sell_markup, buy_markdown, open_hour, close_hour, restock_interval_s`
 
-func scanShop(scanner interface{ Scan(dest ...interface{}) error }) (Shop, error) {
+func scanShop(scanner interface {
+	Scan(dest ...interface{}) error
+}) (Shop, error) {
 	var (
 		s            Shop
 		buyTypesJSON string

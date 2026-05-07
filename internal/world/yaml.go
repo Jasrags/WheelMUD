@@ -98,11 +98,11 @@ type Room struct {
 
 // Exit is a YAML-side exit entry. Supports two authoring forms:
 //
-//   exits:
-//     north: gate.entry           # shorthand, target room id only
-//     south: { to: gate.bridge, closed: true, locked: true,
-//              key: iron.key, difficulty: 15,
-//              description: "A heavy oak door bound with iron." }
+//	exits:
+//	  north: gate.entry           # shorthand, target room id only
+//	  south: { to: gate.bridge, closed: true, locked: true,
+//	           key: iron.key, difficulty: 15,
+//	           description: "A heavy oak door bound with iron." }
 //
 // The shorthand decodes through UnmarshalYAML and produces an Exit
 // with all flags false. The object form fills any subset of fields.
@@ -232,9 +232,9 @@ type Shop struct {
 
 // ShopStock is one inventory line under a shop block.
 type ShopStock struct {
-	Item   string `yaml:"item"`            // item external_id
-	Qty    int    `yaml:"qty"`             // -1 = infinite
-	QtyMax int    `yaml:"qty_max"`         // -1 = no restock cap
+	Item   string `yaml:"item"`    // item external_id
+	Qty    int    `yaml:"qty"`     // -1 = infinite
+	QtyMax int    `yaml:"qty_max"` // -1 = no restock cap
 }
 
 // Banker is the optional `banker:` sub-block on a mob YAML entry.
@@ -400,4 +400,3 @@ func decodeMobs(src fs.FS, p string) ([]Mob, error) {
 	}
 	return out, nil
 }
-

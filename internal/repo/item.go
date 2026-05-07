@@ -124,16 +124,16 @@ type ItemStats interface{ itemStatsMarker() }
 // ThreatLow=0 means the default 20-only crit range; CritMult defaults
 // to 2 when zero.
 type WeaponStats struct {
-	Proficiency  string   `json:"proficiency"`   // simple | martial | exotic
-	Size         string   `json:"size"`          // tiny | small | medium | large
-	Range        string   `json:"range"`         // melee | ranged | thrown
-	Damage       string   `json:"damage"`        // "1d6", "1d6/1d6"
-	ThreatLow    int      `json:"threat_low"`    // e.g. 18 for 18-20 threat
-	CritMult     int      `json:"crit_mult"`     // 2/3/4
-	RangeIncFt   int      `json:"range_inc_ft"`  // 0 for pure melee
-	DamageType   []string `json:"damage_type"`   // any of B / P / S
-	Special      []string `json:"special"`       // reach, double, set, trip, finesse, ...
-	Subdual      bool     `json:"subdual"`       // §-tagged in the table
+	Proficiency string   `json:"proficiency"`  // simple | martial | exotic
+	Size        string   `json:"size"`         // tiny | small | medium | large
+	Range       string   `json:"range"`        // melee | ranged | thrown
+	Damage      string   `json:"damage"`       // "1d6", "1d6/1d6"
+	ThreatLow   int      `json:"threat_low"`   // e.g. 18 for 18-20 threat
+	CritMult    int      `json:"crit_mult"`    // 2/3/4
+	RangeIncFt  int      `json:"range_inc_ft"` // 0 for pure melee
+	DamageType  []string `json:"damage_type"`  // any of B / P / S
+	Special     []string `json:"special"`      // reach, double, set, trip, finesse, ...
+	Subdual     bool     `json:"subdual"`      // §-tagged in the table
 }
 
 func (WeaponStats) itemStatsMarker() {}
@@ -168,8 +168,8 @@ type ContainerStats struct {
 	CapacityLbs  float64 `json:"capacity_lbs"`
 	CapacityCuFt float64 `json:"capacity_cuft"`
 	LiquidPints  float64 `json:"liquid_pints"`
-	DepthCap     int     `json:"depth_cap"`     // 0 = use global default
-	WeightMult   float64 `json:"weight_mult"`   // 1.0 = no reduction; bag-of-holding ≈ 0.1
+	DepthCap     int     `json:"depth_cap"`   // 0 = use global default
+	WeightMult   float64 `json:"weight_mult"` // 1.0 = no reduction; bag-of-holding ≈ 0.1
 }
 
 func (ContainerStats) itemStatsMarker() {}

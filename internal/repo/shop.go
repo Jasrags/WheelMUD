@@ -10,9 +10,10 @@ import (
 // per-line restock timer doesn't have to rewrite the parent config.
 //
 // Pricing model:
-//   buy price  = round(item.value * SellMarkup)
-//   sell price = item.value          when FlagTradeGood is set (full)
-//              = round(item.value * BuyMarkdown)  otherwise (½ default)
+//
+//	buy price  = round(item.value * SellMarkup)
+//	sell price = item.value          when FlagTradeGood is set (full)
+//	           = round(item.value * BuyMarkdown)  otherwise (½ default)
 //
 // Hours: OpenHour == CloseHour means always open (24h). Otherwise the
 // shop is open when wall-hour ∈ [OpenHour, CloseHour) — wraps across

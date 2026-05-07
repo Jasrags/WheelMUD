@@ -50,9 +50,9 @@ type Topic struct {
 // startup and share across goroutines: every field is immutable after
 // Load returns.
 type Catalog struct {
-	sorted     []*Topic // sorted by ID; supports binary-search prefix scans
-	byID       map[string]*Topic
-	byKeyword  map[string]*Topic
+	sorted    []*Topic // sorted by ID; supports binary-search prefix scans
+	byID      map[string]*Topic
+	byKeyword map[string]*Topic
 }
 
 var (

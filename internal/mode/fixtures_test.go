@@ -16,7 +16,7 @@ import (
 type stubMode struct{ name string }
 
 func (m *stubMode) Handle(_ context.Context, _ *telnet.Session, _ string) error { return nil }
-func (m *stubMode) Prompt(_ context.Context, _ *telnet.Session) string                             { return m.name + "> " }
+func (m *stubMode) Prompt(_ context.Context, _ *telnet.Session) string          { return m.name + "> " }
 func (m *stubMode) OnEnter(_ *telnet.Session) error                             { return nil }
 func (m *stubMode) OnExit(_ *telnet.Session) error                              { return nil }
 

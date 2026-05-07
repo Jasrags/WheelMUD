@@ -21,7 +21,9 @@ func NewSQLiteBankerRepo(db DBTX) *SQLiteBankerRepo {
 
 const bankerSelectCols = `id, mob_template_id, open_hour, close_hour`
 
-func scanBanker(scanner interface{ Scan(dest ...interface{}) error }) (Banker, error) {
+func scanBanker(scanner interface {
+	Scan(dest ...interface{}) error
+}) (Banker, error) {
 	var b Banker
 	if err := scanner.Scan(&b.ID, &b.MobTemplateID, &b.OpenHour, &b.CloseHour); err != nil {
 		return Banker{}, err

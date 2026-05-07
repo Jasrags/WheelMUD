@@ -99,7 +99,7 @@ func (r *SQLiteChannelingRepo) GetByOwner(ctx context.Context, kind OwnerKind, o
 		kind, ownerID,
 	)
 	var (
-		c                                 creature.Channeling
+		c                                  creature.Channeling
 		talentsJSON, weavesJSON, slotsJSON string
 		embraced, stilled, ageless         int
 		embracedSince                      sql.NullTime

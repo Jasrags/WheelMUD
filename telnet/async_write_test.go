@@ -286,10 +286,10 @@ func TestListAndRedraw_CachePromptAtomically(t *testing.T) {
 // promptMode is a minimal Mode used for prompt-cache tests.
 type promptMode struct{ prompt string }
 
-func (m promptMode) OnEnter(_ *Session) error                                { return nil }
-func (m promptMode) OnExit(_ *Session) error                                 { return nil }
-func (m promptMode) Handle(_ context.Context, _ *Session, _ string) error    { return nil }
-func (m promptMode) Prompt(_ context.Context, _ *Session) string             { return m.prompt }
+func (m promptMode) OnEnter(_ *Session) error                             { return nil }
+func (m promptMode) OnExit(_ *Session) error                              { return nil }
+func (m promptMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
+func (m promptMode) Prompt(_ context.Context, _ *Session) string          { return m.prompt }
 
 func TestWritePrompt_CachesForReplay(t *testing.T) {
 	c := newAsyncBufConn()

@@ -47,17 +47,17 @@ const (
 // in-memory characters can serialize their selection through the
 // existing creature enums.
 var knownBackgroundEnum = map[string]creature.Background{
-	"aiel":          creature.BackgroundAiel,
-	"athaan_miere":  creature.BackgroundAthaanMiere,
-	"borderlander":  creature.BackgroundBorderlander,
-	"cairhienin":    creature.BackgroundCairhienin,
-	"domani":        creature.BackgroundDomani,
-	"ebou_dari":     creature.BackgroundEbouDari,
-	"illianer":      creature.BackgroundIllianer,
-	"midlander":     creature.BackgroundMidlander,
-	"taraboner":     creature.BackgroundTaraboner,
-	"tairen":        creature.BackgroundTairen,
-	"tar_valoner":   creature.BackgroundTarValoner,
+	"aiel":         creature.BackgroundAiel,
+	"athaan_miere": creature.BackgroundAthaanMiere,
+	"borderlander": creature.BackgroundBorderlander,
+	"cairhienin":   creature.BackgroundCairhienin,
+	"domani":       creature.BackgroundDomani,
+	"ebou_dari":    creature.BackgroundEbouDari,
+	"illianer":     creature.BackgroundIllianer,
+	"midlander":    creature.BackgroundMidlander,
+	"taraboner":    creature.BackgroundTaraboner,
+	"tairen":       creature.BackgroundTairen,
+	"tar_valoner":  creature.BackgroundTarValoner,
 }
 
 // knownClassEnum maps catalog id → creature.Class.

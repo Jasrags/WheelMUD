@@ -88,8 +88,8 @@ const coreColumns = `size, type, gender, alignment,
 // can marshal/unmarshal them with two helper calls instead of
 // nine paired error checks each.
 type templateJSON struct {
-	dr, resists                          string
-	natural, special, traits             string
+	dr, resists                            string
+	natural, special, traits               string
 	advancement, climate, terrain, scripts string
 }
 

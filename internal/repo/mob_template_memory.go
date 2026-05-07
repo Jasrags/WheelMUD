@@ -15,10 +15,10 @@ import (
 // but mutating slice/map fields will alias the stored row. Treat
 // returned values as read-only.
 type MemoryMobTemplateRepo struct {
-	mu        sync.Mutex
-	byID      map[int64]creature.MobTemplate
-	byExt     map[string]int64
-	maxID     int64
+	mu    sync.Mutex
+	byID  map[int64]creature.MobTemplate
+	byExt map[string]int64
+	maxID int64
 }
 
 func NewMemoryMobTemplateRepo() *MemoryMobTemplateRepo {

@@ -152,7 +152,7 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		created, err := r.Create(ctx, Room{
 			ExternalID: "fountain.plaza", Name: "Plaza",
 			ExtraDescs: map[string]string{
-				"Fountain": "A marble fountain spills clear water.",
+				"Fountain":  "A marble fountain spills clear water.",
 				"  Statue ": "A weathered hero salutes the sky.",
 			},
 		})
@@ -227,9 +227,9 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 		ctx := context.Background()
 		r := newRepo(t)
 		created, err := r.Create(ctx, Room{
-			ExternalID:   "anchor.room",
-			Name:         "Anchor",
-			CoordX:       5, CoordY: -2, CoordZ: 1,
+			ExternalID: "anchor.room",
+			Name:       "Anchor",
+			CoordX:     5, CoordY: -2, CoordZ: 1,
 			CoordsAnchor: true,
 		})
 		if err != nil {

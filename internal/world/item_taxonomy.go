@@ -15,14 +15,14 @@ import (
 // added later — for now we accept the canonical snake_case form
 // shown in CLAUDE.md / ROADMAP.md.
 var itemFlagByName = map[string]repo.ItemFlags{
-	"notake":          repo.FlagNoTake,
-	"nodrop":          repo.FlagNoDrop,
-	"nosell":          repo.FlagNoSell,
-	"bind_on_pickup":  repo.FlagBindOnPickup,
-	"magic":           repo.FlagMagic,
-	"glow":            repo.FlagGlow,
-	"hum":             repo.FlagHum,
-	"trade_good":      repo.FlagTradeGood,
+	"notake":         repo.FlagNoTake,
+	"nodrop":         repo.FlagNoDrop,
+	"nosell":         repo.FlagNoSell,
+	"bind_on_pickup": repo.FlagBindOnPickup,
+	"magic":          repo.FlagMagic,
+	"glow":           repo.FlagGlow,
+	"hum":            repo.FlagHum,
+	"trade_good":     repo.FlagTradeGood,
 }
 
 // decodeItemFlags packs the YAML flag-name list into the repo bitset.
@@ -89,4 +89,3 @@ func convertItemStats(it Item) (repo.ItemStats, error) {
 	}
 	return target, nil
 }
-

@@ -191,4 +191,3 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 	}
 	return t, nil
 }
-

@@ -296,11 +296,11 @@ const (
 // Affect is a timed buff/debuff on a creature. Source identifies the
 // caster/item so refresh/stack rules can dedupe by (Source, Name).
 type Affect struct {
-	Source       int64
-	Name         string
-	Modifiers    []StatMod
+	Source        int64
+	Name          string
+	Modifiers     []StatMod
 	DurationTicks int32
-	TickEffect   string // script ref; empty for pure stat mods
+	TickEffect    string // script ref; empty for pure stat mods
 }
 
 // StatMod is a single numeric tweak applied while an Affect is live.
@@ -377,17 +377,17 @@ const (
 // Equipment is the per-creature wear/wield state. Slot fields hold
 // the equipped item id (0 = empty); slice fields hold any number.
 type Equipment struct {
-	Armor         int64
-	Shield        int64
-	PrimaryWield  int64
-	OffHand       int64
-	Outfit        int64
-	Cloak         int64
-	Backpack      int64
-	HeldInHand    int64
-	Mount         int64
-	BeltPouches   []int64
-	WornMisc      []int64 // signet rings, Aiel buckler-strap, etc.
+	Armor        int64
+	Shield       int64
+	PrimaryWield int64
+	OffHand      int64
+	Outfit       int64
+	Cloak        int64
+	Backpack     int64
+	HeldInHand   int64
+	Mount        int64
+	BeltPouches  []int64
+	WornMisc     []int64 // signet rings, Aiel buckler-strap, etc.
 }
 
 // --- Channeling -----------------------------------------------------
@@ -396,8 +396,8 @@ type Equipment struct {
 type Source int8
 
 const (
-	SourceSaidin  Source = iota // male
-	SourceSaidar                // female
+	SourceSaidin Source = iota // male
+	SourceSaidar               // female
 )
 
 // ChannelerType drives which abilities key the casting thresholds.
@@ -433,9 +433,9 @@ type SlotPool struct {
 type OathFlag uint8
 
 const (
-	OathTruth     OathFlag = 1 << iota // speak no word that is not true
-	OathNoWeapon                       // make no weapon for one man to kill another
-	OathNoPower                        // use the Power as a weapon only against Shadowspawn etc.
+	OathTruth    OathFlag = 1 << iota // speak no word that is not true
+	OathNoWeapon                      // make no weapon for one man to kill another
+	OathNoPower                       // use the Power as a weapon only against Shadowspawn etc.
 )
 
 // Channeling is the optional sub-record. nil = not a channeler.
@@ -559,9 +559,9 @@ const DefaultWanderChance = 0.0
 // MobTemplate is the immutable archetype. Builders edit these; live
 // mobs are MobInstances spawned from them.
 type MobTemplate struct {
-	ID                  int64
-	ExternalID          string // YAML-stable id used by the world loader
-	Core                Core   // base stats; copied to instance on spawn
+	ID         int64
+	ExternalID string // YAML-stable id used by the world loader
+	Core       Core   // base stats; copied to instance on spawn
 
 	ChallengeCode ChallengeCode
 	Organization  string   // "solitary", "pack (3-6)", …

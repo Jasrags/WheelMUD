@@ -26,14 +26,14 @@ func TestApplyCurve(t *testing.T) {
 		want  int
 	}{
 		{"dawn_start", 0, 0},
-		{"dawn_quarter", 112, 24},     // 100 * 112/450 = 24
-		{"dawn_end", 449, 99},         // 100 * 449/450 = 99
+		{"dawn_quarter", 112, 24}, // 100 * 112/450 = 24
+		{"dawn_end", 449, 99},     // 100 * 449/450 = 99
 		{"day_start", 450, 100},
 		{"day_mid", 675, 100},
 		{"day_end", 899, 100},
-		{"dusk_start", 900, 100},      // 100 * (1350-900)/450 = 100
-		{"dusk_mid", 1125, 50},        // 100 * (1350-1125)/450 = 50
-		{"dusk_end", 1349, 0},         // 100 * (1350-1349)/450 = 0 (int trunc)
+		{"dusk_start", 900, 100}, // 100 * (1350-900)/450 = 100
+		{"dusk_mid", 1125, 50},   // 100 * (1350-1125)/450 = 50
+		{"dusk_end", 1349, 0},    // 100 * (1350-1349)/450 = 0 (int trunc)
 		{"night_start", 1350, 0},
 		{"night_mid", 1575, 0},
 		{"night_end", 1799, 0},
@@ -133,10 +133,10 @@ func TestEffectiveLight_UnderwaterIgnoresCycle(t *testing.T) {
 
 func TestEffectiveLight_OutdoorCycles(t *testing.T) {
 	cases := []struct {
-		name      string
-		ticks     int64
-		baseline  int
-		want      int
+		name     string
+		ticks    int64
+		baseline int
+		want     int
 	}{
 		{"noon_full", 675, 100, 100},
 		{"midnight_dark", 1500, 100, 0},

@@ -229,4 +229,3 @@ func RequestTerminalType(conn net.Conn) error {
 	}
 	return nil
 }
-

@@ -26,10 +26,10 @@ const (
 	SectorUnderground Sector = "underground"
 	// Wheel-of-Time terrain extensions (migration 0025). See
 	// docs/wot_geography_mud.md for builder guidance.
-	SectorBlight    Sector = "blight"    // corrupted lands; ambient horror, future DoT hook
-	SectorWaste     Sector = "waste"     // Aiel Waste; arid rocky steppe distinct from desert
-	SectorStedding  Sector = "stedding"  // Ogier sanctuary; channeling suppressed (mechanic TBD)
-	SectorSwamp     Sector = "swamp"     // Haddon Mirk, Drowned Lands, Paetrinh
+	SectorBlight   Sector = "blight"   // corrupted lands; ambient horror, future DoT hook
+	SectorWaste    Sector = "waste"    // Aiel Waste; arid rocky steppe distinct from desert
+	SectorStedding Sector = "stedding" // Ogier sanctuary; channeling suppressed (mechanic TBD)
+	SectorSwamp    Sector = "swamp"    // Haddon Mirk, Drowned Lands, Paetrinh
 )
 
 // RoomFlags groups the boolean tags that gate gameplay behavior in a
@@ -60,12 +60,12 @@ type Room struct {
 	// used by test fixtures that bypass the world loader. The loader
 	// stamps a real value on every room it inserts; §16 admin
 	// room-create will require it once that command lands.
-	ZoneID     int64
-	Name       string
-	ShortDesc  string
-	LongDesc   string
-	Flags      RoomFlags
-	Sector     Sector
+	ZoneID    int64
+	Name      string
+	ShortDesc string
+	LongDesc  string
+	Flags     RoomFlags
+	Sector    Sector
 	// LightLevel: 0 = pitch black; positive = lit. Combined with
 	// Flags.Dark in look to decide whether descriptions are visible.
 	// Default is 100 ("brightly lit") so existing zones keep rendering.

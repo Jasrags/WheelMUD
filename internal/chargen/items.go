@@ -158,4 +158,3 @@ func (c *Catalog) Items() []*ItemTemplate {
 	}
 	return out
 }
-

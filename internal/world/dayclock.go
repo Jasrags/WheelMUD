@@ -15,7 +15,7 @@ import (
 // quotient — 1800 at the defaults, evenly divided into four phases of
 // 450 ticks each. Override via WithDayDuration in tests.
 const (
-	defaultDayDuration = 30 * time.Minute
+	defaultDayDuration  = 30 * time.Minute
 	defaultTickInterval = 1 * time.Second
 )
 
