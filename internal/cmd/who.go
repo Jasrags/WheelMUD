@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/display"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -19,14 +22,14 @@ import (
 // Rendering goes through internal/display so the section header
 // matches the chargen review and score sheet — names are yellow|bold,
 // idle suffixes muted gray, the "(you)" / wizinvis "*" markers cyan.
-func NewWho(sessions *session.Registry) *telnet.Command {
+func NewWho(sessions *session.Registry, characters repo.CharacterRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "who",
 		Help: "List connected players",
 		Auth: telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
 			snap := sessions.Snapshot()
-			rows := collectWhoRows(c.Session, snap, time.Now().UTC())
+			rows := collectWhoRows(c.Ctx, c.Session, snap, time.Now().UTC(), characters)
 			sort.Slice(rows, func(i, j int) bool { return rows[i].sortKey < rows[j].sortKey })
 
 			if err := display.SectionHeader(c.Session,
@@ -49,6 +52,7 @@ type whoRow struct {
 	name    string
 	you     bool
 	hidden  bool
+	pvp     bool
 	idle    string // "" when below the idle threshold
 	sortKey string
 }
@@ -57,7 +61,7 @@ type whoRow struct {
 // snapshot and returns a slice ready to format. Pulled out of the
 // command body so the wizinvis + idle + marker logic is testable
 // without spinning up a registry + dispatcher.
-func collectWhoRows(viewer *telnet.Session, snap map[int64]*telnet.Session, now time.Time) []whoRow {
+func collectWhoRows(ctx context.Context, viewer *telnet.Session, snap map[int64]*telnet.Session, now time.Time, characters repo.CharacterRepo) []whoRow {
 	rows := make([]whoRow, 0, len(snap))
 	viewerIsAdmin := viewer != nil && viewer.AuthLevel >= telnet.AuthAdmin
 	for _, peer := range snap {
@@ -66,7 +70,7 @@ func collectWhoRows(viewer *telnet.Session, snap map[int64]*telnet.Session, now 
 		if peer != viewer && peer.IsHidden() && !viewerIsAdmin {
 			continue
 		}
-		_, name, _ := peer.InWorld()
+		charID, name, _ := peer.InWorld()
 		if name == "" {
 			// Pre-character session — login or character-select.
 			// "(connecting)" rather than remote address so who can't
@@ -85,6 +89,17 @@ func collectWhoRows(viewer *telnet.Session, snap map[int64]*telnet.Session, now 
 		if peer.IsHidden() && viewerIsAdmin {
 			r.hidden = true
 		}
+		// PvP tag: read from the same source `attack` consults so the
+		// flag is consistent. A lookup miss leaves the row tagless
+		// rather than failing the whole command.
+		if charID != 0 && characters != nil {
+			ch, err := characters.GetByID(ctx, charID)
+			if err != nil {
+				slog.Debug("who: pvp lookup failed", "char", charID, "error", err)
+			} else {
+				r.pvp = ch.PvP
+			}
+		}
 		rows = append(rows, r)
 	}
 	return rows
@@ -97,6 +112,9 @@ func formatWhoRow(r whoRow) string {
 	b.WriteString("  {{")
 	b.WriteString(display.Defang(r.name, "(unknown)"))
 	b.WriteString("}}::yellow|bold")
+	if r.pvp {
+		b.WriteString(" {{[PvP]}}::red")
+	}
 	if r.you {
 		b.WriteString(" {{(you)}}::cyan")
 	}

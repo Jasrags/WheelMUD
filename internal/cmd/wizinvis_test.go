@@ -34,7 +34,7 @@ func TestWho_HidesWizinvisFromNonAdmin(t *testing.T) {
 	sessions, alice, bob, aOut, bOut := commPair(t)
 	bob.AuthLevel = telnet.AuthAdmin
 	bob.SetHidden(true)
-	who := NewWho(sessions)
+	who := NewWho(sessions, whoTestChars(t))
 
 	// Alice (player) runs `who` — Bob is hidden and should not appear.
 	runCmd(t, who, alice, "who")
