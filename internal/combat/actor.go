@@ -16,6 +16,8 @@
 //     is acceptable for V1.
 package combat
 
+import "strconv"
+
 // ActorKind tags an ActorRef so a single int64 namespace can be
 // disambiguated across characters and mob instances. Future actors
 // (familiars, summoned servitors) slot in here without changing
@@ -44,35 +46,12 @@ type ActorRef struct {
 // player-facing wire — that path resolves the ref through the repo
 // and renders Name.
 func (r ActorRef) String() string {
+	id := strconv.FormatInt(r.ID, 10)
 	switch r.Kind {
 	case ActorKindCharacter:
-		return "char:" + itoa(r.ID)
+		return "char:" + id
 	case ActorKindMob:
-		return "mob:" + itoa(r.ID)
+		return "mob:" + id
 	}
-	return "unknown:" + itoa(r.ID)
-}
-
-// itoa is a tiny strconv.Itoa shim; pulled in here to keep ActorRef
-// import-free on the public API surface.
-func itoa(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
+	return "unknown:" + id
 }

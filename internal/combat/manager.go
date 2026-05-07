@@ -69,12 +69,17 @@ func (m *Manager) SetRNG(r *rand.Rand) {
 }
 
 // SetClock injects a deterministic time source. Tests use this; the
-// constructor wires time.Now by default.
+// constructor wires time.Now by default. Acquires m.mu so a
+// concurrent Start can't race the clock swap (the race window is
+// test-path-only — production never re-clocks a live Manager — but
+// the lock keeps -race quiet either way).
 func (m *Manager) SetClock(now func() time.Time) {
 	if now == nil {
 		return
 	}
+	m.mu.Lock()
 	m.now = now
+	m.mu.Unlock()
 }
 
 // Get returns the active Fight in roomID, or (nil, false) when no
@@ -197,15 +202,35 @@ func (m *Manager) Tick(ctx context.Context) {
 // tickRoom advances a single room's fight. Pulled out so the Tick
 // dispatch loop is one-line readable and so a future per-room
 // goroutine pool can drop in without restructuring the iteration.
+//
+// Lock discipline: read-snapshot the fight under RLock, run the
+// participant-presence check (which calls into mobs.ListInRoom —
+// potentially slow SQL) WITHOUT holding the manager lock, then
+// re-acquire to mutate. This keeps one slow room from blocking
+// every other Manager call and removes a deadlock hazard if a
+// future eventbus subscriber ever calls back into Get/Active.
 func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
-	m.mu.Lock()
+	m.mu.RLock()
 	f, ok := m.fights[roomID]
 	if !ok {
-		m.mu.Unlock()
+		m.mu.RUnlock()
 		return
 	}
+	// Snapshot the order so the presence check can run lock-free.
+	// RoomID is immutable on Fight; Order is only mutated inside the
+	// write lock so this read is safe.
+	roomIDCopy := f.RoomID
+	orderCopy := append([]ActorEntry(nil), f.Order...)
+	m.mu.RUnlock()
 
-	if !m.fightHasLiveParticipants(ctx, f) {
+	if !m.fightHasLiveParticipants(ctx, roomIDCopy, orderCopy) {
+		m.mu.Lock()
+		// Re-check under the write lock — another goroutine may have
+		// already ended the fight (e.g. an explicit End or Stop).
+		if _, still := m.fights[roomID]; !still {
+			m.mu.Unlock()
+			return
+		}
 		delete(m.fights, roomID)
 		m.mu.Unlock()
 		if m.bus != nil {
@@ -214,6 +239,13 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		return
 	}
 
+	m.mu.Lock()
+	f, ok = m.fights[roomID]
+	if !ok {
+		// Ended between the unlock and re-lock.
+		m.mu.Unlock()
+		return
+	}
 	f.Round++
 	if f.Round > 1 {
 		f.ActiveIdx = (f.ActiveIdx + 1) % len(f.Order)
@@ -285,56 +317,52 @@ func (m *Manager) resolveCore(ctx context.Context, ref ActorRef) (creature.Core,
 }
 
 // fightHasLiveParticipants reports whether at least one mob
-// participant is still in the fight's room. Character presence is
-// not checked here in slice 1 — the session registry is not wired
-// into the Manager yet (slice 2 follow-up). A fight with characters
-// only continues until explicitly ended; a fight with at least one
-// mob auto-ends when every mob is gone.
+// participant is still in roomID. Character presence is not checked
+// here in slice 1 — the session registry is not wired into the
+// Manager yet (slice 2 follow-up). A fight with characters only
+// continues until explicitly ended; a fight with at least one mob
+// auto-ends when every mob is gone.
+//
+// Called WITHOUT the Manager lock so the mobs.ListInRoom SQL call
+// can't stall every other Manager operation. Caller must pass a
+// snapshot of the order rather than the live Fight pointer.
 //
 // This is conservative on purpose: auto-ending too eagerly would
 // drop fights mid-round when verb plumbing isn't ready to
 // re-engage; auto-ending too rarely produces an idle Fight that
 // burns tick CPU but causes no in-world effect. The latter is the
 // safer failure mode for V1.
-func (m *Manager) fightHasLiveParticipants(ctx context.Context, f *Fight) bool {
-	mobsInRoom := -1 // lazy: only fetch if the fight has mob refs
-	hasCharRef := false
+func (m *Manager) fightHasLiveParticipants(ctx context.Context, roomID int64, order []ActorEntry) bool {
 	hasMobRef := false
-	for _, e := range f.Order {
-		switch e.Ref.Kind {
-		case ActorKindCharacter:
-			hasCharRef = true
-		case ActorKindMob:
+	for _, e := range order {
+		if e.Ref.Kind == ActorKindMob {
 			hasMobRef = true
-			if mobsInRoom == -1 {
-				list, err := m.mobs.ListInRoom(ctx, f.RoomID)
-				if err != nil {
-					slog.Warn("combat: mobs.ListInRoom failed",
-						"room", f.RoomID, "error", err)
-					return true // fail-safe — keep the fight running
-				}
-				mobsInRoom = 0
-				present := make(map[int64]struct{}, len(list))
-				for _, m := range list {
-					present[m.ID] = struct{}{}
-				}
-				for _, e2 := range f.Order {
-					if e2.Ref.Kind == ActorKindMob {
-						if _, ok := present[e2.Ref.ID]; ok {
-							mobsInRoom++
-						}
-					}
-				}
+			break
+		}
+	}
+	if !hasMobRef {
+		// Character-only fights stay live until explicit End. PvP
+		// presence checks land with §11 #21.
+		return true
+	}
+	list, err := m.mobs.ListInRoom(ctx, roomID)
+	if err != nil {
+		slog.Warn("combat: mobs.ListInRoom failed",
+			"room", roomID, "error", err)
+		return true // fail-safe — keep the fight running
+	}
+	present := make(map[int64]struct{}, len(list))
+	for _, mob := range list {
+		present[mob.ID] = struct{}{}
+	}
+	for _, e := range order {
+		if e.Ref.Kind == ActorKindMob {
+			if _, ok := present[e.Ref.ID]; ok {
+				return true
 			}
 		}
 	}
-	if hasMobRef && mobsInRoom == 0 {
-		return false
-	}
-	// Character-only fights stay live until explicit End. PvP
-	// presence checks land with §11 #21.
-	_ = hasCharRef
-	return true
+	return false
 }
 
 // Stop ends every active fight (publishing CombatEnded with

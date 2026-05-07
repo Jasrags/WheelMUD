@@ -377,8 +377,12 @@ func (srv *server) shutdown() {
 	}
 	// End every active fight so subscribers (eventbus, future
 	// HP-persist) see CombatEnded before the bus stops below.
+	// Bounded context matches the saves.FlushAll budget — a
+	// misbehaving subscriber must not be able to stall shutdown.
 	if srv.combat != nil {
-		srv.combat.Stop(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		srv.combat.Stop(ctx)
+		cancel()
 	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()
