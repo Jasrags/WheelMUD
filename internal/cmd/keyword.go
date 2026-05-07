@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -64,6 +66,66 @@ func MatchMob(target string, list []creature.MobInstance) (creature.MobInstance,
 		}
 	}
 	return creature.MobInstance{}, false
+}
+
+// MatchPlayer finds the nth peer session in self's room whose
+// CharacterName has a token-prefix match against keyword (case-
+// insensitive). n is 1-based; "2.jas" picks the second matching
+// "jas..." player. Returns (nil, false) on miss.
+//
+// Iteration order is stable: sessions are sorted by CharacterID
+// ascending before counting hits so map-iteration randomness can't
+// shuffle which peer answers to "2.jas". The actor's own session is
+// filtered out so `attack <self>` falls through to a no-match.
+// Hidden peers (wizinvis) are skipped for non-admin actors so they
+// can't be probed via ordinal scans either.
+//
+// Cross-goroutine field reads (peer.CurrentRoomID, peer.CharacterName)
+// are unsynchronized — same pattern as session.Registry.FindByCharacterName
+// and cmd/comm.go::onlineNameCandidates. CLAUDE.md treats these
+// snapshot reads as tolerated stale-but-coherent values; the verb-
+// layer guard re-fetches the canonical repo.Character before any
+// state change.
+func MatchPlayer(target string, sessions *session.Registry, self *telnet.Session) (*telnet.Session, bool) {
+	if sessions == nil || self == nil || self.CurrentRoomID == 0 {
+		return nil, false
+	}
+	target = strings.ToLower(strings.TrimSpace(target))
+	if target == "" {
+		return nil, false
+	}
+	n, kw := parseOrdinal(target)
+	snap := sessions.Snapshot()
+	peers := make([]*telnet.Session, 0, len(snap))
+	for _, peer := range snap {
+		if peer == self {
+			continue
+		}
+		if peer.CurrentRoomID != self.CurrentRoomID {
+			continue
+		}
+		if peer.IsHidden() && self.AuthLevel < telnet.AuthAdmin {
+			continue
+		}
+		if peer.CharacterName == "" {
+			continue
+		}
+		peers = append(peers, peer)
+	}
+	sort.SliceStable(peers, func(i, j int) bool {
+		return peers[i].CharacterID < peers[j].CharacterID
+	})
+	hit := 0
+	for _, peer := range peers {
+		if !nameMatches(peer.CharacterName, kw) {
+			continue
+		}
+		hit++
+		if hit == n {
+			return peer, true
+		}
+	}
+	return nil, false
 }
 
 // completerSlot turns the rest-after-verb buffer into the 0-based arg

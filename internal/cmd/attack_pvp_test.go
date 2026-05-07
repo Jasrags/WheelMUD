@@ -9,6 +9,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -206,6 +207,265 @@ func TestAttackPvP_RoomLookupFailureFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(a, "sanctified") {
 		t.Fatalf("expected fail-closed sanctified refusal: %q", a)
+	}
+}
+
+// TestAttackPvP_OrdinalDisambiguates verifies a player can pick the
+// second matching peer via `attack 2.<keyword>` when two peers in the
+// same room share a name prefix. Slice-2 of #21.
+func TestAttackPvP_OrdinalDisambiguates(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Test Room"})
+	mobs := repo.NewMemoryMobInstanceRepo()
+	chars := repo.NewMemoryCharacterRepo()
+	for _, name := range []string{"Alice", "Jason", "Jasmine"} {
+		ch := repo.Character{
+			Name:          name,
+			CurrentRoomID: 1,
+			ClassLevels:   map[creature.Class]int8{creature.ClassArmsman: 10},
+			PvP:           true,
+			Core:          creature.Core{HPCurrent: 30, HPMax: 30, Defense: 12, BAB: 1},
+		}
+		if _, err := chars.Create(context.Background(), ch); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	mgr := combat.New(eventbus.New(), chars, mobs, repo.NewMemoryMobTemplateRepo(), repo.NewMemoryItemRepo())
+
+	sessions, alice, _, aOutBuf, _ := commPair(t)
+
+	// Memory repo auto-increments IDs in seed order: Alice=1,
+	// Jason=2, Jasmine=3. Sessions reuse those IDs so the
+	// PvP-guard repo lookup resolves the correct row.
+	jasonSess, _ := bufSession(t)
+	jasonSess.AccountID = 200
+	jasonSess.AuthLevel = telnet.AuthPlayer
+	jasonSess.CharacterID = 2
+	jasonSess.CharacterName = "Jason"
+	jasonSess.CurrentRoomID = 1
+	sessions.Bind(jasonSess.AccountID, jasonSess)
+
+	jasmineSess, _ := bufSession(t)
+	jasmineSess.AccountID = 201
+	jasmineSess.AuthLevel = telnet.AuthPlayer
+	jasmineSess.CharacterID = 3
+	jasmineSess.CharacterName = "Jasmine"
+	jasmineSess.CurrentRoomID = 1
+	sessions.Bind(jasmineSess.AccountID, jasmineSess)
+
+	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+
+	// Bare "jas" — first hit by CharacterID ascending is Jason (id 2).
+	runCmd(t, c, alice, "jas")
+	if got := aOutBuf.String(); !strings.Contains(got, "ready an attack against Jason") {
+		t.Fatalf("expected Jason as first hit; got %q", got)
+	}
+
+	// "2.jas" — second hit is Jasmine (id 3).
+	aOutBuf.Reset()
+	runCmd(t, c, alice, "2.jas")
+	if got := aOutBuf.String(); !strings.Contains(got, "ready an attack against Jasmine") {
+		t.Fatalf("expected Jasmine on 2.jas; got %q", got)
+	}
+
+	// "3.jas" — no third match.
+	aOutBuf.Reset()
+	runCmd(t, c, alice, "3.jas")
+	if got := aOutBuf.String(); !strings.Contains(got, "don't see them here") {
+		t.Fatalf("expected miss on 3.jas; got %q", got)
+	}
+}
+
+// TestAttackPvP_OrdinalSkipsSelf — the actor's own session must be
+// filtered out of the ordinal count, so when a character named Jason
+// types "attack jason" they hit the *peer* Jason, not themselves.
+func TestAttackPvP_OrdinalSkipsSelf(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Test Room"})
+	mobs := repo.NewMemoryMobInstanceRepo()
+	chars := repo.NewMemoryCharacterRepo()
+	// Actor is "Alice" (commPair default) but we want to verify
+	// self-filter; rename via session name + seed peer "Alice" too.
+	for _, name := range []string{"Alice", "Bob", "Jason"} {
+		ch := repo.Character{
+			Name:          name,
+			CurrentRoomID: 1,
+			ClassLevels:   map[creature.Class]int8{creature.ClassArmsman: 10},
+			PvP:           true,
+			Core:          creature.Core{HPCurrent: 30, HPMax: 30, Defense: 12, BAB: 1},
+		}
+		if _, err := chars.Create(context.Background(), ch); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	mgr := combat.New(eventbus.New(), chars, mobs, repo.NewMemoryMobTemplateRepo(), repo.NewMemoryItemRepo())
+
+	// commPair gives us Alice (CharacterID=1) as the actor.
+	sessions, alice, _, aOutBuf, _ := commPair(t)
+	// Override alice's name to "Jason" so attack jason would match self
+	// without the self-filter.
+	alice.CharacterName = "Jason"
+
+	// Seed order Alice=1, Bob=2, Jason=3 — peer session reuses id 3.
+	peerSess, _ := bufSession(t)
+	peerSess.AccountID = 300
+	peerSess.AuthLevel = telnet.AuthPlayer
+	peerSess.CharacterID = 3
+	peerSess.CharacterName = "Jason"
+	peerSess.CurrentRoomID = 1
+	sessions.Bind(peerSess.AccountID, peerSess)
+
+	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+
+	// alice (the actor) is named Jason but should be skipped; the
+	// peer Jason resolves instead. The seeded character used by the
+	// PvP guard is looked up by the actor's CharacterName ("Jason"),
+	// which is also valid since we seeded one.
+	runCmd(t, c, alice, "jason")
+	if got := aOutBuf.String(); !strings.Contains(got, "ready an attack against Jason") {
+		t.Fatalf("expected peer Jason resolved; got %q", got)
+	}
+
+	// "2.jason" — only one non-self match exists, so this misses.
+	aOutBuf.Reset()
+	runCmd(t, c, alice, "2.jason")
+	if got := aOutBuf.String(); !strings.Contains(got, "don't see them here") {
+		t.Fatalf("expected miss on 2.jason; got %q", got)
+	}
+}
+
+// TestAttackPvP_OrdinalRespectsRoomFilter — peers in another room must
+// not occupy ordinal slots, otherwise `2.jas` would shift whenever a
+// peer walks out.
+func TestAttackPvP_OrdinalRespectsRoomFilter(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Test Room"})
+	rooms.Insert(repo.Room{ID: 2, Name: "Other Room"})
+	mobs := repo.NewMemoryMobInstanceRepo()
+	chars := repo.NewMemoryCharacterRepo()
+	for _, name := range []string{"Alice", "Jason", "Jasmine"} {
+		ch := repo.Character{
+			Name:          name,
+			CurrentRoomID: 1,
+			ClassLevels:   map[creature.Class]int8{creature.ClassArmsman: 10},
+			PvP:           true,
+			Core:          creature.Core{HPCurrent: 30, HPMax: 30, Defense: 12, BAB: 1},
+		}
+		if _, err := chars.Create(context.Background(), ch); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	mgr := combat.New(eventbus.New(), chars, mobs, repo.NewMemoryMobTemplateRepo(), repo.NewMemoryItemRepo())
+
+	sessions, alice, _, aOutBuf, _ := commPair(t)
+
+	// Seed order Alice=1, Jason=2, Jasmine=3.
+	jasonSess, _ := bufSession(t)
+	jasonSess.AccountID = 200
+	jasonSess.AuthLevel = telnet.AuthPlayer
+	jasonSess.CharacterID = 2
+	jasonSess.CharacterName = "Jason"
+	jasonSess.CurrentRoomID = 1
+	sessions.Bind(jasonSess.AccountID, jasonSess)
+
+	// Jasmine in room 2 — out of scope.
+	jasmineSess, _ := bufSession(t)
+	jasmineSess.AccountID = 201
+	jasmineSess.AuthLevel = telnet.AuthPlayer
+	jasmineSess.CharacterID = 3
+	jasmineSess.CharacterName = "Jasmine"
+	jasmineSess.CurrentRoomID = 2
+	sessions.Bind(jasmineSess.AccountID, jasmineSess)
+
+	c := NewAttack(mgr, rooms, mobs, chars, sessions)
+
+	// Only Jason is in the room — "2.jas" must miss, not pick Jasmine.
+	runCmd(t, c, alice, "2.jas")
+	if got := aOutBuf.String(); !strings.Contains(got, "don't see them here") {
+		t.Fatalf("expected miss on 2.jas (other peer in different room); got %q", got)
+	}
+}
+
+// TestMatchPlayer_SkipsHiddenForNonAdmin verifies the wizinvis gate
+// is preserved in MatchPlayer: a hidden peer is invisible to a
+// non-admin actor's ordinal scan but visible to an AuthAdmin actor.
+func TestMatchPlayer_SkipsHiddenForNonAdmin(t *testing.T) {
+	sessions := session.NewRegistry()
+
+	hidden, _ := bufSession(t)
+	hidden.AccountID = 200
+	hidden.AuthLevel = telnet.AuthAdmin
+	hidden.CharacterID = 10
+	hidden.CharacterName = "Jasper"
+	hidden.CurrentRoomID = 1
+	hidden.SetHidden(true)
+	sessions.Bind(hidden.AccountID, hidden)
+
+	// Non-admin observer — must miss.
+	player, _ := bufSession(t)
+	player.AccountID = 1
+	player.AuthLevel = telnet.AuthPlayer
+	player.CharacterID = 1
+	player.CharacterName = "Alice"
+	player.CurrentRoomID = 1
+	sessions.Bind(player.AccountID, player)
+
+	if got, ok := MatchPlayer("jas", sessions, player); ok || got != nil {
+		t.Fatalf("non-admin must not see wizinvis peer; got=%v ok=%v", got, ok)
+	}
+
+	// Admin observer — must hit.
+	admin, _ := bufSession(t)
+	admin.AccountID = 2
+	admin.AuthLevel = telnet.AuthAdmin
+	admin.CharacterID = 2
+	admin.CharacterName = "Imrahil"
+	admin.CurrentRoomID = 1
+	sessions.Bind(admin.AccountID, admin)
+
+	got, ok := MatchPlayer("jas", sessions, admin)
+	if !ok || got != hidden {
+		t.Fatalf("admin must see wizinvis peer; got=%v ok=%v", got, ok)
+	}
+}
+
+// TestMatchPlayer_DeterministicOrder pounds on the matcher with a
+// registry whose IDs are bound out of insertion order, asserting that
+// `2.jas` always returns the same peer despite map-iteration randomness.
+func TestMatchPlayer_DeterministicOrder(t *testing.T) {
+	sessions := session.NewRegistry()
+	self, _ := bufSession(t)
+	self.AccountID = 1
+	self.CharacterID = 1
+	self.CharacterName = "Alice"
+	self.CurrentRoomID = 1
+	sessions.Bind(self.AccountID, self)
+
+	// Bind Jasmine first (id 20) and Jason second (id 10) — so
+	// insertion order disagrees with id order.
+	jasmine, _ := bufSession(t)
+	jasmine.AccountID = 201
+	jasmine.CharacterID = 20
+	jasmine.CharacterName = "Jasmine"
+	jasmine.CurrentRoomID = 1
+	sessions.Bind(jasmine.AccountID, jasmine)
+
+	jason, _ := bufSession(t)
+	jason.AccountID = 200
+	jason.CharacterID = 10
+	jason.CharacterName = "Jason"
+	jason.CurrentRoomID = 1
+	sessions.Bind(jason.AccountID, jason)
+
+	for i := 0; i < 1000; i++ {
+		got, ok := MatchPlayer("2.jas", sessions, self)
+		if !ok || got != jasmine {
+			t.Fatalf("iter %d: MatchPlayer 2.jas = %v ok=%v, want Jasmine", i, got, ok)
+		}
+		got, ok = MatchPlayer("jas", sessions, self)
+		if !ok || got != jason {
+			t.Fatalf("iter %d: MatchPlayer jas = %v ok=%v, want Jason (lowest id)", i, got, ok)
+		}
 	}
 }
 

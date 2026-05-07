@@ -78,7 +78,7 @@ func NewAttack(
 				defender = ActorRefForMob(mob.ID)
 				targetName = mob.Core.Name
 			} else {
-				peer := matchPlayerInRoom(target, s, sessions)
+				peer, _ := MatchPlayer(target, sessions, s)
 				if peer == nil {
 					return s.WriteString("{{You don't see them here.}}::yellow\r\n")
 				}
@@ -145,49 +145,6 @@ func ActorRefForCharacter(id int64) combat.ActorRef {
 // ActorRefForMob wraps a mob instance id as a combat ActorRef.
 func ActorRefForMob(id int64) combat.ActorRef {
 	return combat.ActorRef{Kind: combat.ActorKindMob, ID: id}
-}
-
-// matchPlayerInRoom returns the first peer session whose CharacterName
-// has a token-prefix match against target (case-insensitive) and who
-// shares the actor's CurrentRoomID. Returns nil on miss. Hidden peers
-// (wizinvis) are skipped so a non-admin actor can't probe them; the
-// actor's own session is filtered out so `attack <self>` falls
-// through to "don't see them here".
-//
-// Cross-goroutine field reads (peer.CurrentRoomID, peer.CharacterName)
-// are unsynchronized — same pattern as session.Registry.FindByCharacterName
-// and cmd/comm.go::onlineNameCandidates. CLAUDE.md treats these
-// snapshot reads as tolerated stale-but-coherent values; the verb-
-// layer guard (pvpRefusalReason) re-fetches the canonical
-// repo.Character before any state change, so a racing room move
-// only widens the matching window by one tick.
-func matchPlayerInRoom(target string, self *telnet.Session, sessions *session.Registry) *telnet.Session {
-	if sessions == nil || self == nil || self.CurrentRoomID == 0 {
-		return nil
-	}
-	lower := strings.ToLower(strings.TrimSpace(target))
-	if lower == "" {
-		return nil
-	}
-	for _, peer := range sessions.Snapshot() {
-		if peer == self {
-			continue
-		}
-		if peer.CurrentRoomID != self.CurrentRoomID {
-			continue
-		}
-		if peer.IsHidden() && self.AuthLevel < telnet.AuthAdmin {
-			continue
-		}
-		name := strings.ToLower(peer.CharacterName)
-		if name == "" {
-			continue
-		}
-		if strings.HasPrefix(name, lower) {
-			return peer
-		}
-	}
-	return nil
 }
 
 // pvpRefusalReason runs the PvP guard for an attacker→target pair.

@@ -362,13 +362,19 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `Fight.HighestThreat(defender)` returns the largest contributor
     with deterministic tie break. Deferred: NPC retarget (needs mob
     AI), healing-adds-threat, taunt verb, `feign death`.
-21. **PvE / PvP zones + safe zones** (§11). Reuse existing
-    `room.flags.peaceful`; add `pvp` flag on character.
-    **Slice 1 landed 2026-05-07** — migration 0037 +
-    `characters.pvp` + `pvp` verb + `attack <player>` guard
-    (nopvp room, newbie cap 10, both-side opt-in). `who` PvP tag
-    landed 2026-05-07; defender-side reverse broadcast landed
-    2026-05-07. Pending: player keyword ordinals.
+21. ~~**PvE / PvP zones + safe zones** (§11). Reuse existing
+    `room.flags.peaceful`; add `pvp` flag on character.~~ **LANDED
+    2026-05-07.** Slice 1 — migration 0037 + `characters.pvp` +
+    `pvp` verb + `attack <player>` guard (nopvp room, newbie cap
+    10, both-side opt-in). Slice 2 — `who` PvP tag. Slice 3 —
+    defender-side reverse broadcast. Slice 4 — player keyword
+    ordinals: `MatchPlayer(target, sessions, self)` in
+    `internal/cmd/keyword.go` mirrors `MatchItem`/`MatchMob`,
+    sorts in-room peers by CharacterID ascending for stable
+    ordinals under map-iteration randomness, and reuses
+    `parseOrdinal`/`nameMatches`. `attack 2.jas` now picks the
+    second matching peer. Deferred follow-ups: tab-completion for
+    `attack` player targets, `consider <player>`.
 22. **Group / party** (§11). `group` invites, `follow`, shared XP
     split, peaceful-on-group-leader.
 
