@@ -224,6 +224,22 @@ func main() {
 	combatMgr := combat.New(bus, characters, mobs, mobTemplates, items)
 	buckets.Combat.Subscribe(combatMgr.Tick)
 
+	// Phase D #19 slice 2: corpse decay. Sweeper deletes corpse rows
+	// 5 min after they spawn (constant lives in internal/combat) and
+	// emits a "crumble" line via WriteAsync to room peers.
+	corpseDecay := combat.NewDecayer(items, func(roomID int64, msg string) {
+		for _, peer := range sessions.Snapshot() {
+			if peer == nil || peer.CurrentRoomID != roomID {
+				continue
+			}
+			if err := peer.WriteAsync(msg); err != nil {
+				slog.Debug("decay: write peer failed", "error", err)
+			}
+		}
+	}, bus)
+	combatMgr.SetDecayer(corpseDecay)
+	buckets.Decay.Subscribe(corpseDecay.Tick)
+
 	// srv is constructed before buildRegistry so the shutdown / reboot
 	// admin commands can wire to srv as a ShutdownController. newInitial
 	// is filled in below once gameMode (which depends on the registry)

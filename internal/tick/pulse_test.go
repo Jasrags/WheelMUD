@@ -102,6 +102,9 @@ func TestNewBucketsDefaults(t *testing.T) {
 	if bs.AreaReset.Interval() != DefaultAreaResetInterval {
 		t.Errorf("areaReset interval = %v, want %v", bs.AreaReset.Interval(), DefaultAreaResetInterval)
 	}
+	if bs.Decay.Interval() != DefaultDecayInterval {
+		t.Errorf("decay interval = %v, want %v", bs.Decay.Interval(), DefaultDecayInterval)
+	}
 }
 
 func TestNilSubscribeIsNoop(t *testing.T) {

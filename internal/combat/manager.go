@@ -41,6 +41,7 @@ type Manager struct {
 	mobs      repo.MobInstanceRepo
 	templates repo.MobTemplateRepo // optional; nil disables XP rewards
 	items     repo.ItemRepo        // optional; nil disables weapon-stat lookup + corpse spawn
+	decayer   *Decayer             // optional; nil leaves corpses lingering until admin purge
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -65,6 +66,16 @@ func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo,
 		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		now:       time.Now,
 	}
+}
+
+// SetDecayer wires the corpse decay queue. Optional — when unset the
+// death pipeline still spawns corpses but they linger forever (the
+// pre-slice-2 behavior). cmd/server/main.go calls this after
+// constructing the Decayer alongside the rest of the game-loop deps.
+func (m *Manager) SetDecayer(d *Decayer) {
+	m.mu.Lock()
+	m.decayer = d
+	m.mu.Unlock()
 }
 
 // SetRNG injects a deterministic random source. Tests use this to
@@ -654,8 +665,19 @@ func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int
 			"mob", mob.ID, "room", mob.Core.CurrentRoomID, "error", err)
 		return 0
 	}
+	if m.decayer != nil {
+		m.decayer.Schedule(created.ID, created.RoomID, m.now().Add(corpseDecayDuration))
+	}
 	return created.ID
 }
+
+// corpseDecayDuration is the V1 lifetime of an empty corpse container
+// before the Decayer sweeps it. Five minutes mirrors classic Diku-
+// family servers and gives a player time to loot once looting verbs
+// land. Held as a constant so the decay timing is grep-stable; future
+// per-template / per-zone overrides can layer on without touching
+// callers.
+const corpseDecayDuration = 5 * time.Minute
 
 // corpseExternalID builds a unique ExternalID for the corpse so the
 // items.external_id UNIQUE constraint can't bite a back-to-back kill

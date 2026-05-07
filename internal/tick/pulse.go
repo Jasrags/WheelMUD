@@ -110,6 +110,12 @@ type Buckets struct {
 	// world.PhaseAmbientWatcher emit one ambient line per transition.
 	// Subscribers must be cheap; this fires once per second.
 	Phase *Bucket
+	// Decay drives the corpse-decay sweeper (Phase D #19 slice 2) and
+	// any future "delete me after N seconds" pipeline (timed lights,
+	// expiring buffs persisted as items, etc.). Cadence is bounded
+	// from below by the bucket interval, not the entry's per-item
+	// duration, so 30 s is a fine default — corpses live minutes.
+	Decay *Bucket
 }
 
 // Default cadences for the game-loop pulse buckets. These can be
@@ -122,6 +128,7 @@ const (
 	DefaultWanderInterval    = 20 * time.Second
 	DefaultSaveInterval      = 30 * time.Second
 	DefaultPhaseInterval     = 1 * time.Second
+	DefaultDecayInterval     = 30 * time.Second
 )
 
 // NewBuckets registers the default game-loop buckets on s.
@@ -133,6 +140,7 @@ func NewBuckets(s *Scheduler) *Buckets {
 		Wander:    NewBucket(s, "wander", DefaultWanderInterval),
 		Save:      NewBucket(s, "save", DefaultSaveInterval),
 		Phase:     NewBucket(s, "phase", DefaultPhaseInterval),
+		Decay:     NewBucket(s, "decay", DefaultDecayInterval),
 	}
 }
 
@@ -158,5 +166,8 @@ func (bs *Buckets) Stop() {
 	}
 	if bs.Phase != nil {
 		bs.Phase.Stop()
+	}
+	if bs.Decay != nil {
+		bs.Decay.Stop()
 	}
 }

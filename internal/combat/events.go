@@ -105,3 +105,15 @@ type CombatXPAwarded struct {
 	Amount  int64
 	Killed  ActorRef
 }
+
+// CorpseDecayed fires once when the Decayer sweeps a corpse out of
+// the world. RoomID is where the corpse was at decay time (and where
+// the crumble line was broadcast); ItemID is the deleted corpse row.
+// Subscribers can use this to gate "you missed the loot" hints when
+// looting verbs land. Published whether or not the items.Delete
+// succeeded — the in-memory queue entry is consumed regardless so a
+// failing repo doesn't leak the schedule slot.
+type CorpseDecayed struct {
+	RoomID int64
+	ItemID int64
+}
