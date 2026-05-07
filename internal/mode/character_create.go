@@ -941,13 +941,16 @@ func (m *CharacterCreate) writeAbilitiesMenu(s *telnet.Session) error {
 	return s.WriteString(b.String())
 }
 
-// abilityModifier mirrors creature.AbilityModifier (floor((s-10)/2))
-// without taking a runtime dep on creature internals — keeps the
-// chargen step pure-arithmetic.
+// abilityModifier returns the d20 ability modifier floor((s-10)/2).
+// Go integer division truncates toward zero, so we adjust for odd
+// scores below 10 (e.g. 9 → -1, not 0) so racial/background-modified
+// scores outside the point-buy 8..18 baseline still render correctly.
 func abilityModifier(score int) int {
-	// Go integer division truncates toward zero, but for scores in the
-	// point-buy range (8..18) the result matches floor.
-	return (score - 10) / 2
+	diff := score - 10
+	if diff < 0 && diff%2 != 0 {
+		return (diff - 1) / 2
+	}
+	return diff / 2
 }
 
 // applyAbilities parses the abilities-substep input. Slice 3 makes
@@ -1085,6 +1088,40 @@ func (m *CharacterCreate) buildAbilities() creature.Abilities {
 		Wis: score(4),
 		Cha: score(5),
 	}
+}
+
+// deriveLevel1Vitals computes HP/Defense/Saves for a freshly-created
+// level-1 character. HP takes the class hit die at max (d20 level-1
+// convention) plus Con mod, floored at 1. Defense is 10 + Dex mod;
+// armor and class defense bonuses land with the equipment slice.
+// Saves use d20 base progression (high=+2, low=+0) plus the ability
+// mod (Fort=Con, Ref=Dex, Will=Wis).
+func deriveLevel1Vitals(cl *chargen.Class, ab creature.Abilities) (hp int32, defense int16, saves creature.Saves) {
+	conMod := abilityModifier(int(ab.Con.Current))
+	dexMod := abilityModifier(int(ab.Dex.Current))
+	wisMod := abilityModifier(int(ab.Wis.Current))
+
+	hpVal := cl.HitDie + conMod
+	if hpVal < 1 {
+		hpVal = 1
+	}
+	hp = int32(hpVal)
+	defense = int16(10 + dexMod)
+	saves = creature.Saves{
+		Fort: int16(baseSaveBonus(cl.SaveFort) + conMod),
+		Ref:  int16(baseSaveBonus(cl.SaveRef) + dexMod),
+		Will: int16(baseSaveBonus(cl.SaveWill) + wisMod),
+	}
+	return hp, defense, saves
+}
+
+// baseSaveBonus is the level-1 base for a high (+2) or low (+0) save
+// progression. Anything else (catalog drift) falls back to 0.
+func baseSaveBonus(p chargen.SaveProgression) int {
+	if p == chargen.SaveHigh {
+		return 2
+	}
+	return 0
 }
 
 // abilityIndex maps a 3-letter ability token (case-insensitive) to
@@ -1330,6 +1367,11 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 	core.Abilities = m.buildAbilities()
 	core.Gender = m.draft.Gender
 	core.Alignment = m.draft.Alignment
+	hp, defense, saves := deriveLevel1Vitals(cl, core.Abilities)
+	core.HPMax = hp
+	core.HPCurrent = hp
+	core.Defense = defense
+	core.Saves = saves
 
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID:      s.AccountID,
