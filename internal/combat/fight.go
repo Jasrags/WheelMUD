@@ -61,6 +61,41 @@ type Fight struct {
 	// they are flat-footed (lose Dex bonus to Defense). Set when a
 	// successful parry deflects their attack.
 	FlatFootedUntil map[ActorRef]int
+
+	// Threat[defender][attacker] = cumulative threat that attacker
+	// has generated against defender over the lifetime of the fight.
+	// Damage adds 1:1 (post-DR/post-resist, same value DamageTally
+	// uses). Lazily initialized in resolveAction. Future NPC AI
+	// reads HighestThreat(defender) to pick a retarget candidate;
+	// healing / taunts / feign-death extend this in later slices.
+	Threat map[ActorRef]map[ActorRef]int32
+}
+
+// HighestThreat returns the attacker with the largest threat score
+// against defender, breaking ties by ActorRef.ID ascending so the
+// result is deterministic. Returns the zero ActorRef when defender
+// has no recorded threat. Caller is responsible for synchronization
+// (Manager holds m.mu around mutations; tests read directly).
+func (f *Fight) HighestThreat(defender ActorRef) ActorRef {
+	row, ok := f.Threat[defender]
+	if !ok || len(row) == 0 {
+		return ActorRef{}
+	}
+	var (
+		best      ActorRef
+		bestScore int32 = -1
+	)
+	for ref, score := range row {
+		if score > bestScore {
+			best = ref
+			bestScore = score
+			continue
+		}
+		if score == bestScore && ref.ID < best.ID {
+			best = ref
+		}
+	}
+	return best
 }
 
 // pruneDead removes every entry in Dead or Fled from Order and clears
@@ -90,6 +125,14 @@ func (f *Fight) pruneDead() bool {
 			}
 			delete(f.ParryingUntil, e.Ref)
 			delete(f.FlatFootedUntil, e.Ref)
+			// Threat: drop the defender row, then walk every other
+			// row to drop the attacker column. Keeps the map bounded
+			// as a fight grinds on and prevents stale refs from
+			// influencing HighestThreat after a kill.
+			delete(f.Threat, e.Ref)
+			for _, inner := range f.Threat {
+				delete(inner, e.Ref)
+			}
 			continue
 		}
 		out = append(out, e)

@@ -354,8 +354,14 @@ investment / new-weave learning intentionally **stay in old Phase D**
     bound-room respawn + XP-debt penalty, mob respawn via §9 zone
     reset, looting verbs (`get from corpse` already works through
     existing container plumbing — no new verb needed).
-20. **Aggro / threat tables** (§11). Per-`Fight`
-    `threat[CreatureID]int`.
+20. **Aggro / threat tables** (§11). Slice 1 LANDED 2026-05-07:
+    `Fight.Threat map[ActorRef]map[ActorRef]int32` (defender →
+    attacker → cumulative). Damage adds 1:1 from the same site that
+    bumps `DamageTally`. `pruneDead` clears both the dead actor's
+    defender row and their attacker column in every other row.
+    `Fight.HighestThreat(defender)` returns the largest contributor
+    with deterministic tie break. Deferred: NPC retarget (needs mob
+    AI), healing-adds-threat, taunt verb, `feign death`.
 21. **PvE / PvP zones + safe zones** (§11). Reuse existing
     `room.flags.peaceful`; add `pvp` flag on character.
 22. **Group / party** (§11). `group` invites, `follow`, shared XP

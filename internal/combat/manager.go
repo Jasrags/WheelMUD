@@ -455,6 +455,20 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			f.DamageTally = make(map[ActorRef]int32)
 		}
 		f.DamageTally[actor] += dealt
+		if dealt > 0 {
+			// #20: per-defender threat row indexed by attacker.
+			// Damage adds 1:1; healing/taunt/feign-death extend this
+			// in later slices.
+			if f.Threat == nil {
+				f.Threat = make(map[ActorRef]map[ActorRef]int32)
+			}
+			row := f.Threat[action.Target]
+			if row == nil {
+				row = make(map[ActorRef]int32)
+				f.Threat[action.Target] = row
+			}
+			row[actor] += dealt
+		}
 	}
 	m.mu.Unlock()
 

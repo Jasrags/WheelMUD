@@ -902,11 +902,18 @@ will need on top of those tables.
       weapons, `flee`, combat prompt repaint, single
       `combat.Roll` seam for deterministic tests beyond the
       stub-seed pattern used today.
-- [ ] Aggro / threat tables — `Fight.Threat map[CreatureID]int`,
-      damage adds threat 1:1, healing adds threat to the healer
-      from every hostile in the room scaled by 0.5. NPCs retarget
-      to highest-threat each round. Taunts add a flat bonus;
-      `feign death` zeroes threat from one source.
+- [~] Aggro / threat tables — slice 1 landed 2026-05-07.
+      `Fight.Threat map[ActorRef]map[ActorRef]int32`
+      (defender → attacker → cumulative). Damage adds threat 1:1
+      from the same hit site that bumps `DamageTally` (post-DR /
+      post-resist). `pruneDead` drops the dead actor's defender row
+      AND walks every other row to drop their attacker column.
+      `Fight.HighestThreat(defender)` returns the largest contributor
+      with deterministic tie break (ascending ActorRef.ID), zero
+      ActorRef on empty / missing rows. Pending: NPC retarget loop
+      (no mob AI yet), healing-adds-threat (no heal verb / weave
+      wiring), taunt verb (flat bonus), `feign death` (zero one
+      source).
 - [~] Death, corpses, looting, XP award — slice 1 landed
       2026-05-07 (Phase D #19, mob death only). HP ≤ 0 on a mob:
       spawn a `corpse of <name>` `ItemTypeContainer` in the room
