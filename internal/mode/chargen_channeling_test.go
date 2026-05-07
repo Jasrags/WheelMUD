@@ -29,7 +29,10 @@ func TestCharacterCreate_NonChannelerSkipsChannelingStep(t *testing.T) {
 	f.feed("pick 1")
 	f.feed("done")
 	f.feed("6")
-	f.feed("done") // skills done → hub → auto-opens review (channeling row n/a)
+	f.feed("done") // skills → hub
+	f.feed("7")    // equipment (row 7 for non-channelers; channeling row n/a)
+	f.feed("1")
+	f.feed("done") // → hub → auto-opens review
 	f.feed("yes")  // commit
 
 	got, err := f.chars.FindByName(context.Background(), "Lan")
@@ -70,7 +73,10 @@ func TestCharacterCreate_ChannelerHappyPath(t *testing.T) {
 	f.feed("affinities fire spirit")
 	f.feed("done") // advance stage: affinities → weaves
 	f.feed("weaves spark warmth steady_hand")
-	f.feed("done") // weaves stage → hub → auto-opens review
+	f.feed("done") // weaves stage → hub
+	f.feed("8")    // equipment (row 8 for channelers)
+	f.feed("1")
+	f.feed("done") // → hub → auto-opens review
 	f.feed("yes")  // commit
 
 	got, err := f.chars.FindByName(context.Background(), "Egwene")
@@ -198,7 +204,10 @@ func TestChannelingStep_BackFromReviewLandsOnHub(t *testing.T) {
 	f.feed("pick 1")
 	f.feed("done")
 	f.feed("6")
-	f.feed("done") // skills done → hub → auto-opens review
+	f.feed("done") // skills → hub
+	f.feed("7")    // equipment (last required row)
+	f.feed("1")
+	f.feed("done") // → hub → auto-opens review
 
 	mode := f.session.CurrentMode().(*CharacterCreate)
 	if mode.step != chargenStepReview {

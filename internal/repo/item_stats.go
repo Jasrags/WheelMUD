@@ -103,3 +103,44 @@ func decodeStats(t ItemType, raw string) (ItemStats, error) {
 	}
 	return stats, nil
 }
+
+// CloneItemStats deep-copies a typed Stats pointer so two items
+// produced from the same template don't share a backing struct.
+// Returns nil for the untyped tier (trash / clothing / food /
+// trade_good). Used by every spawn path that clones an existing
+// item — admin spawn, shop buy, and chargen starting equipment.
+//
+// New ItemStats types MUST be added here (and in StatsForType /
+// statsTypeMatches above) so spawn paths don't silently alias a
+// shared pointer.
+func CloneItemStats(s ItemStats) ItemStats {
+	switch v := s.(type) {
+	case *WeaponStats:
+		c := *v
+		c.DamageType = append([]string(nil), v.DamageType...)
+		c.Special = append([]string(nil), v.Special...)
+		return &c
+	case *ArmorStats:
+		c := *v
+		return &c
+	case *ShieldStats:
+		c := *v
+		return &c
+	case *ContainerStats:
+		c := *v
+		return &c
+	case *ConsumableStats:
+		c := *v
+		return &c
+	case *LightStats:
+		c := *v
+		return &c
+	case *KeyStats:
+		c := *v
+		return &c
+	case *ToolStats:
+		c := *v
+		return &c
+	}
+	return nil
+}

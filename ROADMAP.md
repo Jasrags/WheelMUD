@@ -285,7 +285,7 @@ constants and helpers in `telnet/iac.go`.
       world" feel. Cross-cutting: every destructive action (delete
       character, password change, kick sessions) records to
       `admin_audit` with `actor=account`, `target=character|account`.
-- [ ] **Character creation flow** — replace the current single-screen
+- [~] **Character creation flow** — replace the current single-screen
       name prompt (`internal/mode/character_create.go`) with the full
       WoT chargen pipeline, driven by content catalogs in
       `data/chargen/*.yaml` loaded by a new `internal/chargen` package.
@@ -314,6 +314,26 @@ constants and helpers in `telnet/iac.go`.
       this is content + UI, not migrations. Catalogs are the same data
       level-up / weave-learning will read in §12, so loader lives once
       and serves both day-zero (this item) and over-time progression.
+      **Slice 3 landed 2026-05-06** — starting-equipment bundle
+      spawning + auto-equip. New `chargenStepEquipment` substep slots
+      between channeling (or skills, for non-channelers) and review
+      with one-line bundle picker, `info <#>` detail screen showing
+      each item's name/type/weight/value, and `done` gate. Catalog
+      gains `internal/chargen/default/items.yaml` with 50 starting
+      templates (mirroring world item schema: type/weight/value/
+      quality/flags/typed Stats). Catalog `validate()` cross-checks
+      every `background.equipment_options[].items` ref against the
+      templates map so a typo fails boot. At finalize,
+      `CharacterCreate.applyStartingEquipment` clones each picked
+      item via `ItemRepo.Create` with a unique runtime
+      `external_id` (`<id>#cgen-<charID>-<i>`),
+      `RecordInventory`s the id list, and auto-equips the first
+      armor → SlotArmor / shield → SlotShield / clothing →
+      SlotOutfit / weapon → SlotPrimaryWield. ItemRepo threads
+      `Login → Create → postAuth → AccountMenu → CharacterCreate`
+      via a new `SetItems` setter; nil silently skips spawning so
+      legacy fixtures still work. No migration — items +
+      equipment_json + inventory_json round-trip already.
 - [x] Mode-driven echo masking — Login / Create / CharacterCreate flip
       `Session.InPasswordMode` via lifecycle; `togglepassword` debug
       command retired

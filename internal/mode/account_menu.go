@@ -358,6 +358,7 @@ func (m *AccountMenu) handleNew(s *telnet.Session) error {
 	create := NewCharacterCreate(m.repo, m.game)
 	create.SetCatalog(m.catalog)
 	create.SetSettings(m.settings)
+	create.SetItems(m.items)
 	create.SetOnCancel(func(s *telnet.Session) error {
 		// Force a repaint when ReplaceMode runs OnEnter on the menu
 		// instance the player came from.

@@ -121,10 +121,18 @@ func (m *CharacterCreate) hubRows() []hubRow {
 			number: 7, label: "Channeling", target: chargenStepChanneling,
 			status: m.channelingStatus(), available: true,
 		})
+		rows = append(rows, hubRow{
+			number: 8, label: "Equipment", target: chargenStepEquipment,
+			status: m.equipmentStatus(), available: true,
+		})
 	} else {
 		rows = append(rows, hubRow{
 			number: 0, label: "Channeling", target: chargenStepChanneling,
 			status: m.channelingStatus(), available: false,
+		})
+		rows = append(rows, hubRow{
+			number: 7, label: "Equipment", target: chargenStepEquipment,
+			status: m.equipmentStatus(), available: true,
 		})
 	}
 	return rows
@@ -243,6 +251,10 @@ func (m *CharacterCreate) enterSubstep(s *telnet.Session, target chargenStep) er
 		// list.
 		m.channelingStage = channelingStageAffinities
 		return m.writeChannelingMenu(s)
+	case chargenStepEquipment:
+		m.step = chargenStepEquipment
+		m.initEquipmentStepIfNeeded()
+		return m.writeEquipmentMenu(s)
 	}
 	return nil
 }
@@ -329,6 +341,9 @@ func (m *CharacterCreate) draftComplete() bool {
 		return false
 	}
 	if m.classIsChanneler() && !m.channelingRowComplete() {
+		return false
+	}
+	if !m.equipmentRowComplete() {
 		return false
 	}
 	return true
@@ -443,6 +458,24 @@ func (m *CharacterCreate) channelingStatus() string {
 	}
 	return fmt.Sprintf("%d affinities, %d weaves",
 		len(powerSetFlags(m.draft.Affinities)), len(m.draft.StartingWeaves))
+}
+
+// equipmentStatus renders the hub-row status string for the
+// equipment substep — bundle label when picked, "(pick a background
+// first)" before bg is set, "— not chosen —" otherwise.
+func (m *CharacterCreate) equipmentStatus() string {
+	if m.draft.BackgroundID == "" {
+		return "(pick a background first)"
+	}
+	bg, _ := m.catalog.Background(m.draft.BackgroundID)
+	if bg == nil {
+		return notChosen
+	}
+	idx := m.draft.SelectedEquipmentOptionIdx
+	if idx < 1 || idx > len(bg.EquipmentOptions) {
+		return notChosen
+	}
+	return bg.EquipmentOptions[idx-1].Label
 }
 
 // raceLabel renders a friendly race label for the hub sheet. The

@@ -330,6 +330,9 @@ func walkHubToReview(t *testing.T, f *charCreateFixture) {
 	f.feed("done")
 	f.feed("6")
 	f.feed("done")
+	f.feed("7") // equipment (row 7 for non-channelers)
+	f.feed("1")
+	f.feed("done")
 	mc := f.session.CurrentMode().(*CharacterCreate)
 	if mc.step != chargenStepReview {
 		t.Fatalf("walkHubToReview: step = %d, want chargenStepReview", mc.step)
@@ -352,7 +355,10 @@ func TestCharacterCreate_Multi_HappyPath(t *testing.T) {
 	f.feed("5") // hub → feat
 	f.feed("pick 1")
 	f.feed("done")
-	f.feed("6") // hub → skills (last required row → auto-opens review)
+	f.feed("6") // hub → skills
+	f.feed("done")
+	f.feed("7") // hub → equipment (last required row → auto-opens review)
+	f.feed("1")
 	f.feed("done")
 	f.feed("yes") // confirm review
 
@@ -769,7 +775,10 @@ func TestCharacterCreate_Multi_IdentityVerbs(t *testing.T) {
 	f.feed("5") // feat
 	f.feed("pick 1")
 	f.feed("done")
-	f.feed("6") // skills (last required → auto-opens review)
+	f.feed("6") // skills
+	f.feed("done")
+	f.feed("7") // equipment (last required → auto-opens review)
+	f.feed("1")
 	f.feed("done")
 	if mc.step != chargenStepReview {
 		t.Fatalf("step = %d, want chargenStepReview", mc.step)
@@ -958,7 +967,10 @@ func TestCharacterCreate_Multi_FeatsAndSkillsPersisted(t *testing.T) {
 	f.feed("done") // feat → hub
 	f.feed("6")
 	f.feed("rank 1 2")
-	f.feed("done") // skills → hub → auto-opens review
+	f.feed("done") // skills → hub
+	f.feed("7")    // equipment
+	f.feed("1")
+	f.feed("done") // → hub → auto-opens review
 	f.feed("yes")
 
 	got, err := f.chars.FindByName(context.Background(), "Hero")

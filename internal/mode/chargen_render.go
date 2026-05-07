@@ -60,6 +60,8 @@ func chargenStepLabel(step chargenStep) string {
 		return "Skill ranks"
 	case chargenStepChanneling:
 		return "Channeling"
+	case chargenStepEquipment:
+		return "Starting equipment"
 	case chargenStepReview:
 		return "Review"
 	}
@@ -89,6 +91,8 @@ func chargenStepNumber(step chargenStep) int {
 		return 7 // shares slot 7 visually with feats; both are "Build"
 	case chargenStepChanneling:
 		return 7 // also shares slot 7 — channelers see 3 sub-screens at "Build"
+	case chargenStepEquipment:
+		return 7 // shares slot 7 ("Build") — picked alongside feats/skills/channeling
 	case chargenStepReview:
 		return 8
 	}

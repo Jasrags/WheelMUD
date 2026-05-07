@@ -21,6 +21,7 @@ type Catalog struct {
 	feats       map[string]*Feat
 	skills      map[string]*Skill
 	weaves      map[string]*Weave
+	items       map[string]*ItemTemplate
 
 	// Stable ordering for menus.
 	bgOrder    []string
@@ -28,6 +29,7 @@ type Catalog struct {
 	featOrder  []string
 	skillOrder []string
 	weaveOrder []string
+	itemOrder  []string
 }
 
 // Filenames the loader expects under fsys's root.
@@ -37,6 +39,7 @@ const (
 	fileFeats       = "feats.yaml"
 	fileSkills      = "skills.yaml"
 	fileWeaves      = "weaves.yaml"
+	// fileItems is declared in items.go alongside the loader logic.
 )
 
 // knownBackgroundEnum maps catalog id → creature.Background. The
@@ -101,6 +104,7 @@ func Load(fsys fs.FS) (*Catalog, error) {
 		feats:       map[string]*Feat{},
 		skills:      map[string]*Skill{},
 		weaves:      map[string]*Weave{},
+		items:       map[string]*ItemTemplate{},
 	}
 
 	if err := readYAMLList(fsys, fileSkills, &c.skills, &c.skillOrder, "skill"); err != nil {
@@ -116,6 +120,9 @@ func Load(fsys fs.FS) (*Catalog, error) {
 		return nil, err
 	}
 	if err := readYAMLList(fsys, fileWeaves, &c.weaves, &c.weaveOrder, "weave"); err != nil {
+		return nil, err
+	}
+	if err := readYAMLList(fsys, fileItems, &c.items, &c.itemOrder, "item"); err != nil {
 		return nil, err
 	}
 
@@ -171,6 +178,8 @@ func getID[T any](v *T) string {
 	case *Skill:
 		return x.ID
 	case *Weave:
+		return x.ID
+	case *ItemTemplate:
 		return x.ID
 	default:
 		return ""
@@ -284,6 +293,10 @@ func (c *Catalog) validate() error {
 			errs = append(errs, fmt.Sprintf("weave %q: level %d out of range", w.ID, w.Level))
 		}
 	}
+
+	// Items: typed Stats decode + cross-reference every
+	// background.equipment_options[].items entry.
+	errs = append(errs, c.validateItems()...)
 
 	if len(errs) > 0 {
 		sort.Strings(errs)

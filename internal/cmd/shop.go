@@ -260,7 +260,7 @@ func NewBuy(items repo.ItemRepo, characters repo.CharacterRepo,
 
 			// Materialize the item in the buyer's inventory.
 			now := time.Now().UnixNano()
-			stats := cloneItemStats(tpl.Stats)
+			stats := repo.CloneItemStats(tpl.Stats)
 			if stats == nil {
 				// Some seeded templates (esp. test fixtures) skip the
 				// typed stats sub-record. The repo's stats-type check

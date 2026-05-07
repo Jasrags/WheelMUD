@@ -21,7 +21,11 @@
 // heroic-characteristics,equipment,the-one-power}.md.
 package chargen
 
-import "github.com/Jasrags/WheelMUD/internal/creature"
+import (
+	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
+	"github.com/Jasrags/WheelMUD/internal/repo"
+)
 
 // SaveProgression marks a class save as "high" (good) or "low"
 // (poor). The numeric BAB / save table is derivable from class +
@@ -129,6 +133,44 @@ type Skill struct {
 	Ability     string `yaml:"ability"`
 	Description string `yaml:"description,omitempty"`
 }
+
+// ItemTemplate is one starting-equipment template — the chargen-side
+// counterpart to a `data/world/` item. The chargen catalog is content,
+// not state, so these never live in any room or container; they're
+// cloned into a freshly-created character's inventory at finalize
+// time via ItemRepo.Create with a unique runtime external_id.
+//
+// Schema mirrors world items (see data/world/README.md): typed Stats
+// (decoded from a flat YAML stats: block via the same JSON-marshal
+// path the world loader uses) for weapon/armor/shield/container/
+// consumable/light/key/tool; clothing/food/trade_good/trash carry no
+// Stats. Currency strings parse via currency.Parse.
+type ItemTemplate struct {
+	ID      string         `yaml:"id"`
+	Name    string         `yaml:"name"`
+	Short   string         `yaml:"short"`
+	Type    repo.ItemType  `yaml:"type"`
+	Weight  float64        `yaml:"weight"`
+	Value   string         `yaml:"value"` // currency.Parse — "5mk", "100mk"
+	Quality repo.ItemQuality `yaml:"quality"`
+	Flags   []string       `yaml:"flags"`
+	Stats   map[string]any `yaml:"stats"`
+
+	// Resolved values stamped by the loader — never set in YAML.
+	parsedValue currency.Amount
+	parsedFlags repo.ItemFlags
+	parsedStats repo.ItemStats
+}
+
+// ParsedValue returns the loader-resolved currency amount.
+func (it *ItemTemplate) ParsedValue() currency.Amount { return it.parsedValue }
+
+// ParsedFlags returns the loader-resolved flag bitset.
+func (it *ItemTemplate) ParsedFlags() repo.ItemFlags { return it.parsedFlags }
+
+// ParsedStats returns the loader-resolved typed Stats struct (or nil
+// for the untyped tier — clothing/food/trade_good/trash).
+func (it *ItemTemplate) ParsedStats() repo.ItemStats { return it.parsedStats }
 
 // Weave is a level-0 starting weave option for channelers. Power
 // is one of "Air"/"Earth"/"Fire"/"Water"/"Spirit". Chargen step #15

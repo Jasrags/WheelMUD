@@ -48,8 +48,8 @@ func TestChargenHub_ChannelingNAForNonChanneler(t *testing.T) {
 	if !strings.Contains(out, "n/a") {
 		t.Fatalf("expected n/a marker on non-channeler hub:\n%s", out)
 	}
-	if !strings.Contains(out, "[1-6]") {
-		t.Fatalf("expected [1-6] range hint (no row 7) on non-channeler hub:\n%s", out)
+	if !strings.Contains(out, "[1-7]") {
+		t.Fatalf("expected [1-7] range hint (channeling collapsed, equipment at 7) on non-channeler hub:\n%s", out)
 	}
 }
 
@@ -70,14 +70,16 @@ func TestChargenHub_ChannelingSlotForChanneler(t *testing.T) {
 	if strings.Contains(out, "n/a") {
 		t.Fatalf("channeler hub should not show n/a:\n%s", out)
 	}
-	if !strings.Contains(out, "[1-7]") {
-		t.Fatalf("expected [1-7] range hint on channeler hub:\n%s", out)
+	if !strings.Contains(out, "[1-8]") {
+		t.Fatalf("expected [1-8] range hint on channeler hub (equipment at 8):\n%s", out)
 	}
 }
 
 // TestChargenHub_NonChannelerCannotEnterChanneling exercises the
-// guarded numeric route: row 7 is non-selectable for non-channelers
-// and produces a focused error rather than entering the substep.
+// guarded numeric route: row 8 is out-of-range for non-channelers
+// (channeling collapses to a non-selectable n/a marker; equipment
+// occupies row 7) and produces a focused error rather than entering
+// any substep.
 func TestChargenHub_NonChannelerCannotEnterChanneling(t *testing.T) {
 	f := pushCharacterCreateMulti(t)
 	f.feed("Hero")
@@ -87,12 +89,12 @@ func TestChargenHub_NonChannelerCannotEnterChanneling(t *testing.T) {
 	f.feed("2")
 	f.feed("armsman")
 	f.captured.Reset()
-	f.feed("7")
+	f.feed("8") // non-channelers have no row 8
 	mc := f.session.CurrentMode().(*CharacterCreate)
 	if mc.step != chargenStepHub {
-		t.Fatalf("picking row 7 on a non-channeler hub should not route; step=%d", mc.step)
+		t.Fatalf("picking row 8 on a non-channeler hub should not route; step=%d", mc.step)
 	}
-	if !strings.Contains(f.captured.String(), "[1-6]") {
+	if !strings.Contains(f.captured.String(), "[1-7]") {
 		t.Fatalf("expected range hint on bad pick:\n%s", f.captured.String())
 	}
 }

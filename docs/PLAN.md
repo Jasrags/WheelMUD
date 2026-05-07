@@ -262,13 +262,28 @@ characteristics,feats,equipment,the-one-power}.md`.
       `WeavesKnownIDs []string` (transitional sibling to the
       int32-keyed `WeavesKnown` until §12 authors a numeric
       weave table).
+    **SLICE 3 LANDED 2026-05-06.** Starting-equipment bundle
+    spawning + auto-equip ships in a new `chargenStepEquipment`
+    substep that slots in between channeling and review (or
+    skills and review for non-channeler classes). The chargen
+    catalog gains a sibling `internal/chargen/default/items.yaml`
+    with 50 starting-equipment templates (mirroring the
+    `data/world/` item schema: type / weight / value / quality /
+    flags / typed Stats); cross-validated at boot so a typo in
+    any background's `equipment_options[].items` reference fails
+    chargen.Load. At finalize, `applyStartingEquipment` clones
+    each picked-bundle item via `ItemRepo.Create` with a unique
+    runtime external_id (`<id>#cgen-<charID>-<i>`),
+    `RecordInventory`s the id list, and auto-equips the first
+    armor / shield / outfit / weapon via `Equipment.Set` +
+    `RecordEquipment`. Items thread `Login → Create → postAuth →
+    AccountMenu → CharacterCreate` via a new `SetItems` setter.
+    No migration — items + equipment_json + inventory_json
+    already round-trip.
     **Stubbed for follow-ups** (see
     `chargen_features_followups.md`):
-    - Starting-equipment bundle spawning + auto-equip of the
-      free outfit — blocked on aligning the chargen YAML
-      `items: [...]` labels with world `external_id`s; most of
-      the chargen item ids (`tent`, `cadinsor`, `mail_shirt`,
-      `noble_outfit`, …) don't yet exist in `data/world/`.
+    - Two-handed / off-hand / light / quiver auto-equip — slice
+      1/2 follow-ups already track these.
     - Cross-class skill picks (half-rate, double cost) — defer
       until level-up needs the same plumbing in §12.
 

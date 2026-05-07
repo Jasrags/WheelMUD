@@ -1,0 +1,536 @@
+# Starting-equipment templates referenced by `backgrounds.yaml`'s
+# `equipment_options[].items` lists. Schema mirrors `data/world/`
+# items: type / weight / value / quality / flags / typed stats.
+# These templates are content, not state — the chargen substep
+# clones them via ItemRepo.Create with a unique runtime
+# external_id (`<id>#cgen-<charID>-<i>`); the catalog rows never
+# live in any room or container.
+
+# --- Weapons -------------------------------------------------------
+
+- id: aiel_shortbow
+  name: an Aiel hornbow
+  short: a short, recurved Aiel hornbow
+  type: weapon
+  weight: 2
+  value: 75mk
+  stats:
+    proficiency: martial
+    size: medium
+    range: ranged
+    damage: "1d6"
+    threat_low: 20
+    crit_mult: 3
+    range_inc_ft: 60
+    damage_type: [P]
+
+- id: boar_spear
+  name: a boar spear
+  short: a heavy boar spear with a leaf-shaped head
+  type: weapon
+  weight: 8
+  value: 5sp
+  stats:
+    proficiency: simple
+    size: large
+    range: melee
+    damage: "1d8"
+    threat_low: 20
+    crit_mult: 3
+    damage_type: [P]
+    special: [reach, set]
+
+- id: crossbow_light
+  name: a light crossbow
+  short: a light crossbow with a turn-crank
+  type: weapon
+  weight: 4
+  value: 35mk
+  stats:
+    proficiency: simple
+    size: medium
+    range: ranged
+    damage: "1d8"
+    threat_low: 19
+    crit_mult: 2
+    range_inc_ft: 80
+    damage_type: [P]
+
+- id: jeweled_dagger
+  name: a jeweled dagger
+  short: a slim dagger with a jeweled grip and gilded sheath
+  type: weapon
+  weight: 1
+  value: 60mk
+  stats:
+    proficiency: simple
+    size: tiny
+    range: melee
+    damage: "1d4"
+    threat_low: 19
+    crit_mult: 2
+    damage_type: [P, S]
+
+- id: longbow_two_rivers
+  name: a Two Rivers longbow
+  short: a tall yew longbow, almost as long as a man
+  type: weapon
+  weight: 3
+  value: 100mk
+  stats:
+    proficiency: martial
+    size: large
+    range: ranged
+    damage: "1d8"
+    threat_low: 20
+    crit_mult: 3
+    range_inc_ft: 110
+    damage_type: [P]
+
+- id: longsword
+  name: a longsword
+  short: a steel longsword in a leather sheath
+  type: weapon
+  weight: 4
+  value: 15mk
+  stats:
+    proficiency: martial
+    size: medium
+    range: melee
+    damage: "1d8"
+    threat_low: 19
+    crit_mult: 2
+    damage_type: [S]
+
+- id: rapier
+  name: a rapier
+  short: a slender, narrow-bladed rapier
+  type: weapon
+  weight: 3
+  value: 20mk
+  stats:
+    proficiency: martial
+    size: medium
+    range: melee
+    damage: "1d6"
+    threat_low: 18
+    crit_mult: 2
+    damage_type: [P]
+    special: [finesse]
+
+- id: short_sword
+  name: a short sword
+  short: a leaf-bladed short sword
+  type: weapon
+  weight: 2
+  value: 10mk
+  stats:
+    proficiency: martial
+    size: small
+    range: melee
+    damage: "1d6"
+    threat_low: 19
+    crit_mult: 2
+    damage_type: [P]
+    special: [finesse]
+
+# --- Armor ---------------------------------------------------------
+
+- id: leather_armor
+  name: leather armor
+  short: a hardened leather cuirass with greaves and bracers
+  type: armor
+  weight: 15
+  value: 10mk
+  stats:
+    weight_class: light
+    bonus: 2
+    max_dex: 6
+    check_penalty: 0
+    speed_ft: 30
+
+- id: studded_leather
+  name: studded leather armor
+  short: leather armor reinforced with iron studs
+  type: armor
+  weight: 20
+  value: 25mk
+  stats:
+    weight_class: light
+    bonus: 3
+    max_dex: 5
+    check_penalty: -1
+    speed_ft: 30
+
+- id: warder_studded_leather
+  name: Warder's studded leather
+  short: masterwork studded leather, supple and silent
+  type: armor
+  weight: 18
+  value: 175mk
+  quality: masterwork
+  stats:
+    weight_class: light
+    bonus: 3
+    max_dex: 5
+    check_penalty: 0
+    speed_ft: 30
+
+- id: mail_shirt
+  name: a mail shirt
+  short: a knee-length steel mail shirt
+  type: armor
+  weight: 25
+  value: 100mk
+  stats:
+    weight_class: light
+    bonus: 4
+    max_dex: 4
+    check_penalty: -2
+    speed_ft: 30
+
+# --- Shields -------------------------------------------------------
+
+- id: buckler
+  name: a buckler
+  short: a small, fist-sized steel buckler
+  type: shield
+  weight: 5
+  value: 15mk
+  stats:
+    kind: buckler
+    bonus: 1
+    check_penalty: -1
+
+- id: shield_small
+  name: a small steel shield
+  short: a round steel shield with a leather grip
+  type: shield
+  weight: 6
+  value: 9mk
+  stats:
+    kind: small_steel
+    bonus: 1
+    check_penalty: -1
+
+# --- Clothing ------------------------------------------------------
+
+- id: cadinsor
+  name: cadin'sor
+  short: layered grey-and-brown Aiel cadin'sor with shoufa
+  type: clothing
+  weight: 6
+  value: 5mk
+
+- id: courtier_outfit
+  name: a courtier's outfit
+  short: a tailored courtier's outfit of fine wool and silk
+  type: clothing
+  weight: 6
+  value: 30mk
+
+- id: noble_outfit
+  name: a noble's outfit
+  short: a noble's outfit of heavy silk and embroidered velvet
+  type: clothing
+  weight: 10
+  value: 75mk
+
+# --- Containers ----------------------------------------------------
+
+- id: waterskin
+  name: a waterskin
+  short: a stitched-leather waterskin
+  type: container
+  weight: 4
+  value: 1sp
+  stats:
+    capacity_lbs: 0
+    capacity_cuft: 0
+    liquid_pints: 4
+    weight_mult: 1.0
+
+- id: tent
+  name: a tent
+  short: a small canvas tent rolled into a pack
+  type: container
+  weight: 20
+  value: 10mk
+  stats:
+    capacity_lbs: 0
+    capacity_cuft: 64
+    weight_mult: 1.0
+
+# --- Lights --------------------------------------------------------
+
+- id: lantern_hooded
+  name: a hooded lantern
+  short: a hooded brass lantern
+  type: light
+  weight: 2
+  value: 7mk
+  stats:
+    radius_ft: 30
+    fuel_ticks: 360
+
+# --- Consumables ---------------------------------------------------
+
+- id: healers_balm
+  name: a healer's balm
+  short: a small clay pot of healer's balm
+  type: consumable
+  weight: 0.5
+  value: 5mk
+  stats:
+    charges: 1
+    effect_id: 0
+
+- id: illuminators_rocket
+  name: an Illuminator's rocket
+  short: a paper-wrapped firework rocket
+  type: consumable
+  weight: 1
+  value: 15mk
+  stats:
+    charges: 1
+    effect_id: 0
+
+# --- Tools ---------------------------------------------------------
+
+- id: thieves_tools
+  name: thieves' tools
+  short: a leather roll of slim picks and probes
+  type: tool
+  weight: 1
+  value: 30mk
+  stats:
+    skill_tag: open_lock
+    charges: 0
+
+- id: mw_thieves_tools
+  name: masterwork thieves' tools
+  short: a finely-crafted set of thieves' tools
+  type: tool
+  weight: 2
+  value: 100mk
+  quality: masterwork
+  stats:
+    skill_tag: open_lock
+    charges: 0
+
+- id: mw_artisans_tools
+  name: masterwork artisan's tools
+  short: a chest of finely-tooled artisan's implements
+  type: tool
+  weight: 5
+  value: 55mk
+  quality: masterwork
+  stats:
+    skill_tag: craft
+    charges: 0
+
+- id: mw_instrument
+  name: a masterwork musical instrument
+  short: a beautifully-finished musical instrument
+  type: tool
+  weight: 3
+  value: 100mk
+  quality: masterwork
+  stats:
+    skill_tag: perform
+    charges: 0
+
+- id: healers_kit
+  name: a healer's kit
+  short: a roll of bandages, tinctures, and a probe
+  type: tool
+  weight: 1
+  value: 50mk
+  stats:
+    skill_tag: heal
+    charges: 10
+
+- id: disguise_kit
+  name: a disguise kit
+  short: a flat case of paints, putty, and a wig or two
+  type: tool
+  weight: 8
+  value: 50mk
+  stats:
+    skill_tag: disguise
+    charges: 10
+
+- id: crowbar
+  name: a crowbar
+  short: a forged steel crowbar
+  type: tool
+  weight: 5
+  value: 2mk
+  stats:
+    skill_tag: open_lock
+    charges: 0
+
+# --- Trade goods ---------------------------------------------------
+
+- id: arrows_20
+  name: a quiver of arrows
+  short: a quiver holding twenty arrows
+  type: trade_good
+  weight: 3
+  value: 1mk
+
+- id: bridle
+  name: a bridle
+  short: a leather bridle with steel bit
+  type: trade_good
+  weight: 1
+  value: 2mk
+
+- id: coin_pouch_35
+  name: a coin pouch
+  short: a leather pouch heavy with silver
+  type: trade_good
+  weight: 1
+  value: 35mk
+  flags: [trade_good]
+
+- id: coin_pouch_65
+  name: a heavier coin pouch
+  short: a leather pouch heavy with silver and a few gold
+  type: trade_good
+  weight: 2
+  value: 65mk
+  flags: [trade_good]
+
+- id: dice_or_cards
+  name: dice and a deck of cards
+  short: a small bag of bone dice and a worn deck of cards
+  type: trade_good
+  weight: 0.5
+  value: 1sp
+
+- id: fine_wine
+  name: a bottle of fine wine
+  short: a corked bottle of dark red wine
+  type: trade_good
+  weight: 2
+  value: 10mk
+
+- id: grapple_hook
+  name: a grappling hook
+  short: a four-pronged steel grappling hook
+  type: trade_good
+  weight: 4
+  value: 1mk
+
+- id: horse_heavy
+  name: a heavy horse
+  short: a heavy warhorse
+  type: trade_good
+  weight: 0
+  value: 200mk
+  flags: [notake]
+
+- id: horse_light
+  name: a light horse
+  short: a sleek riding horse
+  type: trade_good
+  weight: 0
+  value: 75mk
+  flags: [notake]
+
+- id: hourglass
+  name: an hourglass
+  short: a brass-cased hourglass
+  type: trade_good
+  weight: 1
+  value: 25mk
+
+- id: jeweled_signet_ring
+  name: a jeweled signet ring
+  short: a heavy gold signet ring set with a single stone
+  type: trade_good
+  weight: 0
+  value: 70mk
+  flags: [trade_good]
+
+- id: jewelry_60mk
+  name: assorted jewelry
+  short: an assortment of rings and chains worth 60 marks
+  type: trade_good
+  weight: 0
+  value: 60mk
+  flags: [trade_good]
+
+- id: jewelry_100mk
+  name: fine jewelry
+  short: pieces of fine jewelry worth one hundred marks
+  type: trade_good
+  weight: 0
+  value: 100mk
+  flags: [trade_good]
+
+- id: military_saddle
+  name: a military saddle
+  short: a heavy military saddle with stirrups and tack
+  type: trade_good
+  weight: 30
+  value: 20mk
+
+- id: riding_saddle
+  name: a riding saddle
+  short: a light riding saddle and tack
+  type: trade_good
+  weight: 25
+  value: 10mk
+
+- id: mirror_steel
+  name: a small steel mirror
+  short: a small polished steel hand mirror
+  type: trade_good
+  weight: 0.5
+  value: 10mk
+
+- id: rations_20
+  name: twenty days of trail rations
+  short: twenty days of dried trail rations
+  type: trade_good
+  weight: 20
+  value: 1mk
+
+- id: rope_50
+  name: 50 ft of silk rope
+  short: a coil of silk rope, fifty feet long
+  type: trade_good
+  weight: 5
+  value: 10mk
+
+- id: rope_50_hemp
+  name: 50 ft of hemp rope
+  short: a coil of hemp rope, fifty feet long
+  type: trade_good
+  weight: 10
+  value: 1mk
+
+- id: signet_ring
+  name: a signet ring
+  short: a plain signet ring
+  type: trade_good
+  weight: 0
+  value: 5mk
+
+- id: silk_50
+  name: 50 ft of silk
+  short: a folded length of fine silk, fifty feet long
+  type: trade_good
+  weight: 5
+  value: 50mk
+  flags: [trade_good]
+
+- id: trade_goods_pack
+  name: a pack of trade goods
+  short: a sturdy pack of assorted Illianer trade goods
+  type: trade_good
+  weight: 30
+  value: 50mk
+  flags: [trade_good]

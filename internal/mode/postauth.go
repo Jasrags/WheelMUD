@@ -112,6 +112,7 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 		create := NewCharacterCreate(characters, game)
 		create.SetCatalog(catalog)
 		create.SetSettings(settings)
+		create.SetItems(deps.items)
 		return s.ReplaceMode(create)
 	}
 	menu := NewAccountMenu(chars, characters, game)

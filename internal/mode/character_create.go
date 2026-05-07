@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -54,6 +55,7 @@ const (
 	chargenStepFeat
 	chargenStepSkills
 	chargenStepChanneling
+	chargenStepEquipment
 	chargenStepReview
 	chargenStepDone
 
@@ -154,6 +156,13 @@ type chargenDraft struct {
 	Affinities     creature.PowerSet
 	StartingWeaves []string
 	ChannelingInit bool
+
+	// Starting-equipment bundle (#15 slice 3). Index into
+	// bg.EquipmentOptions of the picked bundle, 1-based; 0 means the
+	// player hasn't picked yet. The substep enforces "pick before
+	// done" so the finaliseReview path always sees a positive index
+	// (defensive: build path also rejects an out-of-range index).
+	SelectedEquipmentOptionIdx int
 }
 
 // CharacterCreate prompts for a new character. With a chargen catalog
@@ -169,6 +178,7 @@ type chargenDraft struct {
 // restructuring the mode stack.
 type CharacterCreate struct {
 	repo    repo.CharacterRepo
+	items   repo.ItemRepo
 	catalog *chargen.Catalog
 	game    telnet.Mode
 	shown   bool
@@ -268,6 +278,12 @@ func (m *CharacterCreate) randSource() *rand.Rand {
 // the legacy single-name flow.
 func (m *CharacterCreate) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 
+// SetItems wires the item repo so the equipment substep can spawn
+// the picked starting-equipment bundle into the new character's
+// inventory at finalize time. nil silently disables spawning so
+// existing tests with no item repo wired still pass.
+func (m *CharacterCreate) SetItems(r repo.ItemRepo) { m.items = r }
+
 // SetSettings forwards the account-level AccountSettings so chargen
 // can stamp PromptDefault onto the new character's prompt_template
 // column and apply ColorOverride/WidthOverride to the session at
@@ -309,6 +325,8 @@ func (m *CharacterCreate) Prompt(_ context.Context, _ *telnet.Session) string {
 	case chargenStepSkills:
 		return "> "
 	case chargenStepChanneling:
+		return "> "
+	case chargenStepEquipment:
 		return "> "
 	case chargenStepReview:
 		return "> "
@@ -440,6 +458,8 @@ func (m *CharacterCreate) handleMulti(ctx context.Context, s *telnet.Session, li
 		return m.applySkills(s, trimmed)
 	case chargenStepChanneling:
 		return m.applyChanneling(s, trimmed)
+	case chargenStepEquipment:
+		return m.applyEquipment(s, trimmed)
 	case chargenStepReview:
 		return m.applyReview(ctx, s, trimmed)
 	}
@@ -559,6 +579,12 @@ func (m *CharacterCreate) applyBackground(s *telnet.Session, input string) error
 	if bg < 0 {
 		return writeError(s,
 			"Unknown background. Type the id or list number, or 'info <id|#>'.")
+	}
+	if m.draft.BackgroundID != bgs[bg].ID {
+		// Background changed — equipment_options are bg-specific, so
+		// drop a stale pick rather than carrying it across into a
+		// different bundle table.
+		m.draft.SelectedEquipmentOptionIdx = 0
 	}
 	m.draft.BackgroundID = bgs[bg].ID
 	m.step = chargenStepHub
@@ -1225,6 +1251,16 @@ func (m *CharacterCreate) writeReview(s *telnet.Session) error {
 			}
 		}
 	}
+	if bg != nil && m.draft.SelectedEquipmentOptionIdx > 0 &&
+		m.draft.SelectedEquipmentOptionIdx <= len(bg.EquipmentOptions) {
+		if err := openLoadout(); err != nil {
+			return err
+		}
+		opt := bg.EquipmentOptions[m.draft.SelectedEquipmentOptionIdx-1]
+		if err := writeFieldRow(s, "Equipment", opt.Label); err != nil {
+			return err
+		}
+	}
 	if len(m.draft.SkillRanks) > 0 {
 		if err := openLoadout(); err != nil {
 			return err
@@ -1399,6 +1435,18 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 		return writeError(s, "Character name already taken. Choose another.")
 	case err != nil:
 		return writeError(s, "Character creation failed. Try again later.")
+	}
+
+	// Spawn the picked starting-equipment bundle and auto-equip the
+	// outfit / armor / shield / primary weapon. Best-effort: a partial
+	// failure here doesn't unwind the character row — the player can
+	// recover via a future GM tool / reroll. A nil items repo (legacy
+	// tests, dev fixtures) silently skips the spawn.
+	if m.items != nil && m.catalog != nil {
+		if err := m.applyStartingEquipment(ctx, &c); err != nil {
+			slog.Warn("chargen: starting-equipment spawn failed",
+				"char", c.ID, "bg", bg.ID, "error", err)
+		}
 	}
 
 	m.step = chargenStepDone

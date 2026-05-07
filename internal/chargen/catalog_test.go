@@ -168,6 +168,19 @@ const minimalWeaves = `
 - {id: spark, name: Spark, level: 0, power: Fire}
 `
 
+const minimalItems = `
+- id: buckler
+  name: a buckler
+  short: a small steel buckler
+  type: shield
+  weight: 5
+  value: 15mk
+  stats:
+    kind: buckler
+    bonus: 1
+    check_penalty: -1
+`
+
 func mapFS(b, c, f, s, w string) fstest.MapFS {
 	return fstest.MapFS{
 		fileBackgrounds: {Data: []byte(b)},
@@ -175,6 +188,7 @@ func mapFS(b, c, f, s, w string) fstest.MapFS {
 		fileFeats:       {Data: []byte(f)},
 		fileSkills:      {Data: []byte(s)},
 		fileWeaves:      {Data: []byte(w)},
+		fileItems:       {Data: []byte(minimalItems)},
 	}
 }
 
@@ -259,6 +273,81 @@ func TestLoad_RejectsZeroSkillPoints(t *testing.T) {
 	_, err := Load(mapFS(minimalBackgrounds, c, minimalFeats, minimalSkills, minimalWeaves))
 	if err == nil || !strings.Contains(err.Error(), "skill_points") {
 		t.Errorf("want skill_points error, got %v", err)
+	}
+}
+
+func TestLoad_RejectsUnknownEquipmentItem(t *testing.T) {
+	bg := strings.Replace(minimalBackgrounds,
+		"items: [buckler]", "items: [buckler, doesnotexist]", 1)
+	_, err := Load(mapFS(bg, minimalClasses, minimalFeats, minimalSkills, minimalWeaves))
+	if err == nil || !strings.Contains(err.Error(), "unknown item") {
+		t.Errorf("want unknown-item error, got %v", err)
+	}
+}
+
+func TestLoad_RejectsItemStatsOnUntypedTier(t *testing.T) {
+	// Clothing rejects a stats: block per data/world/README.md.
+	const badItems = `
+- id: cadinsor
+  name: cadin'sor
+  short: an Aiel outfit
+  type: clothing
+  weight: 6
+  stats:
+    bonus: 1
+- id: buckler
+  name: a buckler
+  short: a small buckler
+  type: shield
+  weight: 5
+  stats:
+    kind: buckler
+    bonus: 1
+`
+	fs := mapFS(minimalBackgrounds, minimalClasses, minimalFeats, minimalSkills, minimalWeaves)
+	fs[fileItems].Data = []byte(badItems)
+	_, err := Load(fs)
+	if err == nil || !strings.Contains(err.Error(), "does not accept a stats block") {
+		t.Errorf("want stats-rejection error, got %v", err)
+	}
+}
+
+func TestLoad_RejectsBadCurrency(t *testing.T) {
+	const badItems = `
+- id: buckler
+  name: a buckler
+  short: a small buckler
+  type: shield
+  weight: 5
+  value: "not a currency"
+  stats:
+    kind: buckler
+    bonus: 1
+`
+	fs := mapFS(minimalBackgrounds, minimalClasses, minimalFeats, minimalSkills, minimalWeaves)
+	fs[fileItems].Data = []byte(badItems)
+	_, err := Load(fs)
+	if err == nil || !strings.Contains(err.Error(), "invalid value") {
+		t.Errorf("want invalid-value error, got %v", err)
+	}
+}
+
+func TestLoad_RealCatalogResolvesEveryEquipmentRef(t *testing.T) {
+	cat := liveDir(t)
+	// Spot-check each background — every items entry should resolve.
+	for _, bg := range cat.Backgrounds() {
+		for _, opt := range bg.EquipmentOptions {
+			for _, ref := range opt.Items {
+				if _, ok := cat.Item(ref); !ok {
+					t.Errorf("background %q option %q references missing item %q",
+						bg.ID, opt.Label, ref)
+				}
+			}
+		}
+	}
+	// Sanity: at least the 50 known ids load.
+	if len(cat.Items()) < 30 {
+		t.Errorf("expected >=30 items in catalog, got %d", len(cat.Items()))
 	}
 }
 

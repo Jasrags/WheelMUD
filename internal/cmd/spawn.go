@@ -157,7 +157,7 @@ func spawnItems(c *telnet.Context, items repo.ItemRepo, sessions *session.Regist
 			Value:      template.Value,
 			Quality:    template.Quality,
 			Flags:      template.Flags,
-			Stats:      cloneItemStats(template.Stats),
+			Stats:      repo.CloneItemStats(template.Stats),
 		}
 		if _, err := items.Create(c.Ctx, copy); err != nil {
 			slog.Warn("spawn: item create", "ext", ext, "i", i, "error", err)
@@ -193,40 +193,6 @@ func announceSpawn(s *telnet.Session, sessions *session.Registry, name string, c
 	return s.WriteString(fmt.Sprintf("{{Spawned %s here.}}::cyan\r\n", tag))
 }
 
-// cloneItemStats deep-copies the typed stats pointer so two spawned
-// items don't share a backing struct. Returns nil for the untyped
-// tier (trash / clothing / food / trade_good).
-func cloneItemStats(s repo.ItemStats) repo.ItemStats {
-	switch v := s.(type) {
-	case *repo.WeaponStats:
-		c := *v
-		c.DamageType = append([]string(nil), v.DamageType...)
-		c.Special = append([]string(nil), v.Special...)
-		return &c
-	case *repo.ArmorStats:
-		c := *v
-		return &c
-	case *repo.ShieldStats:
-		c := *v
-		return &c
-	case *repo.ContainerStats:
-		c := *v
-		return &c
-	case *repo.ConsumableStats:
-		c := *v
-		return &c
-	case *repo.LightStats:
-		c := *v
-		return &c
-	case *repo.KeyStats:
-		c := *v
-		return &c
-	case *repo.ToolStats:
-		c := *v
-		return &c
-	}
-	return nil
-}
 
 // completeSpawn offers `mob` / `item` on slot 0; on slot 1 routes to
 // the matching ListExternalIDs (mob templates or item rows). Slot 2
