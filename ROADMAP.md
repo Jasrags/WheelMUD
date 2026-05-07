@@ -805,7 +805,29 @@ will need on top of those tables.
       direction + elapsed time. Pending: §12 skill-check gate on
       staleness window so players (not just admins) can `track`,
       and per-template `wander_radius` once `mob_instances` carries
-      a stable spawn-room id.
+      a stable spawn-room id. **Default flipped 2026-05-06**:
+      `creature.DefaultWanderChance` is now `0.0` — random wandering
+      is opt-in per template (set `wander_chance` on the YAML mob
+      entry).
+
+- [ ] Scheduled mob routes — declarative path-following so mobs like
+      a lamplighter making evening rounds, a guard checking the
+      walls, or an innkeeper closing up shop move on a known
+      schedule rather than (or in addition to) the random wander
+      tick. Sketch: a `routes:` sub-block on the YAML mob entry
+      listing one or more named routes; each route is an ordered
+      list of `(room_id, action?, dwell_s)` waypoints plus a trigger
+      (clock window, world-state key, or interval). The mob runner
+      gains a route handler that advances the current waypoint, runs
+      the optional action verb (`emote`, `say`, `light`, `lock`),
+      and respects `dwell_s` before stepping. Routes coexist with
+      `wander_chance`: a mob on an active route shouldn't wander;
+      between routes (or off-schedule) it falls back to its base
+      wander rate. New schema: `mob_routes` (route metadata) and
+      `mob_route_steps` (ordered waypoints) tables, plus a
+      `mob_instances.current_route_id` / `current_step_idx` pair so
+      reboots resume mid-route. Audit hook to flag mobs whose routes
+      cross zone boundaries or hit `nomap` rooms.
 
 ## 11. Combat
 

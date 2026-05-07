@@ -547,9 +547,14 @@ type ItemType int8
 
 // DefaultWanderChance is the per-template default for the §10
 // wander tick. Templates loaded from YAML without an explicit value
-// inherit this number. Mirrored in migration 0022 as the column
-// DEFAULT, so memory and sqlite stay aligned.
-const DefaultWanderChance = 0.25
+// inherit this number. The default is 0 — random wandering is
+// opt-in per template (set `wander_chance` in YAML for mobs that
+// should drift, e.g. village dogs). Pre-authored worlds that relied
+// on the old 0.25 baseline must declare it explicitly. Mirrored in
+// migration 0022 as the column DEFAULT (still 0.25 there for legacy
+// rows; the loader rewrites every boot from YAML so the column
+// default only matters for hand-inserted rows).
+const DefaultWanderChance = 0.0
 
 // MobTemplate is the immutable archetype. Builders edit these; live
 // mobs are MobInstances spawned from them.
@@ -567,11 +572,13 @@ type MobTemplate struct {
 	BehaviorFlags BehaviorFlags
 	// WanderChance is the per-mob, per-pulse probability that the
 	// wander tick relocates instances of this template. Clamped to
-	// [0, 1] at the storage layer (CHECK in 0022). Zero disables
-	// wandering for this template even if BehavSentinel is unset;
-	// 1.0 forces every eligible pulse to move. Templates loaded from
-	// pre-0022 rows or schemas missing the column default to 0.25
-	// (DefaultWanderChance) so behavior stays compatible.
+	// [0, 1] at the storage layer (CHECK in 0022). Zero (the
+	// default — see DefaultWanderChance) disables wandering for this
+	// template; 1.0 forces every eligible pulse to move. Random
+	// wandering is opt-in: set `wander_chance` in the mob's YAML for
+	// mobs that should drift (village animals, drifters). Mobs with
+	// scheduled routes (planned future feature) will keep
+	// WanderChance at 0 and use the route system instead.
 	WanderChance   float64
 	NaturalAttacks []Attack
 	SpecialAttacks []SpecialAttack
