@@ -477,6 +477,13 @@ type Channeling struct {
 	WeavesKnownIDs []string
 	Slots          [10]SlotPool // index = weave level
 
+	// LastSlotRefreshAt stamps the last time the per-tick driver
+	// refilled Slots[*].Cur. Zero value = "never refreshed" → the
+	// next refresh pulse refills immediately, which is the right
+	// behavior for chargen-fresh characters whose slots already
+	// land at full from the catalog.
+	LastSlotRefreshAt time.Time
+
 	Embraced      bool
 	EmbracedSince time.Time
 	Madness       int16 // men only; Mental Stability slows accrual

@@ -311,6 +311,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `repo.RecordLevelUp` via `repo.LevelUpFields`. No DB / no
   session — content + math.
 
+- **`internal/channeling/`** — pure helpers + per-tick driver for
+  channeler state (Phase E #27). `RefreshIfDue(c, now)` refills
+  `Slots[*].Cur` to `Max` once `RefreshInterval` (8h wall-clock)
+  has elapsed since `c.LastSlotRefreshAt`; `AccrueMadness(c, now)`
+  adds `MadnessPerPulse` (clamped at int16 max) iff the channeler
+  is `Embraced` and drawing on `SourceSaidin`. Both are no-ops on
+  `Stilled`. `SessionTicker` mirrors the affects ticker shape
+  (Candidate snapshot from session.Registry) but skips the
+  `FightLookup` gate — slots/madness are independent of combat
+  pacing. Subscribed to `tick.Buckets.Regen` (30s). Verbs that
+  flip the toggles: `embrace`/`release` (player) and
+  `still`/`unstill` (admin, audited). `LastSlotRefreshAt` lives
+  on `creature.Channeling` and round-trips through
+  `characters.channeling_json` (no migration — added in #27).
+
 - **`internal/group/`** — in-memory party manager (Phase D #22).
   `Group` aggregate (Leader CharacterID + Members map);
   `Manager` keyed by leader with reverse `byCharacter` index.

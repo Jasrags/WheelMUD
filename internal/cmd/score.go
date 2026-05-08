@@ -114,6 +114,12 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog) err
 		return err
 	}
 
+	if ch.Channeling != nil {
+		if err := writeChannelingBlock(s, ch.Channeling); err != nil {
+			return err
+		}
+	}
+
 	if err := display.Subsection(s, "Wealth"); err != nil {
 		return err
 	}
@@ -139,6 +145,55 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog) err
 	}
 
 	return display.Rule(s)
+}
+
+// writeChannelingBlock renders the Channeling subsection — Source,
+// per-level slot pools, Madness, and the Stilled / Embraced flags.
+// Phase E #27 — slot pools are dynamic; pre-#27 every channeler
+// rendered statically full. Source is always one of two values
+// stamped at chargen; the surface here is read-only (toggled by the
+// embrace/release verbs and the still/unstill admin verbs).
+func writeChannelingBlock(s *telnet.Session, ch *creature.Channeling) error {
+	if err := display.Subsection(s, "Channeling"); err != nil {
+		return err
+	}
+	source := "Saidar"
+	if ch.GenderSource == creature.SourceSaidin {
+		source = "Saidin"
+	}
+	if err := display.FieldRow(s, "Source", source, scoreLabelGutter); err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	for i := range ch.Slots {
+		fmt.Fprintf(&b, "L%d %d/%d", i, ch.Slots[i].Cur, ch.Slots[i].Max)
+		if i < len(ch.Slots)-1 {
+			b.WriteString("  ")
+		}
+	}
+	if err := display.FieldRow(s, "Slots", b.String(), scoreLabelGutter); err != nil {
+		return err
+	}
+
+	if err := display.FieldRow(s, "Madness",
+		fmt.Sprintf("%d", ch.Madness), scoreLabelGutter); err != nil {
+		return err
+	}
+
+	flags := []string{}
+	if ch.Stilled {
+		flags = append(flags, "{{stilled}}::red|bold")
+	}
+	if ch.Embraced {
+		flags = append(flags, "{{embraced}}::cyan|bold")
+	}
+	if len(flags) > 0 {
+		if err := display.FieldRow(s, "State", strings.Join(flags, " "), scoreLabelGutter); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeAbilities renders the six-stat block as two indented rows so

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/affects"
+	"github.com/Jasrags/WheelMUD/internal/channeling"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
@@ -415,6 +416,35 @@ func main() {
 		slog.Default(),
 	)
 	buckets.Affects.Subscribe(affectsTicker.Tick)
+
+	// Phase E #27: channeling ticker. Refills slot pools 8h after the
+	// last refresh and accrues Madness on every pulse for embraced
+	// male channelers. Subscribed to the Regen bucket (30s) — slow
+	// enough that the 8h gate adds negligible load and fast enough
+	// that Madness accrual is observable in tests with a tightened
+	// TickInterval.
+	channelingCandidates := func() []channeling.Candidate {
+		snap := sessions.Snapshot()
+		out := make([]channeling.Candidate, 0, len(snap))
+		for _, s := range snap {
+			if s == nil {
+				continue
+			}
+			charID, _, roomID := s.InWorld()
+			if charID == 0 {
+				continue
+			}
+			out = append(out, channeling.Candidate{CharacterID: charID, RoomID: roomID})
+		}
+		return out
+	}
+	channelingTicker := channeling.NewSessionTicker(
+		channelingCandidates,
+		characterChannelingLoader{characters},
+		nil, // time.Now
+		slog.Default(),
+	)
+	buckets.Regen.Subscribe(channelingTicker.Tick)
 
 	// affects.Expired subscriber: emits one cfmt line per name to the
 	// owning session via WriteAsync (cross-session output rule).
@@ -835,6 +865,18 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewBump(characters, audits)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewEmbrace(characters)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewRelease(characters)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewStill(characters, sessions, audits)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewUnstill(characters, sessions, audits)); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -1039,6 +1081,25 @@ func (a characterAffectsLoader) GetByID(ctx context.Context, id int64) (affects.
 
 func (a characterAffectsLoader) RecordAffects(ctx context.Context, id int64, list []creature.Affect) error {
 	return a.chars.RecordAffects(ctx, id, list)
+}
+
+// characterChannelingLoader adapts repo.CharacterRepo to the slim
+// channeling.CharLoader interface. Phase E #27 — only the Channeling
+// pointer is exposed to the ticker.
+type characterChannelingLoader struct {
+	chars repo.CharacterRepo
+}
+
+func (a characterChannelingLoader) GetByID(ctx context.Context, id int64) (channeling.Character, error) {
+	ch, err := a.chars.GetByID(ctx, id)
+	if err != nil {
+		return channeling.Character{}, err
+	}
+	return channeling.Character{Channeling: ch.Channeling}, nil
+}
+
+func (a characterChannelingLoader) RecordChanneling(ctx context.Context, id int64, c *creature.Channeling) error {
+	return a.chars.RecordChanneling(ctx, id, c)
 }
 
 // eventbusAdapter wraps *eventbus.Bus to satisfy affects.EventPublisher.

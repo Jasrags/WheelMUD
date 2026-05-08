@@ -392,6 +392,23 @@ func (r *MemoryCharacterRepo) RecordAffects(_ context.Context, id int64, affects
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordChanneling(_ context.Context, id int64, ch *creature.Channeling) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if ch == nil {
+				c.Channeling = nil
+			} else {
+				cp := *ch
+				c.Channeling = &cp
+			}
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) Delete(_ context.Context, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

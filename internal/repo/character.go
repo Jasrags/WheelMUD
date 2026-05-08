@@ -297,6 +297,14 @@ type CharacterRepo interface {
 	// cast). Pass nil or an empty slice to clear all affects. Returns
 	// ErrCharacterNotFound when no row matches id.
 	RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error
+	// RecordChanneling rewrites the character's channeling_json column
+	// with the supplied struct. Phase E #27 — the per-tick channeling
+	// driver and the `still`/`unstill`/`embrace`/`release` verbs call
+	// this after mutating any field on creature.Channeling. Pass nil
+	// to clear the record (sets channeling_json to JSON null, matching
+	// the chargen unmarshal contract for non-channelers). Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordChanneling(ctx context.Context, id int64, c *creature.Channeling) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.

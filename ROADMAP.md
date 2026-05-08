@@ -694,15 +694,20 @@ will need on top of those tables.
       `ageless` cosmetic flag, `damane_collar_to: NPCID` (a'dam
       binding). Data layout landed (`creature.Channeling` + the
       polymorphic `channeling` table from `0008_create_creatures
-      .sql`); behavior pending: embrace lifecycle (full-round
-      enter, blocks rest/heal/sleep, voluntary release), per-tick
-      madness accrual for men with Mental Stability slow + `Heal
-      the Mind` reduction, slot consumption / 8h refresh from the
-      §8 `regen` bucket, circle linking math (Table 9-1 leader/
-      member/required-men ratios, pooled slot draw), a'dam bind/
-      unbind enforcement (collar-side commands, suppression while
-      collared), Warder bond effects, angreal/sa'angreal slot
-      boost with cross-gender inert behavior.
+      .sql`). Phase E #27 (2026-05-08) shipped slot consumption /
+      8h refresh from the `Regen` bucket via
+      `internal/channeling.RefreshIfDue`, accrue-only madness for
+      embraced Saidin channelers via `AccrueMadness`, the
+      `Stilled` runtime gate, and the `embrace`/`release` and
+      `still`/`unstill` verbs. Still pending: embrace lifecycle
+      (full-round enter, blocks rest/heal/sleep — gated on a
+      `rest` verb landing), Mental Stability save layered on
+      madness accrual + `Heal the Mind` reduction, circle linking
+      math (Table 9-1 leader/member/required-men ratios, pooled
+      slot draw), a'dam bind/unbind enforcement (collar-side
+      commands, suppression while collared), Warder bond effects,
+      angreal/sa'angreal slot boost with cross-gender inert
+      behavior.
 - [~] **Equipment slots and wear/wield logic** — WoT does not use a
       D&D wear-slot bitmask. Discrete slots: `armor` (one body
       armor), `shield` (separate from armor; bonuses stack),

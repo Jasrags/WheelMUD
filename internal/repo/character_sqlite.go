@@ -524,6 +524,24 @@ func (r *SQLiteCharacterRepo) RecordAffects(ctx context.Context, id int64, affec
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordChanneling(ctx context.Context, id int64, c *creature.Channeling) error {
+	js, err := jsonMarshalString(c)
+	if err != nil {
+		return fmt.Errorf("marshal channeling: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET channeling_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record channeling: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) MarkNewsSeen(ctx context.Context, id int64, when time.Time) error {
 	if when.IsZero() {
 		// Defensive: a zero time would store the "never seen" sentinel

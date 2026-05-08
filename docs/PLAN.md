@@ -442,11 +442,32 @@ catalogs.
     and consumables write it.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure.
-27. **Channeling slot refresh + madness tick** (§9). Schema half-
+27. ~~**Channeling slot refresh + madness tick** (§9). Schema half-
     landed (creature/channeling tables); chargen seeded affinities +
     starting weaves; this finishes the per-tick mechanics (slot
     refresh on rest, madness accrual while embraced for men, stilled
-    state).
+    state).~~ **LANDED 2026-05-08.** New `internal/channeling`
+    package: `RefreshIfDue` (8h wall-clock cooldown, no-op when
+    `Stilled`) + `AccrueMadness` (Saidin + Embraced + non-Stilled,
+    int16-clamped) as pure functions; `SessionTicker` walks the
+    same Candidate snapshot the affects ticker uses and persists
+    via the new `CharacterRepo.RecordChanneling` (mirrors
+    `RecordAffects` shape; no migration — `LastSlotRefreshAt`
+    piggybacks on the existing `channeling_json` blob).
+    Subscribed to `Buckets.Regen` (30s). New verbs: `embrace` /
+    `release` (Player; toggle `Embraced`, stamp
+    `EmbracedSince`, refused on `Stilled`) and `still` / `unstill`
+    (AuthAdmin, audited; online-targets-only V1; `still` zeroes
+    `Slots[*].Cur` so the gate is observable immediately,
+    `unstill` does NOT auto-refill — slots refill on the next 8h
+    pulse). `score` gained a Channeling subsection rendering
+    Source / per-level slot pools / Madness / state flags.
+    Deferred: `rest` verb (would unlock embracing's rest/heal
+    blockers), Madness thresholds + Mental Stability save +
+    `Heal the Mind` reduction, embrace passives (same-gender
+    perception, saidar aura, gender detection within 15 ft),
+    angreal/sa'angreal slot bonuses, bond/circle/a'dam
+    interactions.
 28. **Mid-game weave learning** (§12). New weaves added to
     `WeavesKnown` via trainer NPC + practice-points spend. Catalog
     already loaded by Phase C #10.
