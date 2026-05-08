@@ -1,8 +1,8 @@
-<!-- Generated: 2026-05-07 | Updated for Phase E #25: RecordFeatPick/RecordAbilityBump/RecordWeavePick | Token estimate: ~1600 -->
+<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1600 -->
 
 # Data
 
-SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). 39
+SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). 41
 embedded migrations applied at boot. `cmd/server/main.go` opens the DB,
 runs migrations, loads YAML catalogs (chargen / news / help), populates
 world tables via `internal/world.LoadAndSync`, and constructs the
@@ -33,7 +33,7 @@ SQLite-backed repos that modes and commands consume.
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-## Migrations (0001-0039)
+## Migrations (0001-0041)
 
 | # | File | Purpose |
 |---|---|---|
@@ -76,6 +76,8 @@ SQLite-backed repos that modes and commands consume.
 | 0037 | `characters_pvp` | PvP opt-in (Phase D #21) |
 | 0038 | `create_trainers` | trainers (1:1 mob_template → class id) for §E #23 |
 | 0039 | `characters_pending_pools` | pending_feats / pending_skill_points / pending_ability_bumps / pending_weaves (Phase E #23 slice 4) |
+| 0040 | `create_shops` | (legacy: absorbed into 0030) |
+| 0041 | `characters_xp_debt` | xp_debt INT NOT NULL DEFAULT 0 — stacks on character death via `DeathDebt(curXP, curLevel) → debt` (Phase D #19) |
 
 Runner (`internal/db/db.go::Migrate`):
 - Ensures `schema_migrations(version, applied_at)` exists.
@@ -92,7 +94,7 @@ Pragmas on `Open`: `foreign_keys=ON`, `journal_mode=WAL`,
 | `schema_migrations` | bootstrap | `version PK, applied_at` |
 | `accounts` | 0001/0035 | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until, settings_json` |
 | `account_logins` | 0036 | `id, account_id, ts, remote_address, outcome, info` + index on `(account_id, ts)` |
-| `characters` | 0002–0039 | `id, account_id, name, name_lower (unique), created_at, last_played_at, current_room_id` + Core block (str/dex/con/int/wis/cha + str_cur/dex_cur/con_cur/int_cur/wis_cur/cha_cur + hp/hp_max/etc.) + race/background/class_levels_json/xp/coin/coin_version/bank/feats_json/skills_json/equipment_json/inventory_json/channel_settings_json/channeling_json/prompt_template/last_news_seen/pvp/pending_feats/pending_skill_points/pending_ability_bumps/pending_weaves/auth_level. **Write sites:** chargen (abilities/feats/skills/equipment), `RecordLevelUp` (class_levels + hp/bab/saves + pending deltas), `RecordAbilityBump` (*_cur columns), `RecordFeatPick` (feats_json + pending_feats), `RecordSkillRank` (skills_json + pending_skill_points), `RecordWeavePick` (channeling_json + pending_weaves). **Lock-step:** `charPlayerColumns`/`charPlayerValues`/`charPlayerScanDest` in `internal/repo/character_sql.go` must move together; `auth_level` is the trailing column for the SQLite first-character bootstrap CASE. |
+| `characters` | 0002–0041 | `id, account_id, name, name_lower (unique), created_at, last_played_at, current_room_id` + Core block (str/dex/con/int/wis/cha + str_cur/dex_cur/con_cur/int_cur/wis_cur/cha_cur + hp/hp_max/etc.) + race/background/class_levels_json/xp/coin/coin_version/bank/feats_json/skills_json/equipment_json/inventory_json/channel_settings_json/channeling_json/prompt_template/last_news_seen/pvp/pending_feats/pending_skill_points/pending_ability_bumps/pending_weaves/xp_debt/auth_level. **Write sites:** chargen (abilities/feats/skills/equipment), `RecordLevelUp` (class_levels + hp/bab/saves + pending deltas), `RecordAbilityBump` (*_cur columns), `RecordFeatPick` (feats_json + pending_feats), `RecordSkillRank` (skills_json + pending_skill_points), `RecordWeavePick` (channeling_json + pending_weaves), `RecordXPDebt` (xp_debt via character death). **Lock-step:** `charPlayerColumns`/`charPlayerValues`/`charPlayerScanDest` in `internal/repo/character_sql.go` must move together; `auth_level` is the trailing column for the SQLite first-character bootstrap CASE. |
 | `rooms` | 0003/0006/0012/0013/0016/0020/0025/0026 | `id, external_id, zone_id, name, short_desc, long_desc, flags, sector, light_level, extra_descs_json, nomap, coords_auto, coord_x, coord_y, coord_z` |
 | `exits` | 0003/0007/0014 | `id, from_room_id, to_room_id, direction CHECK, door_flags, key_external_id, lock_difficulty, description` |
 | `items` | 0003/0006/0015/0017/0028 | `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id, type, weight, value, quality, flags, stats_json` — **location invariant:** exactly one of (`room_id`, `owner_character_id`, `parent_item_id`) is non-null |
@@ -123,8 +125,8 @@ CharacterRepo          Create / FindByName / GetByID / ListByAccount /
                        RecordPlay / RecordRoom / RecordCore /
                        RecordChannelSettings / RecordInventory /
                        RecordEquipment / RecordCoin (expectedVersion) /
-                       RecordXP / RecordPromptTemplate / RecordPvP /
-                       RecordLevelUp(LevelUpFields) /
+                       RecordXP / RecordXPDebt / RecordPromptTemplate /
+                       RecordPvP / RecordLevelUp(LevelUpFields) /
                        RecordSkillRank(skillID, ranks, isClassSkill,
                                        newPending) /
                        RecordFeatPick(featID, newPending) /
@@ -151,10 +153,13 @@ AdminAuditRepo         Record / RecordAccount / List(filter)
 WorldStateRepo         Get / Set (key/value store)
 ```
 
+**New repo methods (Phase D #19):**
+- `RecordXPDebt(ctx, id, debt int64)` — absolute-write, mirrors `RecordXP`.
+
 **New repo errors (Phase E #25):**
 - `ErrNotChanneler` — returned by `RecordWeavePick` on non-channeler characters.
 
-**New repo type (Phase E #25):**
+**New repo types (Phase E #25):**
 - `AbilityKey` enum (Str/Dex/Con/Int/Wis/Cha) with `String()` method.
 
 ### Optimistic-lock contract

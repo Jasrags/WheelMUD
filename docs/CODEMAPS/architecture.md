@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Updated for Phase E #25: feat, bump, learn weave | Token estimate: ~1350 -->
+<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1350 -->
 
 # Architecture
 
@@ -64,7 +64,7 @@ account is enforced via a process-level session registry.
 │   internal/world/       YAML loader (parse → validate → tx-sync),   │
 │                         Restocker (areaReset bucket), Clock         │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/db/            SQLite Open + 39 embedded migrations        │
+│ internal/db/            SQLite Open + 41 embedded migrations        │
 ├────────────────────────────────────────────────────────────────────┤
 │ telnet/                 protocol + I/O + mode/registry/dispatch     │
 │   server.go             RunSession, readLoop, dispatcher            │
@@ -89,7 +89,7 @@ input to `ComputeLevelUp`); `repo` does NOT import `progression` —
 ## Boot
 
 ```
-main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-0039
+main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-0041
      ─► repo.NewSQLite{Account, Character, AccountLogin,
         Room, Exit, Item, MobTemplate, MobInstance, MobTrail,
         Zone, Channel, Channeling, Shop, Banker, Trainer,
@@ -176,7 +176,7 @@ Catalog string ids hash to int32 via `chargen.HashID` (FNV-32a) so
 round-trip through `feats_json` / `skills_json`. Cmd-layer spend verbs
 (`learn`; future `pick feat`/`bump`/`learn weave`) call the same hash.
 
-## Combat pipeline (§D #18-22)
+## Combat pipeline (§D #18-22, #19)
 
 ```
 attack <mob|player> ─► combat.Manager.EnqueueAction(Fight, ActionAttack)
@@ -189,9 +189,27 @@ tick.Buckets.Combat (4s) ─► Manager.Tick:
    ├ applyDamage (DR clamp → Resists percent → Subdual route)
    ├ tally damage to Fight.DamageTally + Fight.Threat
    ├ write HP via MobInstanceRepo.UpdateLive / CharacterRepo.RecordCore
-   └ on HP≤0: handleMobDeath (corpse spawn, despawn, XP allocation
-              via expandTallyByGroup → GroupResolver split)
+   └ on HP≤0:
+       ├ mob   → handleMobDeath (corpse spawn, despawn, XP allocation
+       │                        via expandTallyByGroup → GroupResolver split;
+       │                        applies XP debt drain via ApplyXPAward)
+       └ char  → handleCharacterDeath (heal to HPMax, clear CondDying/
+                  CondUnconscious + position_flags, move to BoundRoomID,
+                  compute DeathDebt = 10% of level XP, write via RecordXPDebt,
+                  publish CharacterDied + CharacterRespawned)
 ```
+
+Death dispatch: `resolveAction` switches on `ActorKind` (mob vs character).
+
+XP-debt model: Passive offset via `ApplyXPAward(award, debt) → (gain, newDebt)`.
+On next XP gain, debt is drained off the top before crediting. No tick-scheduled
+decay. Player retains inventory/equipment/coin; penalty is in XP only.
+
+CharacterDied event: broadcast to death-room peers (via `combatBroadcastExcept`
+to skip victim), victim gets private "You die!" message.
+
+CharacterRespawned event: cmd-layer subscriber calls `Session.SetCurrentRoom` +
+`RenderRoom` in detached context, broadcasts arrival to peers in bound room.
 
 PvP gate (`attack <player>`): NoPVP-room → newbie (level<10) →
 attacker opt-in → target opt-in → same-group refusal. Same-group + party

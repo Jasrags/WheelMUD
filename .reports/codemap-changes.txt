@@ -1,0 +1,60 @@
+Codemap updates for Phase D §19 (death/respawn/XP-debt) — commit 918fa32
+Updated: 2026-05-08
+
+FILES MODIFIED
+==============
+✓ commands.md
+  - Updated freshness header to 2026-05-08
+  - Extended xp verb description: added note on new "XP debt: N" line
+
+✓ data.md
+  - Updated freshness header to 2026-05-08
+  - Changed migration count from 39 → 41
+  - Added migration 0041: characters_xp_debt column
+  - Extended characters table description: added xp_debt write site + RecordXPDebt
+  - Added RecordXPDebt to CharacterRepo method list
+  - Reorganized repo error/type notes to group Phase D #19 with new method
+
+✓ architecture.md
+  - Updated freshness header to 2026-05-08
+  - Changed migration count from 39 → 41
+  - Expanded Combat pipeline section (§D #18-22, #19):
+    - Added handleCharacterDeath dispatch path at HP≤0 gate
+    - Documented death flow: heal/clear-conditions/move/compute-debt
+    - Documented XP-debt model (passive offset, no decay)
+    - Documented CharacterDied event (broadcast + private feedback)
+    - Documented CharacterRespawned event (cmd subscriber, SetCurrentRoom)
+    - Updated PvP gate note (no changes, just context)
+
+✓ telnet.md
+  - Updated freshness header to 2026-05-08
+  - Added SetCurrentRoom to public surface (crossMu-guarded)
+  - Extended cross-session output rule: documented cross-goroutine field
+    mutation pattern for respawn + admin movement subscribers
+
+✓ dependencies.md
+  - Updated freshness header to 2026-05-08
+  - No new third-party deps (confirmed go.mod)
+
+WHAT LANDED IN 918FA32
+======================
+• Migration 0041: adds xp_debt INT NOT NULL DEFAULT 0 column
+• New repo method: CharacterRepo.RecordXPDebt(ctx, id, debt int64)
+• New combat package files:
+  - xp_debt.go: DeathDebt(curXP, curLevel) + ApplyXPAward(award, debt) helpers
+  - character_death.go: Manager.handleCharacterDeath pipeline
+• Updated resolveAction: dispatches on ActorKind (mob vs char) at HP≤0 gate
+• New combat events:
+  - CharacterDied{DeathRoomID, Victim, Killer, BoundRoomID, XPDebtAdded}
+  - CharacterRespawned{PrevRoomID, RoomID, Character}
+  - CombatXPAwarded extended with DebtTaken field
+• New cmd/server subscribers: CharacterDied (broadcast) + CharacterRespawned
+  (SetCurrentRoom + RenderRoom + broadcast arrival)
+• New cmd/teleport helper: LookupByCharacterID (used by respawn subscriber)
+• xp verb: shows debt line when XPDebt > 0
+• New combatBroadcastExcept helper: skips specified session on death/respawn
+
+NO FILE OVERWRITE THRESHOLD HIT
+================================
+All changes are incremental additions/flag updates. Largest single change is
+the Combat pipeline section in architecture.md (~40 lines), well under 30%.

@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Updated for Phase E #25: feat, bump, learn weave | Token estimate: ~1500 -->
+<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1500 -->
 
 # Command Catalog
 
@@ -104,7 +104,7 @@ alias-introduces-`;` bounded at depth 3.
 
 | Verb | Auth | File | Purpose |
 |---|---|---|---|
-| `xp` | Player | `xp.go` | Read-only — pending level via `progression.XPToNext` |
+| `xp` | Player | `xp.go` | Read-only — pending level via `progression.XPToNext`; shows "XP debt: N" line when `Character.XPDebt > 0` (Phase D #19) |
 | `train` | Player | `train.go` | Trainer-NPC commit one class level (HP/BAB/saves + 4 pending pool deltas via `RecordLevelUp(LevelUpFields)`); audit on success |
 | `learn` | Player | `learn.go` | Spend `pending_skill_points` anywhere. `learn` (menu), `learn <id\|#> [n]`, `learn info <id>`. Cap = level+3; class∪bg skills only V1. Routes to `learn weave` if first arg == "weave" |
 | `learn weave` | Player | `learn_weave.go` | Channeler-only weave-pick. `learn weave` (menu), `learn weave <id>`. Affinity-gated; drains `pending_weaves`; audit on success |

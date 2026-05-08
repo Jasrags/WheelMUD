@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Files scanned: telnet/*.go (16 source files) | Token estimate: ~1100 -->
+<!-- Generated: 2026-05-08 | Files scanned: telnet/*.go (16 source files) | Token estimate: ~1100 -->
 
 # Telnet Package
 
@@ -28,6 +28,8 @@ telnet.Session                per-connection state + write/cross/edit locks
   .SetPasswordMode(bool)       under writeMu
   .Set/Get/Toggle/Snapshot helpers for crossMu-guarded fields:
       lastTellFrom, lastInputAt, channelMuted, followingID, wizinvis
+  .SetCurrentRoom(roomID)         cross-goroutine update for respawn /
+                                  admin movement (under crossMu)
   .PushMode/.PopMode/.ReplaceMode/.CurrentMode
 
 telnet.NewSession(conn)        constructor
@@ -93,6 +95,11 @@ each prompt via `WritePrompt`; mode transitions clear the cache via
 `ClearLastPrompt`. Synchronous reply to `c.Session` keeps using
 `WriteString` — the dispatcher repaints the prompt immediately after
 `Mode.Handle` returns.
+
+Cross-goroutine session mutation (e.g. CharacterRespawned subscriber calling
+`SetCurrentRoom`, admin verbs calling `SetCurrentRoom` on transferred
+players) MUST use the crossMu-guarded helpers to avoid races with the
+dispatcher reading the field.
 
 ## Command registry (`command.go`)
 
