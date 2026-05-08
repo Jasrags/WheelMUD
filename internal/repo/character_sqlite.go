@@ -267,10 +267,8 @@ func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64
 	return nil
 }
 
-func (r *SQLiteCharacterRepo) RecordLevelUp(ctx context.Context, id int64,
-	classLevels map[creature.Class]int8,
-	hpCurrent, hpMax int32, bab int16, saves creature.Saves) error {
-	js, err := jsonMarshalString(classLevels)
+func (r *SQLiteCharacterRepo) RecordLevelUp(ctx context.Context, id int64, f LevelUpFields) error {
+	js, err := jsonMarshalString(f.ClassLevels)
 	if err != nil {
 		return fmt.Errorf("marshal class levels: %w", err)
 	}
@@ -278,9 +276,18 @@ func (r *SQLiteCharacterRepo) RecordLevelUp(ctx context.Context, id int64,
 		`UPDATE characters
 		   SET hp_current = ?, hp_max = ?, bab = ?,
 		       save_fort = ?, save_ref = ?, save_will = ?,
-		       class_levels_json = ?
+		       class_levels_json = ?,
+		       pending_feats          = pending_feats          + ?,
+		       pending_skill_points   = pending_skill_points   + ?,
+		       pending_ability_bumps  = pending_ability_bumps  + ?,
+		       pending_weaves         = pending_weaves         + ?
 		 WHERE id = ?`,
-		hpCurrent, hpMax, bab, saves.Fort, saves.Ref, saves.Will, js, id,
+		f.HPCurrent, f.HPMax, f.BAB,
+		f.Saves.Fort, f.Saves.Ref, f.Saves.Will,
+		js,
+		f.PendingFeatsDelta, f.PendingSkillPointsDelta,
+		f.PendingAbilityBumpsDelta, f.PendingWeavesDelta,
+		id,
 	)
 	if err != nil {
 		return fmt.Errorf("record level up: %w", err)
@@ -396,7 +403,8 @@ func scanCharacter(s scanner) (Character, error) {
 		&fatigue, &idle, &login,
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
 		&j.channelSettings, &channelingNS,
-		&newsSeenSecs, &pvpInt)...)
+		&newsSeenSecs, &pvpInt,
+		&c.PendingFeats, &c.PendingSkillPoints, &c.PendingAbilityBumps, &c.PendingWeaves)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err

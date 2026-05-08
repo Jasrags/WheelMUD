@@ -123,6 +123,20 @@ type Character struct {
 	// at the verb layer; this flag is only the consent half.
 	PvP bool
 
+	// Pending* are level-up gain pools deposited by `train` and
+	// decremented by future spend verbs (`learn`, `pick`, `bump`).
+	// All four default 0 (migration 0039) and accumulate across
+	// level-ups; the V1 cadence is encoded in
+	// progression.ComputeLevelUp:
+	//   PendingFeats         — +1 at every level divisible by 3
+	//   PendingSkillPoints   — +max(1, class.SkillPoints + IntMod) per level
+	//   PendingAbilityBumps  — +1 at L4/8/12/16/20
+	//   PendingWeaves        — +1 per channeler-class level (else 0)
+	PendingFeats        int32
+	PendingSkillPoints  int32
+	PendingAbilityBumps int32
+	PendingWeaves       int32
+
 	// AuthLevel mirrors telnet.AuthLevel as a plain uint8 to avoid
 	// coupling the repo package to telnet. Use the AuthLevel*
 	// constants below. postauth.promoteToGame copies this onto
@@ -212,14 +226,13 @@ type CharacterRepo interface {
 	// when no row matches id.
 	RecordPvP(ctx context.Context, id int64, on bool) error
 	// RecordLevelUp atomically writes the new ClassLevels map plus
-	// the recomputed Core fields (HP/MaxHP/BAB/Saves) for the trainer
-	// commit path (Phase E #23 slice 3). The caller computes the
-	// new totals via progression.ComputeLevelUp; the repo persists
-	// them in one UPDATE. Returns ErrCharacterNotFound when no row
-	// matches id.
-	RecordLevelUp(ctx context.Context, id int64,
-		classLevels map[creature.Class]int8,
-		hpCurrent, hpMax int32, bab int16, saves creature.Saves) error
+	// the recomputed Core fields (HP/MaxHP/BAB/Saves) and increments
+	// the four pending-pool counters by the per-level deltas. Phase E
+	// #23 slices 3 (commit) + 4 (pending pools). The caller computes
+	// the new totals via progression.ComputeLevelUp and copies the
+	// shape into LevelUpFields; the repo persists everything in one
+	// UPDATE. Returns ErrCharacterNotFound when no row matches id.
+	RecordLevelUp(ctx context.Context, id int64, f LevelUpFields) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.
@@ -235,6 +248,27 @@ type CharacterRepo interface {
 	// channeling_json, last_news_seen, …) are removed with the row.
 	// Returns ErrCharacterNotFound when no row matches id.
 	Delete(ctx context.Context, id int64) error
+}
+
+// LevelUpFields is the persistence shape for a single class-level
+// commit. Mirrors progression.LevelGains without creating a package
+// cycle (progression imports repo). The cmd-layer caller copies the
+// fields across at the call site.
+//
+// HPCurrent/HPMax/BAB/Saves/ClassLevels are absolute new values
+// (overwrite the row). Pending*Delta are increments applied with
+// `pending_x = pending_x + delta` so deposits accumulate across
+// level-ups; pass 0 for any pool that doesn't grow this level.
+type LevelUpFields struct {
+	ClassLevels              map[creature.Class]int8
+	HPCurrent                int32
+	HPMax                    int32
+	BAB                      int16
+	Saves                    creature.Saves
+	PendingFeatsDelta        int32
+	PendingSkillPointsDelta  int32
+	PendingAbilityBumpsDelta int32
+	PendingWeavesDelta       int32
 }
 
 var (

@@ -129,8 +129,9 @@ func SaveRefOf(c *chargen.Class) chargen.SaveProgression  { return c.SaveRef }
 func SaveWillOf(c *chargen.Class) chargen.SaveProgression { return c.SaveWill }
 
 // LevelGains is the immutable result of a level-up computation. The
-// caller persists ClassLevels + the four Core fields atomically via
-// CharacterRepo.RecordLevelUp.
+// caller persists ClassLevels + the four Core fields + the pending-
+// pool deltas atomically via CharacterRepo.RecordLevelUp (mapping
+// shape onto repo.LevelUpFields).
 type LevelGains struct {
 	NewHPCurrent int32
 	NewHPMax     int32
@@ -139,6 +140,15 @@ type LevelGains struct {
 	ClassLevels  map[creature.Class]int8
 	HPDelta      int32 // for the player-facing line
 	NewLevel     int8  // ClassLevels[classKey] after the bump
+
+	// Per-pool deltas deposited at this level-up. Phase E #23 slice
+	// 4. The cmd-layer renders any non-zero values into the train
+	// success line and forwards them to RecordLevelUp where they
+	// `pending_x += delta` on the row.
+	FeatDelta    int32 // +1 when NewLevel%3==0
+	SkillDelta   int32 // max(1, class.SkillPoints + IntMod)
+	AbilityDelta int32 // +1 when NewLevel%4==0
+	WeaveDelta   int32 // +1 for channeler classes, else 0
 }
 
 // ComputeLevelUp returns the LevelGains for advancing classKey by
@@ -170,6 +180,7 @@ func ComputeLevelUp(ch repo.Character, cat *chargen.Catalog,
 	conMod := AbilityModifier(int(ch.Core.Abilities.Con.Current))
 	dexMod := AbilityModifier(int(ch.Core.Abilities.Dex.Current))
 	wisMod := AbilityModifier(int(ch.Core.Abilities.Wis.Current))
+	intMod := AbilityModifier(int(ch.Core.Abilities.Int.Current))
 
 	hpDelta := HPDelta(cl.HitDie, conMod)
 	newMax := ch.Core.HPMax + hpDelta
@@ -185,6 +196,22 @@ func ComputeLevelUp(ch repo.Character, cat *chargen.Catalog,
 		Will: SaveTotal(newLevels, cat, SaveWillOf, wisMod),
 	}
 
+	newLevel := newLevels[classKey]
+	skillDelta := int32(cl.SkillPoints) + int32(intMod)
+	if skillDelta < 1 {
+		skillDelta = 1
+	}
+	var featDelta, abilityDelta, weaveDelta int32
+	if newLevel%3 == 0 {
+		featDelta = 1
+	}
+	if newLevel%4 == 0 {
+		abilityDelta = 1
+	}
+	if cl.Channeler {
+		weaveDelta = 1
+	}
+
 	return LevelGains{
 		NewHPCurrent: newCur,
 		NewHPMax:     newMax,
@@ -192,7 +219,11 @@ func ComputeLevelUp(ch repo.Character, cat *chargen.Catalog,
 		NewSaves:     saves,
 		ClassLevels:  newLevels,
 		HPDelta:      hpDelta,
-		NewLevel:     newLevels[classKey],
+		NewLevel:     newLevel,
+		FeatDelta:    featDelta,
+		SkillDelta:   skillDelta,
+		AbilityDelta: abilityDelta,
+		WeaveDelta:   weaveDelta,
 	}, nil
 }
 

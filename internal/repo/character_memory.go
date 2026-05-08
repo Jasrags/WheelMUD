@@ -241,24 +241,26 @@ func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, 
 	return ErrCharacterNotFound
 }
 
-func (r *MemoryCharacterRepo) RecordLevelUp(_ context.Context, id int64,
-	classLevels map[creature.Class]int8,
-	hpCurrent, hpMax int32, bab int16, saves creature.Saves) error {
+func (r *MemoryCharacterRepo) RecordLevelUp(_ context.Context, id int64, f LevelUpFields) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, c := range r.byLower {
 		if c.ID == id {
 			// Defensive copy of the ClassLevels map so the caller
 			// mutating it after the call doesn't bleed back.
-			cp := make(map[creature.Class]int8, len(classLevels))
-			for k, v := range classLevels {
+			cp := make(map[creature.Class]int8, len(f.ClassLevels))
+			for k, v := range f.ClassLevels {
 				cp[k] = v
 			}
 			c.ClassLevels = cp
-			c.Core.HPCurrent = hpCurrent
-			c.Core.HPMax = hpMax
-			c.Core.BAB = bab
-			c.Core.Saves = saves
+			c.Core.HPCurrent = f.HPCurrent
+			c.Core.HPMax = f.HPMax
+			c.Core.BAB = f.BAB
+			c.Core.Saves = f.Saves
+			c.PendingFeats += f.PendingFeatsDelta
+			c.PendingSkillPoints += f.PendingSkillPointsDelta
+			c.PendingAbilityBumps += f.PendingAbilityBumpsDelta
+			c.PendingWeaves += f.PendingWeavesDelta
 			return nil
 		}
 	}

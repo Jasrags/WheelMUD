@@ -50,6 +50,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		prompt_template,
 		last_news_seen,
 		pvp,
+		pending_feats, pending_skill_points, pending_ability_bumps, pending_weaves,
 		auth_level`
 
 // charCoreValues returns the bound-parameter slice for the Core
@@ -119,6 +120,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		c.PromptTemplate,
 		newsSeenSeconds(c.LastNewsSeen),
 		boolToInt(c.PvP),
+		c.PendingFeats, c.PendingSkillPoints, c.PendingAbilityBumps, c.PendingWeaves,
 		c.AuthLevel,
 	}
 }
@@ -146,6 +148,7 @@ func charPlayerScanDest(c *Character,
 	channelingJSON *sql.NullString,
 	lastNewsSeenSec *int64,
 	pvpInt *int,
+	pendingFeats, pendingSkillPoints, pendingAbilityBumps, pendingWeaves *int32,
 ) []any {
 	return []any{
 		&c.Race, &c.Background, classLevelsJSON,
@@ -160,6 +163,7 @@ func charPlayerScanDest(c *Character,
 		&c.PromptTemplate,
 		lastNewsSeenSec,
 		pvpInt,
+		pendingFeats, pendingSkillPoints, pendingAbilityBumps, pendingWeaves,
 		&c.AuthLevel,
 	}
 }

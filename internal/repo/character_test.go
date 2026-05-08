@@ -366,7 +366,11 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 			creature.ClassWilder:  1,
 		}
 		newSaves := creature.Saves{Fort: 5, Ref: 1, Will: 3}
-		if err := cr.RecordLevelUp(ctx, c.ID, newLevels, 20, 20, 3, newSaves); err != nil {
+		if err := cr.RecordLevelUp(ctx, c.ID, LevelUpFields{
+			ClassLevels: newLevels, HPCurrent: 20, HPMax: 20, BAB: 3, Saves: newSaves,
+			PendingFeatsDelta: 1, PendingSkillPointsDelta: 5,
+			PendingAbilityBumpsDelta: 0, PendingWeavesDelta: 1,
+		}); err != nil {
 			t.Fatalf("RecordLevelUp: %v", err)
 		}
 		got, err := cr.FindByName(ctx, "Egwene")
@@ -386,13 +390,35 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 			got.ClassLevels[creature.ClassWilder] != 1 {
 			t.Fatalf("ClassLevels not persisted: %+v", got.ClassLevels)
 		}
+		if got.PendingFeats != 1 || got.PendingSkillPoints != 5 ||
+			got.PendingAbilityBumps != 0 || got.PendingWeaves != 1 {
+			t.Fatalf("pending pools not persisted: feats=%d skill=%d abil=%d weave=%d",
+				got.PendingFeats, got.PendingSkillPoints,
+				got.PendingAbilityBumps, got.PendingWeaves)
+		}
+		// A second level-up accumulates onto the existing pools.
+		if err := cr.RecordLevelUp(ctx, c.ID, LevelUpFields{
+			ClassLevels: newLevels, HPCurrent: 20, HPMax: 20, BAB: 3, Saves: newSaves,
+			PendingFeatsDelta: 0, PendingSkillPointsDelta: 4,
+			PendingAbilityBumpsDelta: 1, PendingWeavesDelta: 0,
+		}); err != nil {
+			t.Fatalf("RecordLevelUp 2: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Egwene")
+		if got.PendingFeats != 1 || got.PendingSkillPoints != 9 ||
+			got.PendingAbilityBumps != 1 || got.PendingWeaves != 1 {
+			t.Fatalf("pending pools didn't accumulate: feats=%d skill=%d abil=%d weave=%d",
+				got.PendingFeats, got.PendingSkillPoints,
+				got.PendingAbilityBumps, got.PendingWeaves)
+		}
 	})
 
 	t.Run(name+"/record_level_up_unknown_returns_not_found", func(t *testing.T) {
 		cr, _ := newRepo(t)
-		err := cr.RecordLevelUp(context.Background(), 9999,
-			map[creature.Class]int8{creature.ClassArmsman: 1}, 1, 1, 0,
-			creature.Saves{})
+		err := cr.RecordLevelUp(context.Background(), 9999, LevelUpFields{
+			ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1},
+			HPCurrent:   1, HPMax: 1,
+		})
 		if !errors.Is(err, ErrCharacterNotFound) {
 			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
 		}
@@ -405,8 +431,9 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Mat",
 			ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1}})
 		levels := map[creature.Class]int8{creature.ClassArmsman: 2}
-		if err := cr.RecordLevelUp(ctx, c.ID, levels, 12, 12, 2,
-			creature.Saves{}); err != nil {
+		if err := cr.RecordLevelUp(ctx, c.ID, LevelUpFields{
+			ClassLevels: levels, HPCurrent: 12, HPMax: 12, BAB: 2,
+		}); err != nil {
 			t.Fatalf("RecordLevelUp: %v", err)
 		}
 		// Mutate the caller's map; stored state must not move.

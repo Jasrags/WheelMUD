@@ -139,6 +139,10 @@ func TestSaveTotal_AbilityModAddedOnce(t *testing.T) {
 }
 
 func mkChar(con, dex, wis int8) repo.Character {
+	return mkCharInt(con, dex, wis, 10)
+}
+
+func mkCharInt(con, dex, wis, intScore int8) repo.Character {
 	return repo.Character{
 		ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1},
 		Core: creature.Core{
@@ -148,6 +152,7 @@ func mkChar(con, dex, wis int8) repo.Character {
 				Con: creature.AbilityScore{Current: con, Max: con},
 				Dex: creature.AbilityScore{Current: dex, Max: dex},
 				Wis: creature.AbilityScore{Current: wis, Max: wis},
+				Int: creature.AbilityScore{Current: intScore, Max: intScore},
 			},
 		},
 	}
@@ -241,6 +246,103 @@ func TestComputeLevelUp_HPCurrentCappedAtNewMax(t *testing.T) {
 	}
 	if got.NewHPMax != 18 {
 		t.Errorf("max = %d, want 18", got.NewHPMax)
+	}
+}
+
+func TestComputeLevelUp_PendingPoolDeltas(t *testing.T) {
+	cat := loadCat(t)
+	// Armsman: HitDie 10, SkillPoints 2, Channeler false.
+	// Int 12 → +1 mod, so SkillDelta = 2 + 1 = 3 every level.
+	ch := mkCharInt(10, 10, 10, 12)
+	ch.ClassLevels = map[creature.Class]int8{creature.ClassArmsman: 1}
+
+	cases := []struct {
+		startLvl                                     int8
+		wantFeat, wantSkill, wantAbility, wantWeave int32
+	}{
+		{startLvl: 1, wantFeat: 0, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L2
+		{startLvl: 2, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L3 (feat)
+		{startLvl: 3, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L4 (ability)
+		{startLvl: 5, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L6 (feat)
+		{startLvl: 7, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L8 (ability)
+		{startLvl: 11, wantFeat: 1, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L12 (feat+ability)
+	}
+	for _, tc := range cases {
+		ch.ClassLevels[creature.ClassArmsman] = tc.startLvl
+		got, err := ComputeLevelUp(ch, cat, creature.ClassArmsman)
+		if err != nil {
+			t.Fatalf("L%d→: %v", tc.startLvl, err)
+		}
+		if got.FeatDelta != tc.wantFeat {
+			t.Errorf("L%d→%d FeatDelta = %d, want %d",
+				tc.startLvl, got.NewLevel, got.FeatDelta, tc.wantFeat)
+		}
+		if got.SkillDelta != tc.wantSkill {
+			t.Errorf("L%d→%d SkillDelta = %d, want %d",
+				tc.startLvl, got.NewLevel, got.SkillDelta, tc.wantSkill)
+		}
+		if got.AbilityDelta != tc.wantAbility {
+			t.Errorf("L%d→%d AbilityDelta = %d, want %d",
+				tc.startLvl, got.NewLevel, got.AbilityDelta, tc.wantAbility)
+		}
+		if got.WeaveDelta != tc.wantWeave {
+			t.Errorf("L%d→%d WeaveDelta = %d, want %d",
+				tc.startLvl, got.NewLevel, got.WeaveDelta, tc.wantWeave)
+		}
+	}
+}
+
+func TestComputeLevelUp_SkillDeltaFloorAtOne(t *testing.T) {
+	cat := loadCat(t)
+	// Armsman has SkillPoints=2 (lowest in catalog). Int 1 → mod -5.
+	// 2 + (-5) = -3 → floored to 1.
+	ch := mkCharInt(10, 10, 10, 1)
+	ch.ClassLevels = map[creature.Class]int8{creature.ClassArmsman: 1}
+	got, err := ComputeLevelUp(ch, cat, creature.ClassArmsman)
+	if err != nil {
+		t.Fatalf("ComputeLevelUp: %v", err)
+	}
+	if got.SkillDelta != 1 {
+		t.Errorf("SkillDelta with Int 1 = %d, want 1 (floor)", got.SkillDelta)
+	}
+}
+
+func TestComputeLevelUp_WeaveDeltaForChannelers(t *testing.T) {
+	cat := loadCat(t)
+	for _, k := range []creature.Class{creature.ClassInitiate, creature.ClassWilder} {
+		ch := mkChar(10, 10, 10)
+		ch.ClassLevels = map[creature.Class]int8{k: 1}
+		got, err := ComputeLevelUp(ch, cat, k)
+		if err != nil {
+			t.Fatalf("class %v: %v", k, err)
+		}
+		if got.WeaveDelta != 1 {
+			t.Errorf("class %v WeaveDelta = %d, want 1", k, got.WeaveDelta)
+		}
+	}
+	// Non-channeler stays 0.
+	ch := mkChar(10, 10, 10)
+	got, _ := ComputeLevelUp(ch, cat, creature.ClassArmsman)
+	if got.WeaveDelta != 0 {
+		t.Errorf("Armsman WeaveDelta = %d, want 0", got.WeaveDelta)
+	}
+}
+
+func TestComputeLevelUp_DeltasUseLeveledUpClassFormula(t *testing.T) {
+	cat := loadCat(t)
+	// Player is Armsman 1 (SkillPoints=2); multiclass into Initiate
+	// (SkillPoints=4, channeler). Even though character total is L2,
+	// the delta uses Initiate's formula on the leveled-up class.
+	ch := mkCharInt(10, 10, 10, 10) // Int mod 0
+	got, err := ComputeLevelUp(ch, cat, creature.ClassInitiate)
+	if err != nil {
+		t.Fatalf("ComputeLevelUp: %v", err)
+	}
+	if got.SkillDelta != 4 {
+		t.Errorf("Initiate L1 SkillDelta = %d, want 4", got.SkillDelta)
+	}
+	if got.WeaveDelta != 1 {
+		t.Errorf("Initiate L1 WeaveDelta = %d, want 1", got.WeaveDelta)
 	}
 }
 

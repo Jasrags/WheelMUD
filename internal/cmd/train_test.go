@@ -235,6 +235,65 @@ func TestTrain_RefusesOnUnknownClassID(t *testing.T) {
 	}
 }
 
+func TestTrain_PendingLineRendersSkillOnly(t *testing.T) {
+	// L1→L2 for Armsman has no feat (3-cycle) or ability bump
+	// (4-cycle). With Int unset (mod -5) skill delta is floored at 1.
+	f := newTrainFixture(t, "armsman", 1500, 1)
+	runCmd(t, f.trainCmd(), f.alice, "")
+	out := f.aOut.String()
+	if !strings.Contains(out, "1 skill point") {
+		t.Errorf("expected '1 skill point' in pending line:\n%s", out)
+	}
+	if strings.Contains(out, "feat pick") {
+		t.Errorf("L2 must not grant a feat:\n%s", out)
+	}
+	if strings.Contains(out, "ability bump") {
+		t.Errorf("L2 must not grant an ability bump:\n%s", out)
+	}
+}
+
+func TestTrain_PendingLineHasFeatAtMultiplesOfThree(t *testing.T) {
+	// Seed Alice as Armsman L2 with XP for L3.
+	f := newTrainFixture(t, "armsman", 3000, 2)
+	runCmd(t, f.trainCmd(), f.alice, "")
+	out := f.aOut.String()
+	if !strings.Contains(out, "1 feat pick") {
+		t.Errorf("expected '1 feat pick' at L3:\n%s", out)
+	}
+}
+
+func TestTrain_PendingLineHasAbilityAtMultiplesOfFour(t *testing.T) {
+	// Seed Alice as Armsman L3 with XP for L4.
+	f := newTrainFixture(t, "armsman", 6000, 3)
+	runCmd(t, f.trainCmd(), f.alice, "")
+	out := f.aOut.String()
+	if !strings.Contains(out, "1 ability bump") {
+		t.Errorf("expected '1 ability bump' at L4:\n%s", out)
+	}
+}
+
+func TestTrain_PendingPoolsPersistAfterTrain(t *testing.T) {
+	// L2→L3: feat 1, skill 1, ability 0, weave 0.
+	f := newTrainFixture(t, "armsman", 3000, 2)
+	runCmd(t, f.trainCmd(), f.alice, "")
+	got, err := f.characters.FindByName(context.Background(), "Alice")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got.PendingFeats != 1 {
+		t.Errorf("PendingFeats = %d, want 1", got.PendingFeats)
+	}
+	if got.PendingSkillPoints != 1 {
+		t.Errorf("PendingSkillPoints = %d, want 1", got.PendingSkillPoints)
+	}
+	if got.PendingAbilityBumps != 0 {
+		t.Errorf("PendingAbilityBumps = %d, want 0", got.PendingAbilityBumps)
+	}
+	if got.PendingWeaves != 0 {
+		t.Errorf("PendingWeaves = %d, want 0", got.PendingWeaves)
+	}
+}
+
 func TestTrain_NilCatalogRefuses(t *testing.T) {
 	f := newTrainFixture(t, "armsman", 1500, 1)
 

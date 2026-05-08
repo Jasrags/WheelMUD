@@ -139,10 +139,17 @@ func NewTrain(characters repo.CharacterRepo,
 				return s.WriteString("{{Something blocks the lesson. Try again later.}}::red\r\n")
 			}
 
-			if err := characters.RecordLevelUp(c.Ctx, char.ID,
-				gains.ClassLevels,
-				gains.NewHPCurrent, gains.NewHPMax,
-				gains.NewBAB, gains.NewSaves); err != nil {
+			if err := characters.RecordLevelUp(c.Ctx, char.ID, repo.LevelUpFields{
+				ClassLevels:              gains.ClassLevels,
+				HPCurrent:                gains.NewHPCurrent,
+				HPMax:                    gains.NewHPMax,
+				BAB:                      gains.NewBAB,
+				Saves:                    gains.NewSaves,
+				PendingFeatsDelta:        gains.FeatDelta,
+				PendingSkillPointsDelta:  gains.SkillDelta,
+				PendingAbilityBumpsDelta: gains.AbilityDelta,
+				PendingWeavesDelta:       gains.WeaveDelta,
+			}); err != nil {
 				slog.Error("train: record level-up",
 					"char", char.ID, "class_id", res.trainer.ClassID, "error", err)
 				return s.WriteString("{{The lesson slips away as you reach for it.}}::red\r\n")
@@ -151,11 +158,52 @@ func NewTrain(characters repo.CharacterRepo,
 			audit.Record(c.Ctx, audits, s, "train", res.trainer.ClassID,
 				fmt.Sprintf("L%d", gains.NewLevel))
 
-			return s.WriteString(fmt.Sprintf(
+			if err := s.WriteString(fmt.Sprintf(
 				"{{%s teaches you the next step. (%s — L%d, +%d HP)}}::green|bold\r\n",
-				res.keeperName(), cl.Name, gains.NewLevel, gains.HPDelta))
+				res.keeperName(), cl.Name, gains.NewLevel, gains.HPDelta)); err != nil {
+				return err
+			}
+			if line := pendingGainsLine(gains); line != "" {
+				return s.WriteString(line)
+			}
+			return nil
 		},
 	}
+}
+
+// pendingGainsLine renders the pending-pool deltas from a level-up
+// as a single comma-joined line for the player. Returns "" when no
+// pool changed (suppress the line entirely so the success message
+// stays one line for boring levels).
+func pendingGainsLine(g progression.LevelGains) string {
+	parts := make([]string, 0, 4)
+	if g.FeatDelta > 0 {
+		parts = append(parts, pluralize(g.FeatDelta, "feat pick", "feat picks"))
+	}
+	if g.SkillDelta > 0 {
+		parts = append(parts, pluralize(g.SkillDelta, "skill point", "skill points"))
+	}
+	if g.AbilityDelta > 0 {
+		parts = append(parts, pluralize(g.AbilityDelta, "ability bump", "ability bumps"))
+	}
+	if g.WeaveDelta > 0 {
+		parts = append(parts, pluralize(g.WeaveDelta, "weave slot", "weave slots"))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	out := parts[0]
+	for i := 1; i < len(parts); i++ {
+		out += ", " + parts[i]
+	}
+	return fmt.Sprintf("{{You gained %s.}}::cyan\r\n", out)
+}
+
+func pluralize(n int32, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // lookupClass resolves a trainer's class id against the chargen
