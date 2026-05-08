@@ -250,6 +250,7 @@ func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int6
 // columns in sync with room_sqlite.go::Create if either changes.
 func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[string]int64) (map[string]int64, error) {
 	out := make(map[string]int64, len(rooms))
+	triggers := repo.NewSQLiteTriggerRepo(tx)
 
 	resolveZone := func(r Room) (int64, error) {
 		id, ok := zoneIDs[r.ZoneExternalID]
@@ -281,6 +282,9 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[stri
 		return nil, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
 	}
 	out[starter.ID] = repo.StarterRoomID
+	if err := insertRoomTriggers(ctx, triggers, repo.StarterRoomID, starter); err != nil {
+		return nil, err
+	}
 
 	for i, r := range rooms {
 		if i == starterIdx {
@@ -303,8 +307,35 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[stri
 			return nil, fmt.Errorf("last insert id for room %q: %w", r.ID, err)
 		}
 		out[r.ID] = id
+		if err := insertRoomTriggers(ctx, triggers, id, r); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
+}
+
+// insertRoomTriggers materialises a Room's `triggers:` block as
+// triggers rows keyed by owner_kind='room'. Validation has already
+// confirmed event/action/payload shape.
+func insertRoomTriggers(ctx context.Context, triggers repo.TriggerRepo, roomID int64, r Room) error {
+	for i, td := range r.Triggers {
+		payload, err := marshalTriggerPayload(td.Payload)
+		if err != nil {
+			return fmt.Errorf("room %q trigger #%d payload: %w", r.ID, i+1, err)
+		}
+		if _, err := triggers.Create(ctx, repo.Trigger{
+			OwnerKind: repo.TriggerOwnerRoom,
+			OwnerID:   roomID,
+			Event:     repo.TriggerEvent(td.Event),
+			Match:     td.Match,
+			Action:    td.Action,
+			Payload:   payload,
+			Priority:  td.Priority,
+		}); err != nil {
+			return fmt.Errorf("insert trigger for room %q: %w", r.ID, err)
+		}
+	}
+	return nil
 }
 
 // roomInsertValues materializes the column list + values for one room
@@ -492,6 +523,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 	bankers := repo.NewSQLiteBankerRepo(tx)
 	trainers := repo.NewSQLiteTrainerRepo(tx)
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(tx)
+	triggers := repo.NewSQLiteTriggerRepo(tx)
 
 	for _, m := range mobs {
 		if m.XPValue < 0 {
@@ -561,6 +593,33 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 			if err := insertWeaveTeacher(ctx, weaveTeachers, created.ID, m); err != nil {
 				return fmt.Errorf("insert weave teacher for mob %q: %w", m.ID, err)
 			}
+		}
+		if err := insertMobTriggers(ctx, triggers, created.ID, m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertMobTriggers materialises a Mob's `triggers:` block as
+// triggers rows keyed by owner_kind='mob_template'. Validation has
+// already confirmed event/action/payload shape.
+func insertMobTriggers(ctx context.Context, triggers repo.TriggerRepo, mobTemplateID int64, m Mob) error {
+	for i, td := range m.Triggers {
+		payload, err := marshalTriggerPayload(td.Payload)
+		if err != nil {
+			return fmt.Errorf("mob %q trigger #%d payload: %w", m.ID, i+1, err)
+		}
+		if _, err := triggers.Create(ctx, repo.Trigger{
+			OwnerKind: repo.TriggerOwnerMobTemplate,
+			OwnerID:   mobTemplateID,
+			Event:     repo.TriggerEvent(td.Event),
+			Match:     td.Match,
+			Action:    td.Action,
+			Payload:   payload,
+			Priority:  td.Priority,
+		}); err != nil {
+			return fmt.Errorf("insert trigger for mob %q: %w", m.ID, err)
 		}
 	}
 	return nil

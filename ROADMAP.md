@@ -1281,11 +1281,20 @@ will need on top of those tables.
       `talk <mob>` enters a `Dialogue` mode that takes free-text
       keyword input or numbered choices. Effects can advance a
       quest step or push another mode (e.g. shop).
-- [ ] Trigger / event system (`on_enter`, `on_say`, `on_attack`) —
-      a `triggers` table attached to mobs/rooms/items keyed by
-      event name. The §8 event bus dispatches into a trigger
-      runner that resolves the registered script. Event payloads
-      defined alongside (e.g. `world.PlayerSaid{Speaker, Text}`).
+- [x] Trigger / event system (`on_enter`, `on_say`, `on_attack`,
+      `on_death`, `on_tick`) — Phase F #29 landed 2026-05-08.
+      Migration 0044 added the `triggers` table; the YAML loader
+      seeds it from optional `triggers:` blocks on mob_templates
+      and rooms. `internal/trigger/` ships the in-memory
+      `Registry`, an extensible `ActionRegistry` (V1 builtins:
+      `noop`, `say`, `emote`), a fan-out `Runner`, and a
+      `Dispatcher` wiring eventbus + `tick.Buckets.Phase` to the
+      registered owners. New `world.PlayerSaid{Speaker, RoomID,
+      Text}` event is published by the `say` verb after a
+      successful room broadcast. Item-owned triggers and
+      consecutive-fault auto-disable deferred until §32 ships
+      the Lua action surface (deterministic V1 builtins don't
+      need fault budgets).
 - [ ] Embedded scripting language — pick `gopher-lua` (mature,
       familiar to MUD builders) over starlark/risor v1.
       Surface a small API: `room`, `mob`, `player`, `say(text)`,

@@ -34,6 +34,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/safego"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/tick"
+	"github.com/Jasrags/WheelMUD/internal/trigger"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -70,6 +71,7 @@ type server struct {
 	chargen    *chargen.Catalog
 	combat     *combat.Manager
 	groups     *group.Manager
+	triggers   *trigger.Dispatcher
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -447,6 +449,32 @@ func main() {
 	)
 	buckets.Regen.Subscribe(channelingTicker.Tick)
 
+	// Phase F #29: trigger / event dispatch. Loads every YAML-seeded
+	// triggers row into an in-memory Registry, then subscribes to the
+	// existing event bus + Phase bucket so on_enter / on_say /
+	// on_attack / on_death / on_tick handlers fire for the relevant
+	// owners. The action vocabulary ships with three builtins
+	// (noop / say / emote); consumers (#30 dialogue, #31 quests,
+	// #32 Lua) register more handlers off triggerActions before
+	// triggerDispatcher.Start runs.
+	triggerRepo := repo.NewSQLiteTriggerRepo(conn)
+	triggerRegistry := trigger.NewRegistry()
+	if n, err := triggerRegistry.Reload(context.Background(), triggerRepo); err != nil {
+		slog.Error("Failed to load triggers", "error", err)
+		os.Exit(1)
+	} else {
+		slog.Info("Triggers loaded", "count", n)
+	}
+	triggerActions := trigger.DefaultActions()
+	triggerRunner := trigger.NewRunner(triggerRegistry, triggerActions, trigger.ActionDeps{
+		Rooms:    rooms,
+		Mobs:     mobs,
+		Sessions: sessions,
+		Logger:   slog.Default(),
+	})
+	triggerDispatcher := trigger.NewDispatcher(bus, buckets.Phase, triggerRunner, mobs)
+	triggerDispatcher.Start(context.Background())
+
 	// affects.Expired subscriber: emits one cfmt line per name to the
 	// owning session via WriteAsync (cross-session output rule).
 	eventbus.Subscribe[affects.Expired](bus, func(_ context.Context, ev affects.Expired) {
@@ -484,6 +512,7 @@ func main() {
 		chargen:    chargenCatalog,
 		combat:     combatMgr,
 		groups:     groups,
+		triggers:   triggerDispatcher,
 		closed:     make(chan struct{}),
 	}
 
@@ -624,6 +653,9 @@ func (srv *server) shutdown() {
 		srv.combat.Stop(ctx)
 		cancel()
 	}
+	if srv.triggers != nil {
+		srv.triggers.Stop()
+	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()
 	srv.bus.Stop()
@@ -722,7 +754,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	}
 	if err := r.Register(
 		cmd.NewWho(sessions, characters),
-		cmd.NewSay(sessions, rooms),
+		cmd.NewSay(sessions, rooms, bus),
 		cmd.NewShout(sessions, rooms),
 		cmd.NewYell(sessions, rooms),
 		cmd.NewTell(sessions),

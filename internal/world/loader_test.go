@@ -1010,3 +1010,186 @@ func TestLoadAndSync_ShopRejectsUnknownItem(t *testing.T) {
 		t.Fatalf("err = %q, want it to mention z.ghost", err)
 	}
 }
+
+func TestLoadAndSync_TriggersRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.commons
+  starter: true
+  name: Commons
+  long: A common room.
+  triggers:
+    - event: on_enter
+      action: noop
+      payload:
+        message: "someone arrives"
+      priority: 5
+`)},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.innkeeper
+  room: z.commons
+  name: the innkeeper
+  triggers:
+    - event: on_say
+      match: rumor
+      action: emote
+      payload:
+        text: "leans in conspiratorially."
+    - event: on_enter
+      action: say
+      payload:
+        text: "Welcome to the inn."
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	triggers := repo.NewSQLiteTriggerRepo(conn)
+	roomRows, err := triggers.ListByOwner(ctx, repo.TriggerOwnerRoom, repo.StarterRoomID)
+	if err != nil {
+		t.Fatalf("list room triggers: %v", err)
+	}
+	if len(roomRows) != 1 {
+		t.Fatalf("room triggers len = %d, want 1", len(roomRows))
+	}
+	if roomRows[0].Event != repo.TriggerEventOnEnter || roomRows[0].Action != "noop" {
+		t.Errorf("room trigger: %+v", roomRows[0])
+	}
+	if !strings.Contains(roomRows[0].Payload, "someone arrives") {
+		t.Errorf("room trigger payload: %q", roomRows[0].Payload)
+	}
+	if roomRows[0].Priority != 5 {
+		t.Errorf("priority = %d, want 5", roomRows[0].Priority)
+	}
+
+	mobs := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := mobs.GetByExternalID(ctx, "z.innkeeper")
+	if err != nil {
+		t.Fatalf("template: %v", err)
+	}
+	mobRows, err := triggers.ListByOwner(ctx, repo.TriggerOwnerMobTemplate, tpl.ID)
+	if err != nil {
+		t.Fatalf("list mob triggers: %v", err)
+	}
+	if len(mobRows) != 2 {
+		t.Fatalf("mob triggers len = %d, want 2", len(mobRows))
+	}
+	var sawOnSay, sawOnEnter bool
+	for _, r := range mobRows {
+		if r.Event == repo.TriggerEventOnSay {
+			sawOnSay = true
+			if r.Match != "rumor" || r.Action != "emote" {
+				t.Errorf("on_say row: %+v", r)
+			}
+		}
+		if r.Event == repo.TriggerEventOnEnter {
+			sawOnEnter = true
+			if r.Action != "say" {
+				t.Errorf("on_enter row: %+v", r)
+			}
+		}
+	}
+	if !sawOnSay || !sawOnEnter {
+		t.Fatalf("missing one of the events: rows=%+v", mobRows)
+	}
+}
+
+func TestLoadAndSync_TriggerRejectsBadEvent(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.r
+  starter: true
+  name: R
+  long: x
+  triggers:
+    - event: on_lol
+      action: noop
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on unknown event")
+	}
+	if !strings.Contains(err.Error(), "on_lol") {
+		t.Fatalf("err = %q, want it to mention on_lol", err)
+	}
+}
+
+func TestLoadAndSync_TriggerRejectsScalarPayload(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	// A bare-string payload would JSON-marshal to "hello" and silently
+	// no-op every action handler at fire time. Boot must reject it.
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.r
+  starter: true
+  name: R
+  long: x
+  triggers:
+    - event: on_enter
+      action: say
+      payload: "hello"
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on scalar payload")
+	}
+	if !strings.Contains(err.Error(), "payload must be a mapping") {
+		t.Fatalf("err = %q", err)
+	}
+}
+
+func TestLoadAndSync_TriggerRejectsEmptyAction(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.r
+  starter: true
+  name: R
+  long: x
+  triggers:
+    - event: on_enter
+      action: ""
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on empty action")
+	}
+	if !strings.Contains(err.Error(), "action is empty") {
+		t.Fatalf("err = %q", err)
+	}
+}

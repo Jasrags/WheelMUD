@@ -511,7 +511,32 @@ Content multiplier. Without this the world is static.
 
 29. **Trigger / event system** (§15) — `on_enter`, `on_say`,
     `on_attack`, `on_death`, `on_tick`. Pure dispatch layer; consumers
-    in 30–31.
+    in 30–31. **Landed 2026-05-08.** Migration 0044 added the
+    `triggers` table (CHECK on `owner_kind in
+    ('mob_template','room')` and on `event in
+    ('on_enter','on_say','on_attack','on_death','on_tick')`) plus
+    `(owner_kind, owner_id, event)` and `event` indexes. YAML
+    schema gained an optional `triggers:` block on `Mob` and
+    `Room`; loader inserts rows in the same transaction as the
+    owner via `insertRoomTriggers` / `insertMobTriggers`,
+    validation rejects unknown event/empty action/malformed
+    payload. `internal/trigger/` ships `Registry` (in-memory
+    index keyed by owner+event with priority-DESC ordering),
+    `ActionRegistry` (V1 builtins `noop` / `say` / `emote`;
+    consumers register more), `Runner` (priority fan-out, swallows
+    handler errors so one bad trigger can't take down the bus),
+    and `Dispatcher` wiring the existing eventbus +
+    `tick.Buckets.Phase`. NEW event `world.PlayerSaid{Speaker,
+    RoomID, Text}` published by `internal/cmd/comm.go::NewSay`
+    after the room broadcast (silent rooms / empty payload
+    short-circuit before publish). Action handlers MUST use
+    `Session.WriteAsync` (cross-session output rule — they run on
+    the eventbus goroutine). Deferred: item-owned triggers (no
+    new schema needed beyond CHECK widening), per-trigger
+    consecutive-fault auto-disable (only matters once user-
+    authored Lua lands in #32), `on_login` / `on_logout` PC
+    events, sharded `on_tick` walks once content uses them, and
+    the `tedit` authoring verb (#34).
 30. **NPC dialogue trees** (§15). JSON per mob; uses §13 `say` capture.
 31. **Quest engine state machine** (§15). Per-character per-quest
     state + objective ticks.

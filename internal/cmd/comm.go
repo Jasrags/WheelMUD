@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -19,7 +21,13 @@ const commMaxLen = 1024
 // caps length, and broadcasts to every other session whose
 // CurrentRoomID matches the speaker's room. Rooms with the `silent`
 // flag swallow speech with a flavor message.
-func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
+//
+// bus is optional — when non-nil, publishes a world.PlayerSaid event
+// after the broadcast lands so Phase F #29 trigger handlers can react
+// to keyword-matched utterances. The bus is NOT consulted on the
+// silent-room or empty-payload paths (those are no-broadcast outcomes
+// from a trigger perspective).
+func NewSay(sessions *session.Registry, rooms repo.RoomRepo, bus *eventbus.Bus) *telnet.Command {
 	return &telnet.Command{
 		Name:    "say",
 		Aliases: []string{"'"}, // most MUDs alias the apostrophe to say
@@ -62,6 +70,13 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 				if err := peer.WriteAsync(otherMsg); err != nil {
 					slog.Debug("comm: peer write failed", "to", peerName, "error", err)
 				}
+			}
+			if bus != nil {
+				bus.Publish(c.Ctx, world.PlayerSaid{
+					SpeakerCharacterID: c.Session.CharacterID,
+					RoomID:             c.Session.CurrentRoomID,
+					Text:               text,
+				})
 			}
 			return c.Session.WriteString(selfMsg)
 		},

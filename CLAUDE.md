@@ -147,7 +147,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0043. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0044. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -323,6 +323,41 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `verb=learn target=<weaveID> args=kind=weave_study power=<p> cost=<n>`.
   V1 has no fees, no time cost, no outside-affinity learning;
   the `learn weave` affinity refusal still applies on both paths.
+  0044 added the `triggers` table backing §15 / Phase F #29 — one
+  row per declarative event handler attached to a mob_template or
+  a room. Schema: `(owner_kind, owner_id, event, match, action,
+  payload, priority)`. `owner_kind` is CHECK-constrained to
+  `('mob_template','room')` (item-owned triggers deferred until
+  #32 lands the Lua surface); `event` is CHECK-constrained to
+  `('on_enter','on_say','on_attack','on_death','on_tick')`.
+  `match` is event-specific text — case-insensitive substring
+  keyword for `on_say`, bucket name for `on_tick`, ignored on the
+  other events. `payload` is action-defined JSON (e.g.
+  `{"text": "..."}` for the say/emote builtins). YAML loader
+  inserts rows in the same transaction as the owning mob/room
+  via the optional `triggers:` sub-block on `Mob` / `Room`;
+  validation in `validate.go::validateTriggers` rejects unknown
+  event names + empty actions + malformed payloads at boot. The
+  `internal/trigger/` package owns the in-memory `Registry`
+  (built from the table once at boot via
+  `Registry.Reload(ctx, repo.TriggerRepo)`), the
+  `ActionRegistry` (V1 builtins: `noop`, `say`, `emote` —
+  consumers extend this for #30 dialogue / #31 quests / #32 Lua),
+  the `Runner` (priority-DESC fan-out, swallows handler errors),
+  and the `Dispatcher` wiring eventbus subscriptions
+  (`world.PlayerEntered` → `on_enter`, `world.PlayerSaid` →
+  `on_say`, `combat.CombatHit` → `on_attack`,
+  `combat.CombatDeath` / `combat.CharacterDied` → `on_death`)
+  plus `tick.Buckets.Phase` for `on_tick`. `world.PlayerSaid`
+  is a NEW event published by `internal/cmd/comm.go::NewSay`
+  after the room broadcast (silent rooms / empty payload
+  short-circuit before the publish). Action handlers MUST use
+  `Session.WriteAsync` for peer writes — they run on the
+  eventbus goroutine, not a dispatcher (the cross-session output
+  rule applies). Dispatcher attaches once at boot in
+  `cmd/server/main.go` after the channeling ticker; shutdown
+  drain calls `srv.triggers.Stop()` before `bus.Stop()` so
+  in-flight subscriptions cancel cleanly.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

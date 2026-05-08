@@ -87,6 +87,11 @@ type Room struct {
 	// authoring case doesn't matter.
 	Descriptions map[string]string `yaml:"descriptions"`
 
+	// Triggers attaches §15 / Phase F #29 declarative event handlers
+	// to this room. Empty list is the default; the loader inserts one
+	// triggers row per entry keyed by owner_kind='room'.
+	Triggers []TriggerDecl `yaml:"triggers,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 
@@ -241,6 +246,11 @@ type Mob struct {
 	// pending_weaves chargen pool.
 	WeaveTeacher *WeaveTeacher `yaml:"weave_teacher,omitempty"`
 
+	// Triggers attaches §15 / Phase F #29 declarative event handlers
+	// to the mob_template this entry spawns from. Loader inserts one
+	// triggers row per entry keyed by owner_kind='mob_template'.
+	Triggers []TriggerDecl `yaml:"triggers,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 }
@@ -291,6 +301,22 @@ type Trainer struct {
 type WeaveTeacher struct {
 	MaxLevelTaught  int      `yaml:"max_level_taught"`
 	AffinityFilter  []string `yaml:"affinity_filter,omitempty"`
+}
+
+// TriggerDecl is one entry under a `triggers:` YAML sub-block on a
+// mob or room. Event must match one of repo's allow-listed event
+// names (`on_enter` / `on_say` / `on_attack` / `on_death` /
+// `on_tick`); Action is an action-registry kind ("noop", "say",
+// "emote", or any consumer-registered name). Match is event-specific
+// (case-insensitive substring for on_say; bucket name for on_tick;
+// ignored otherwise). Payload is action-defined; the loader
+// re-marshals it as compact JSON before persisting.
+type TriggerDecl struct {
+	Event    string    `yaml:"event"`
+	Match    string    `yaml:"match,omitempty"`
+	Action   string    `yaml:"action"`
+	Payload  yaml.Node `yaml:"payload,omitempty"`
+	Priority int       `yaml:"priority,omitempty"`
 }
 
 // World is the parsed-and-validated set of every zone the loader saw.

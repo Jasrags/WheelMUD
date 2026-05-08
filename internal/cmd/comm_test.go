@@ -3,10 +3,13 @@ package cmd
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -66,7 +69,7 @@ func runCmd(t *testing.T, c *telnet.Command, s *telnet.Session, raw string) {
 
 func TestSay_BroadcastsToSameRoom(t *testing.T) {
 	sessions, alice, _, aOut, bOut := commPair(t)
-	say := NewSay(sessions, repo.NewMemoryRoomRepo())
+	say := NewSay(sessions, repo.NewMemoryRoomRepo(), nil)
 
 	runCmd(t, say, alice, "hello there")
 
@@ -85,7 +88,7 @@ func TestSay_SilentRoomBlocks(t *testing.T) {
 	sessions, alice, _, aOut, bOut := commPair(t)
 	rooms := repo.NewMemoryRoomRepo()
 	rooms.Insert(repo.Room{ID: 1, Name: "Hush Chapel", Flags: repo.RoomFlags{Silent: true}})
-	say := NewSay(sessions, rooms)
+	say := NewSay(sessions, rooms, nil)
 
 	runCmd(t, say, alice, "anyone here?")
 
@@ -104,7 +107,7 @@ func TestSay_BroadcastsWhenRoomMissing(t *testing.T) {
 	// can't silently regress it to "smother".
 	sessions, alice, _, _, bOut := commPair(t)
 	emptyRooms := repo.NewMemoryRoomRepo() // no row for room 1
-	say := NewSay(sessions, emptyRooms)
+	say := NewSay(sessions, emptyRooms, nil)
 
 	runCmd(t, say, alice, "still here?")
 
@@ -113,10 +116,52 @@ func TestSay_BroadcastsWhenRoomMissing(t *testing.T) {
 	}
 }
 
+func TestSay_PublishesPlayerSaid(t *testing.T) {
+	sessions, alice, _, _, _ := commPair(t)
+	bus := eventbus.New()
+	var got atomic.Int32
+	var captured world.PlayerSaid
+	eventbus.Subscribe[world.PlayerSaid](bus, func(_ context.Context, ev world.PlayerSaid) {
+		captured = ev
+		got.Add(1)
+	})
+	say := NewSay(sessions, repo.NewMemoryRoomRepo(), bus)
+
+	runCmd(t, say, alice, "rumor of trolloks")
+
+	if got.Load() != 1 {
+		t.Fatalf("expected 1 PlayerSaid event, got %d", got.Load())
+	}
+	if captured.SpeakerCharacterID != alice.CharacterID || captured.RoomID != alice.CurrentRoomID {
+		t.Fatalf("event: %+v", captured)
+	}
+	if !strings.Contains(captured.Text, "rumor") {
+		t.Fatalf("event text: %q", captured.Text)
+	}
+}
+
+func TestSay_SilentRoomDoesNotPublish(t *testing.T) {
+	sessions, alice, _, _, _ := commPair(t)
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, Name: "Hush", Flags: repo.RoomFlags{Silent: true}})
+	bus := eventbus.New()
+	var got atomic.Int32
+	eventbus.Subscribe[world.PlayerSaid](bus, func(_ context.Context, _ world.PlayerSaid) {
+		got.Add(1)
+	})
+	say := NewSay(sessions, rooms, bus)
+
+	runCmd(t, say, alice, "anyone?")
+
+	if got.Load() != 0 {
+		t.Fatalf("silent room published PlayerSaid (%d)", got.Load())
+	}
+}
+
 func TestSay_DoesNotReachOtherRooms(t *testing.T) {
 	sessions, alice, bob, _, bOut := commPair(t)
 	bob.CurrentRoomID = 99 // different room
-	say := NewSay(sessions, repo.NewMemoryRoomRepo())
+	say := NewSay(sessions, repo.NewMemoryRoomRepo(), nil)
 
 	runCmd(t, say, alice, "anyone there?")
 

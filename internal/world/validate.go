@@ -1,10 +1,12 @@
 package world
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"gopkg.in/yaml.v3"
 )
 
 // validate runs every cross-reference + format check against w. It is
@@ -110,6 +112,9 @@ func validateRoomIDs(rooms []Room) error {
 		}
 		if r.Sector != "" && !validSectors[repo.Sector(r.Sector)] {
 			return fmt.Errorf("%s:%d: room %q has invalid sector %q", r.SourceFile, r.Line, r.ID, r.Sector)
+		}
+		if err := validateTriggers(r.SourceFile, r.Line, "room "+r.ID, r.Triggers); err != nil {
+			return err
 		}
 		seen[r.ID] = r
 	}
@@ -299,8 +304,112 @@ func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 				return err
 			}
 		}
+		if err := validateTriggers(m.SourceFile, m.Line, "mob "+m.ID, m.Triggers); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateTriggers checks every entry in a `triggers:` block. event +
+// action must be non-empty and event must be one of the allow-listed
+// names. Payload must be decodable to JSON when present.
+func validateTriggers(file string, line int, owner string, triggers []TriggerDecl) error {
+	for i, td := range triggers {
+		idx := i + 1
+		if td.Event == "" {
+			return fmt.Errorf("%s:%d: %s trigger #%d: event is empty",
+				file, line, owner, idx)
+		}
+		if !repo.ValidTriggerEvent(repo.TriggerEvent(td.Event)) {
+			return fmt.Errorf("%s:%d: %s trigger #%d: unknown event %q "+
+				"(must be on_enter|on_say|on_attack|on_death|on_tick)",
+				file, line, owner, idx, td.Event)
+		}
+		if strings.TrimSpace(td.Action) == "" {
+			return fmt.Errorf("%s:%d: %s trigger #%d: action is empty",
+				file, line, owner, idx)
+		}
+		if _, err := marshalTriggerPayload(td.Payload); err != nil {
+			return fmt.Errorf("%s:%d: %s trigger #%d: payload: %w",
+				file, line, owner, idx, err)
+		}
+	}
+	return nil
+}
+
+// marshalTriggerPayload converts a YAML payload node into the compact
+// JSON stored in triggers.payload. A zero / nil node returns "{}".
+// Shared between validation and the loader's INSERT path.
+//
+// Payloads MUST be YAML mappings — a scalar (e.g. `payload: "hello"`)
+// or sequence is rejected here so the failure surfaces at boot with
+// a builder-friendly file:line, instead of at fire time as a silent
+// JSON-unmarshal mismatch in the action handler.
+func marshalTriggerPayload(node yaml.Node) (string, error) {
+	if node.Kind == 0 {
+		return "{}", nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("payload must be a mapping, got %s", yamlKindName(node.Kind))
+	}
+	var v interface{}
+	if err := node.Decode(&v); err != nil {
+		return "", fmt.Errorf("decode yaml: %w", err)
+	}
+	if v == nil {
+		return "{}", nil
+	}
+	v = normalizeYAMLForJSON(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("marshal json: %w", err)
+	}
+	return string(out), nil
+}
+
+// yamlKindName renders a yaml.Kind for human-friendly error messages.
+func yamlKindName(k yaml.Kind) string {
+	switch k {
+	case yaml.DocumentNode:
+		return "document"
+	case yaml.SequenceNode:
+		return "sequence"
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.ScalarNode:
+		return "scalar"
+	case yaml.AliasNode:
+		return "alias"
+	}
+	return "unknown"
+}
+
+// normalizeYAMLForJSON converts any map[interface{}]interface{} the
+// YAML decoder produces into map[string]interface{} so encoding/json
+// can serialize it. Recursive.
+func normalizeYAMLForJSON(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[interface{}]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, vv := range t {
+			out[fmt.Sprintf("%v", k)] = normalizeYAMLForJSON(vv)
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, vv := range t {
+			out[k] = normalizeYAMLForJSON(vv)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, vv := range t {
+			out[i] = normalizeYAMLForJSON(vv)
+		}
+		return out
+	}
+	return v
 }
 
 // validateTrainer checks the optional `trainer:` block: class must be

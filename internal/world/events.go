@@ -21,3 +21,14 @@ type PlayerLeft struct {
 	FromRoomID  int64
 	ToRoomID    int64
 }
+
+// PlayerSaid fires after the `say` verb has finished its
+// room-broadcast. Subscribers (Phase F #29 trigger dispatcher, future
+// NPC dialogue #30) consume it to resolve `on_say` triggers attached
+// to mobs/rooms in the speaker's room. Text is the post-sanitised
+// utterance — control bytes already stripped, cfmt already defanged.
+type PlayerSaid struct {
+	SpeakerCharacterID int64
+	RoomID             int64
+	Text               string
+}
