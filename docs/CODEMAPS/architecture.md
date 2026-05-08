@@ -1,83 +1,115 @@
-<!-- Generated: 2026-05-05 | Files scanned: ~80 (.go) | Token estimate: ~1100 -->
-<!-- Note: This codemap was last fully re-derived 2026-05-02 and has
-     been surgically updated for chargen and a few touchpoints. For
-     the authoritative current architecture see CLAUDE.md and PLAN.md
-     at the repo root. -->
+<!-- Generated: 2026-05-07 | Files scanned: ~120 (.go) | Token estimate: ~1300 -->
 
 # Architecture
 
-WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a goroutine-per-connection model. The auth layer is wired end-to-end (accounts + bcrypt + login + multi-session policy + characters); the world layer ships rooms/exits/items/mobs as YAML-authored aggregates loaded into SQLite at boot, with `look`, movement (`n/s/e/w/u/d`/`ne`/`nw`/`se`/`sw`), and room persistence across reconnects. The scheduler manages heartbeat ticks, persistence autosave, and event dispatch. Session registry enables multi-connection awareness (`who`, `tell`, channels with per-character mute toggles).
+WheelMUD is a single-binary Go MUD server. One TCP listener fans out to a
+goroutine-per-connection model. The auth + chargen + world + combat +
+progression layers are all wired end-to-end. SQLite (modernc pure-Go
+driver) backs every persisted aggregate; YAML loaders seed rooms / mobs /
+items / chargen content / news / help at boot. The scheduler manages
+heartbeat ticks (combat, regen, area reset, autosave). Single-session-per-
+account is enforced via a process-level session registry.
 
 ## Layers
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ cmd/server/main.go         listener + DI wiring + graceful shutdown│
+│ cmd/server/main.go    listener + DI wiring + graceful shutdown      │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/tick/             Scheduler (1 Hz) + named Buckets        │
-│ internal/persist/          Autosave manager + Save bucket sub      │
-│ internal/eventbus/         Typed pub/sub (PlayerEntered/Left)      │
-│ internal/session/          Process-level session.Registry          │
-│ internal/safego/           panic-recovery wrapper + LOG_LEVEL env  │
+│ Tick / persist / events / sessions / panic recovery                 │
+│   internal/tick/        Scheduler (1 Hz) + named Buckets            │
+│                         (combat / regen / areaReset / save)         │
+│   internal/persist/     Autosave manager, FlushAll on shutdown      │
+│   internal/eventbus/    Typed pub/sub (PlayerEntered/Left,          │
+│                         CombatStarted/Hit/Miss/Death/XPAwarded)     │
+│   internal/session/     Process-level Registry; single-session-per- │
+│                         account; FindByCharacterName / Snapshot     │
+│   internal/safego/      panic-recovery wrapper for long goroutines  │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/mode/             Mode stack implementations               │
-│   login / create / character_select / character_create / game      │
-│ internal/cmd/              Concrete commands (closures + singletons)
-│   quit / who / colors / help / look / move-family (n/s/e/w/u/d/   │
-│   ne/nw/se/sw) / teleport / say / tell / reply / channels /alias  │
+│ Modes + command surface                                             │
+│   internal/mode/        login / create / character_select /         │
+│                         character_create (chargen substep machine)/ │
+│                         postauth / account_menu / game              │
+│   internal/cmd/         ~50 verbs (catalog in commands.md)          │
+│   internal/audit/       Record(verb, target, args) for admin verbs  │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/auth/             bcrypt Hash / Verify                    │
-│ internal/repo/             Account + Character + Room/Exit/Item/   │
-│                             MobTemplate/MobInstance/Channeling/    │
-│                             Channel repos (sqlite + memory + test) │
-│ internal/creature/         Core + Abilities + Channeling models    │
-│ internal/currency/         Amount type + denomination conversions  │
-│ internal/world/            YAML loader: parse → validate → tx-sync │
-│                             into rooms/exits/items/mobs. Embedded  │
-│                             default; WORLD_DIR env overrides.      │
+│ Game systems                                                        │
+│   internal/combat/      Per-room Fight, attack/damage resolution,   │
+│                         threat tables, group XP split, decayer +    │
+│                         flee mover seams                            │
+│   internal/group/       In-memory party manager (Group + Manager,   │
+│                         MaxGroupSize=6, leader-leaves-disbands)     │
+│   internal/progression/ XP curve (1000·n·(n-1)/2, MaxLevel=20),     │
+│                         ComputeLevelUp, LevelGains pending deltas    │
+│   internal/chargen/     YAML catalogs (backgrounds, classes, feats, │
+│                         skills, weaves, items) + cross-reference    │
+│                         validation at Load + chargen.HashID FNV-32a │
+│   internal/news/        MOTD/news catalog (YAML)                    │
+│   internal/help/        Help-topic catalog (YAML)                   │
+│   internal/mob/         Wander tick + trail recording               │
+│   internal/prompt/      %h/%H/%r/%g template renderer               │
+│   internal/display/     SectionHeader/Subsection/FieldRow/Rule/     │
+│                         Defang — shared cfmt-styled render helpers  │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/db/               SQLite Open + 11 embedded migrations     │
+│ Domain models + persistence                                         │
+│   internal/auth/        bcrypt Hash / Verify (tunable cost)         │
+│   internal/repo/        Account, Character, Room, Exit, Item,       │
+│                         MobTemplate, MobInstance, MobTrail, Zone,   │
+│                         Channel, Channeling, Shop, ShopStock,       │
+│                         Banker, Trainer, AdminAudit, AccountLogin,  │
+│                         WorldState — sqlite + memory + shared tests │
+│   internal/creature/    Core stat block, Equipment, Channeling,     │
+│                         SkillRanks shared by characters + mobs      │
+│   internal/currency/    Amount type + denomination conversions      │
+│   internal/world/       YAML loader (parse → validate → tx-sync),   │
+│                         Restocker (areaReset bucket), Clock         │
 ├────────────────────────────────────────────────────────────────────┤
-│ telnet/                    protocol + I/O + mode/registry/dispatch │
-│   ├ server.go              RunSession, readLoop, dispatcher        │
-│   ├ session.go             Session, write lock, mode stack, auth   │
-│   ├ iac.go                 IAC/SB negotiation (TERM_TYPE/NAWS)     │
-│   ├ command.go             Registry, Lookup, Dispatch (Auth check) │
-│   ├ mode.go / completion   Mode interface + Tab completion         │
-│   ├ wrap.go / color.go     ANSI-aware wrap, SGR, RGB downsampling │
-│   └ ascii.go               Control-byte constants                  │
+│ internal/db/            SQLite Open + 39 embedded migrations        │
+├────────────────────────────────────────────────────────────────────┤
+│ telnet/                 protocol + I/O + mode/registry/dispatch     │
+│   server.go             RunSession, readLoop, dispatcher            │
+│   session.go            Session, write lock, mode stack, AuthLevel  │
+│   iac.go                IAC/SB negotiation (TERM_TYPE, NAWS)        │
+│   command.go            Registry, Lookup, Dispatch (Auth check,     │
+│                         segmented `;`-chained commands)             │
+│   mode.go / completion  Mode interface + Tab completion             │
+│   wrap.go / color.go    ANSI-aware wrap, SGR, RGB downsampling      │
+│   alias.go / tokenize   Per-session aliases, quoted tokenizer       │
+│   lineedit.go / history Line editor + history ring                  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependency direction (no cycles): `cmd/server` → `internal/{tick,persist,eventbus,session,safego,mode,cmd,auth,repo,creature,currency,world,db}` → `telnet`. `telnet` is foundational and imports nothing internal.
+Dependency direction (no cycles): `cmd/server` → `internal/{tick, persist,
+eventbus, session, safego, mode, cmd, combat, group, progression, chargen,
+news, help, mob, audit, prompt, display, auth, repo, creature, currency,
+world, db}` → `telnet`. `progression` imports `repo` (for `repo.Character`
+input to `ComputeLevelUp`); `repo` does NOT import `progression` —
+`repo.LevelUpFields` mirrors `LevelGains` to avoid the cycle.
 
 ## Boot
 
 ```
-main ─► db.Open(DB_DSN)                      runs embedded migrations 0001-0011
-     ─► repo.NewSQLite{Account,Character,    wraps *sql.DB
-        Room,Exit,Item,MobTemplate,
-        MobInstance,Channeling,Channel}Repo
-     ─► channelRepo.List(ctx)                load channel catalog (ooc/gossip/newbie)
-     ─► world.LoadAndSync(ctx, conn,         parses YAML, validates,
-        world.SourceFS())                    tx-inserts all world aggregates
-                                             (no-op if rows exist). Aborts
-                                             boot on validation fail.
-     ─► session.NewRegistry()                process-level; tracks bind/unbind
-     ─► buildRegistry(…, channels)           closures + singletons; dynamic
-                                             channel commands registered from
-                                             catalog; registers say/tell/reply/who
-     ─► tick.New() + tick.NewBuckets        scheduler (1 Hz) + named buckets
-        (combat/regen/areaReset/Save)       (Save default 30s, calls persist.FlushAll)
-     ─► persist.New()                        autosave manager; saver registered
-        → saves.Register("character.lastPlayed", savePlayTimes) → buckets.Save.Subscribe
-     ─► eventbus.New()                       typed pub/sub (PlayerEntered/Left)
-     ─► mode.NewGame(registry)               stateless, shared
-     ─► server{…}                            all repos, registry, scheduler,
-                                             buckets, bus, saves, sessions,
-                                             newInitial factory
-     ─► scheduler.Start(ctx)                 heartbeat goroutine
-     ─► net.Listen → Accept loop             per-conn goroutines via safego.Go
+main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-0039
+     ─► repo.NewSQLite{Account, Character, AccountLogin,
+        Room, Exit, Item, MobTemplate, MobInstance, MobTrail,
+        Zone, Channel, Channeling, Shop, Banker, Trainer,
+        AdminAudit, WorldState}Repo
+     ─► news.Load + help.Load + chargen.Load
+     ─► world.LoadAndSync(ctx, conn, world.SourceFS())
+                                            seeds rooms/exits/items/mobs/
+                                            shops/bankers/trainers/zones
+     ─► world.NewClock(state) + world.NewRestocker(...)
+     ─► combat.NewManager(...) + group.NewManager()
+        combatMgr.SetGroupResolver(groups.MembersInRoom)
+     ─► session.NewRegistry()               single-session-per-account
+     ─► eventbus.New()                      typed pub/sub
+     ─► tick.New() + tick.NewBuckets()      combat / regen / areaReset / save
+     ─► persist.New()                       autosave + shutdown flush
+     ─► buildRegistry(...)                  ~50 verbs registered
+     ─► mode.NewGame(registry)              shared in-world target
+     ─► server{...}                         all deps; rebootOnExit flag
+     ─► scheduler.Start(ctx)                heartbeat goroutines via safego
+     ─► net.Listen → Accept loop            per-conn goroutines
 ```
 
 ## Per-connection lifecycle
@@ -90,143 +122,127 @@ Accept ─► NewSession ─► writeBanner ─► PushMode(srv.newInitial())  =
                                    ▼                      ▼
                               readLoop (1 g/r)      runDispatcher (1 g/r)
                               dispatchByte:         inbox ─► Mode.Handle(ctx)
-                                ├─ IAC/ANSI        ─► Registry.Dispatch(ctx)
-                                ├─ CR/LF           ─► Auth check + Run
-                                ├─ BS/DEL/HT       ─► WriteRaw(prompt)
-                                └─ printable
-                                   └─ inbox (cap 16)
+                                ├ IAC/ANSI         ─► Registry.Dispatch
+                                ├ CR/LF            ─► segment on `;`
+                                ├ BS/DEL/HT        ─► Auth check + Run
+                                └ printable/edit
+                                  └─ inbox (cap 16)
 
 teardown:
-  ├─ readLoop exits on: EOF / idle 10m / flood (ErrInputFlooded)
-  ├─ runDispatcher drains inbox and stops without prompting
-  ├─ safego.Go wrapper recovers panics from either goroutine
-  ├─ if s.AccountID != 0: sessions.Unbind(s.AccountID, s)  (compare-and-delete)
-  └─ s.Conn.Close()
+  ├ readLoop exits on EOF / 10m idle / flood
+  ├ runDispatcher drains inbox and exits
+  ├ safego wrappers recover panics
+  ├ groups.ClearForCharacter(charID); session.Following clears implicitly
+  ├ if s.AccountID != 0: sessions.Unbind(s.AccountID, s)  (CAS)
+  └ s.Conn.Close()
 ```
 
-- `readLoop` owns `Session.InputBuffer`. Parses IAC, ANSI, CR/LF, BS/DEL, HT, printable, history (↑/↓), cursor motion (←/→/Home/End). **Redacts logged input** when `s.InPasswordMode` is true.
-- `runDispatcher` consumes `s.inbox`, calls `mode.Handle(ctx, s, line)`. `ctx` is canceled after readLoop exits, before inbox closes, so blocking handlers observe cancellation.
-- Writes serialize on `Session.writeMu`; both goroutines go through `WriteRaw`. `AuthLevel` (Guest/Player/Admin) checked at dispatch time, not mode entry.
-- Session tracks: `AccountID`, `CharacterID`, `CharacterName`, `CurrentRoomID` (persisted via `CharacterRepo.RecordRoom`), `LastTellFrom`, `LastInputAt` (for idle), `channelMuted` (crossMu-guarded bitmask).
-
-## Auth pipeline
+## Auth + character pipeline
 
 ```
-Login.handleUsername:
-  "new" → ReplaceMode(Create)
-  else  → FindByUsername (cache l.account; nil if not found)
-        → InPasswordMode = true; advance to password step
-
-Login.handlePassword:
-  re-fetch account (lockout TOCTOU defense)
-  IsLockedAt(now)? → "Account temporarily locked." reset
-  Verify? no:
-    RecordLoginFailure (+ locked_until if threshold hit)
-    "Login failed." reset
-  yes:
-    RecordLoginSuccess (clears counters)
-    s.AccountID = …; s.AuthLevel = AuthPlayer
-    sessions.Bind(accountID, s) → kick prior occupant if any
-    postAuth(ctx, s, characters, game)
-       0 chars → ReplaceMode(CharacterCreate)
-       1 char  → promoteToGame (auto-pick)
-       2+ chars→ ReplaceMode(CharacterSelect)
+Login → password verify → sessions.Bind (kicks prior) → postAuth
+postAuth.applyAccountSettings (color/width/MOTD)
+postAuth:
+  0 chars → CharacterCreate (chargen substep machine — see "Chargen" below)
+  ≥1 char → AccountMenu (delete / password / settings / security / play)
+            └─► CharacterSelect → promoteToGame
+promoteToGame stamps AuthLevel + CurrentRoomID + CharacterID/Name onto
+session, applies channel mute settings, replaces mode → Game.
+news.WriteMOTDBlock renders unseen entries (last_news_seen watermark).
 ```
 
-`promoteToGame` stamps `CharacterID`, `CharacterName`, and `CurrentRoomID` onto the session (defaulting to `repo.StarterRoomID` if the row has none) so the first `look` resolves immediately. Movement commands write `CurrentRoomID` back via `CharacterRepo.RecordRoom` so a reconnect picks up where the player left off.
-
-Create mode mirrors Login on the success path (insert account, Bind, postAuth → CharacterCreate since 0 chars).
-
-## CharacterCreate substeps (Phase C chargen)
-
-When a `*chargen.Catalog` is wired via `SetCatalog`, `CharacterCreate`
-walks a substep state machine; without a catalog it falls back to a
-single-name legacy flow (kept for tests / dev fixtures).
+## Chargen substep machine
 
 ```
-chargenStepName       → name validated like account username
-   ↓
-chargenStepRace       → human | ogier
-   ↓
-chargenStepBackground → Catalog.BackgroundsForRace; pick by id|#|info
-   ↓
-chargenStepClass      → Catalog.ClassesForRace; ogier filtered out of
-                        channeler classes per book lore
-   ↓
-chargenStepAbilities  → point-buy V1, 25-point budget, [8..18] range,
-                        non-linear cost table; verbs set/reset/done
-   ↓
-chargenStepIdentity   → defaults stamped on entry; gender/age/handed/
-                        align/roll verbs. Height/weight roll Table 6-1
-                        against race + bg.HeightModIn (RNG injectable)
-   ↓
-chargenStepFeat       → bg.BonusFeats auto-merged; player picks one
-                        from Catalog.FeatsForBackground; verbs
-                        pick/info/bare-id/done
-   ↓
-chargenStepSkills     → budget = max(1, class.SkillPoints + IntMod) × 4;
-                        ranks across class ∪ bg skills, cap 4 each;
-                        verbs rank/reset/done
-   ↓
-chargenStepReview     → render full draft; yes commits via
-                        CharacterRepo.Create (single insert); back/
-                        cancel revisits/aborts
+chargenStepName        → name validated like account username
+chargenStepRace        → human | ogier
+chargenStepBackground  → Catalog.BackgroundsForRace; pick by id|#|info
+chargenStepClass       → Catalog.ClassesForRace; ogier filtered out
+                         of channeler classes per book lore
+chargenStepAbilities   → point-buy 25-pt budget, [8..18], cost table
+chargenStepIdentity    → gender/age/handed/align/roll height & weight
+chargenStepFeat        → bg.BonusFeats auto-merged + one player pick
+chargenStepSkills      → budget = max(1, class.SkillPoints+IntMod)×4;
+                         class∪bg skills, cap 4 each
+chargenStepChanneling  → (channeler classes only) source/affinities/
+                         3 level-0 weaves (channeling_json, 0033)
+chargenStepEquipment   → starting bundle clone via ItemRepo.Create +
+                         auto-equip first armor/shield/outfit/weapon
+chargenStepReview      → render full draft; commit via Character.Create
 ```
 
-Catalog string ids hash to int32 via FNV-32a (`catalogIDInt32` in
-`internal/mode/chargen_features.go`) so `Character.Feats []int32` and
-`Character.Skills map[int32]SkillRanks` round-trip through the
-existing `feats_json` / `skills_json` columns. Channeler branch
-(Source/Affinities/level-0 weaves) and starting-equipment spawning
-are deferred — see PLAN.md §15 and `chargen_features_followups.md`.
+Catalog string ids hash to int32 via `chargen.HashID` (FNV-32a) so
+`Character.Feats []int32` and `Character.Skills map[int32]SkillRanks`
+round-trip through `feats_json` / `skills_json`. Cmd-layer spend verbs
+(`learn`; future `pick feat`/`bump`/`learn weave`) call the same hash.
 
-Files:
-- `internal/mode/character_create.go` — substep enum, draft, dispatch
-- `internal/mode/chargen_identity.go` — identity substep + Table 6-1
-- `internal/mode/chargen_features.go` — feat + skills substeps
-- `internal/chargen/` — catalog loader (YAML; CHARGEN_DIR override)
-
-## Input → command path
+## Combat pipeline (§D #18-22)
 
 ```
-TCP byte ─► dispatchByte ─► bufferInput ─► CR/LF ─► inbox ─► Mode.Handle(ctx)
-                                                                │
-                                                  Game.Handle ─► Registry.Dispatch(ctx)
-                                                                │
-                                                  Lookup(verb) ─► Auth check ─► Command.Run(*Context)
+attack <mob|player> ─► combat.Manager.EnqueueAction(Fight, ActionAttack)
+                       Fight is per-room; init = d20+DexMod+InitMod
+tick.Buckets.Combat (4s) ─► Manager.Tick:
+   ├ pruneDead (stable Order during resolution)
+   ├ pop active actor's queued action
+   ├ RollAttack (d20 + BAB + StrMod vs Defense; nat-1/20; crit threshold)
+   ├ RollDamage (weapon dice + StrMod; ×CritMult on crit; floor 1)
+   ├ applyDamage (DR clamp → Resists percent → Subdual route)
+   ├ tally damage to Fight.DamageTally + Fight.Threat
+   ├ write HP via MobInstanceRepo.UpdateLive / CharacterRepo.RecordCore
+   └ on HP≤0: handleMobDeath (corpse spawn, despawn, XP allocation
+              via expandTallyByGroup → GroupResolver split)
 ```
 
-Verb resolution: alias → exact name → unique prefix. `MinArgs` enforced before `Run`. `Command.Auth` is checked against `Session.AuthLevel`; denials render as `"Unknown command"` so privileged verbs can't be enumerated.
+PvP gate (`attack <player>`): NoPVP-room → newbie (level<10) →
+attacker opt-in → target opt-in → same-group refusal. Same-group + party
+follow chain bound by `followDepth = 16`. Ordinal targeting via
+`MatchPlayer(target, sessions, self)` mirrors `MatchItem`/`MatchMob`.
 
-## Tab completion
+## Progression flow (§E #23-24)
 
-`handleTab` consults the current `Mode` if it implements `Completer`. `Game.Complete` returns registry verb candidates. Single match → in-place extension; multiple → list above the prompt and redraw. Argument-side completion is deferred. Tab in password mode is a hard bell.
+```
+mob death ─► Fight.DamageTally → expandTallyByGroup(GroupResolver)
+                              → CharacterRepo.RecordXP (delta)
+xp verb   ─► progression.XPToNext(char.XP) — read-only
+train     ─► resolve trainer in room → progression.ComputeLevelUp →
+             repo.RecordLevelUp(LevelUpFields):
+               • absolute new HP/BAB/Saves/ClassLevels
+               • pending_x += FeatDelta/SkillDelta/AbilityDelta/WeaveDelta
+             audit row written.
+learn     ─► spend pending_skill_points anywhere; allowed list = class∪bg
+             skills; cap = level+3; cost 1 pt/rank.
+             repo.RecordSkillRank atomic upsert (TX: select skills_json →
+             merge → UPDATE skills_json + pending_skill_points). Audit on
+             success only.
+```
 
-## What's missing on purpose
+## Tick buckets
 
-- No game loop / tick scheduler (§8 of ROADMAP).
-- World loader is boot-time only — no hot-reload yet (§7), no spawn/despawn lifecycle, no item/mob template-vs-instance split (§9).
-- No combat, skills, economy, quests, OLC, channels.
-- No `who`-across-the-server — needs `session.Registry.Snapshot` iteration; currently shows only the caller.
-- See `ROADMAP.md` for the full ledger.
+| Bucket | Cadence | Subscribers |
+|---|---|---|
+| `Combat` | 4 s | `combat.Manager.Tick` per active room |
+| `Regen` | 6 s | (HP/subdual regen — pending) |
+| `AreaReset` | 5 min | `world.Restocker` (refill sub-max shop_stock) |
+| `Save` | 30 s | `persist.Manager` autosave (lastPlayed, ticks counter) |
+
+## Cross-session output rule
+
+Any write that targets a session other than the dispatcher's
+`c.Session` MUST go through `Session.WriteAsync` (not `WriteString`).
+WriteAsync wraps the message with CR+EL erase prefix and replays the
+cached prompt + line-edit buffer so a mid-line broadcast doesn't clobber
+the player's input. This is universally enforced by `say`, `tell`,
+`shout`/`yell`, channel verbs, `give`/`put`/`get`/door verbs, mob
+arrivals/departures, combat hits, group follow chain output, the
+shutdown countdown, and chargen review broadcasts.
 
 ## Entry points
 
 - `cmd/server/main.go::main` — listener, DI wiring, accept loop.
-- `cmd/server/main.go::handleConnection` — per-connection setup + handoff to `telnet.RunSession`. Defers `sessions.Unbind` on teardown.
+- `cmd/server/main.go::handleConnection` — per-connection setup,
+  group cleanup defer, sessions.Unbind on teardown, hands off to
+  `telnet.RunSession`.
 - `telnet.RunSession` — drives the read + dispatch goroutines.
 
-## Data flow at a glance
-
-```
-client ──telnet──► readLoop ──inbox──► dispatcher ──Mode.Handle──► WriteRaw ──telnet──► client
-                       │                                              ▲
-                       └──────── inline echo / completion ────────────┘
-
-Mode.Handle (Login/Create) ──repo──► SQLite (accounts, characters)
-                          ──auth──► bcrypt
-                          ──sessions──► Registry (kick prior)
-
-Command.Run (look/move)   ──repo──► SQLite (rooms, exits, items, mobs)
-                          ──repo──► SQLite (characters.RecordRoom on move)
-```
+For the authoritative current architecture see `CLAUDE.md` and
+`docs/PLAN.md` at the repo root. Roadmap ledger: `ROADMAP.md`.

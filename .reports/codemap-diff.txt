@@ -1,35 +1,75 @@
-codemap update — 2026-05-05
+Codemap refresh — 2026-05-07
+=============================
 
-Trigger: §C #15 slice 1 commit (32d900f)
-  feat(chargen): 1st-level feat + skill ranks substeps
+Previous full re-derive: 2026-05-02 (architecture surgically
+updated 2026-05-05). This pass re-derives all five codemaps from
+the current state.
 
-Files modified:
-  docs/CODEMAPS/architecture.md
-    - Bumped freshness header (2026-05-02 → 2026-05-05)
-    - Added explicit pointer: CLAUDE.md / PLAN.md are current source
-      of truth; codemaps as a whole are stale relative to the project
-    - Added new "CharacterCreate substeps" section documenting the
-      chargen state machine (name → race → bg → class → abilities →
-      identity → feat → skills → review) and the FNV-32a catalog id
-      hash used to round-trip int32 feat/skill ids
+Files refreshed
+---------------
+- docs/CODEMAPS/architecture.md   (~1300 tok)
+- docs/CODEMAPS/commands.md       (~1500 tok, ~50 verbs catalogued)
+- docs/CODEMAPS/data.md           (~1500 tok, all 39 migrations)
+- docs/CODEMAPS/dependencies.md   (~350 tok)
+- docs/CODEMAPS/telnet.md         (~1100 tok)
 
-Files NOT updated (out of scope; codemaps significantly stale):
-  docs/CODEMAPS/commands.md      — missing shop/banker/spawn/admin verbs
-  docs/CODEMAPS/data.md          — claims 11 migrations; current is 32
-  docs/CODEMAPS/dependencies.md  — last reviewed 2026-05-02
-  docs/CODEMAPS/telnet.md        — pre-WriteAsync/EditAndWrite era
+New packages since last codemap pass
+------------------------------------
+- internal/audit/         admin_audit recorder for privileged verbs
+- internal/combat/        per-room Fight + initiative + resolution
+- internal/group/         in-memory party manager (4 slices closed)
+- internal/progression/   XP curve + ComputeLevelUp pure helpers
+- internal/news/          MOTD/news catalog
+- internal/help/          help-topic catalog
+- internal/mob/           wander tick + trail recorder
+- internal/prompt/        per-character prompt template renderer
+- internal/display/       SectionHeader/Subsection/FieldRow/Defang shared cfmt helpers
+- internal/chargen/       backgrounds/classes/feats/skills/weaves/items YAML catalogs
 
-Recommended follow-up:
-  Full codemap re-derivation when Phase C closes (#15 slice 2 +
-  channeler branch land), OR sooner if a doc-updater session is
-  scheduled. Phases A–C have produced ~30% architecture drift since
-  the last full pass.
+New migrations (0012-0039)
+--------------------------
+0012 room_flags+sector       0013 room_extra_descs        0014 exit_door_flags
+0015 item_taxonomy           0016 create_zones            0017 item_owner
+0018 account_auth_level      0019 character_auth_level    0020 room_nomap
+0021 create_mob_trails       0022 mob_template_wander     0023 prompt_template
+0024 world_state             0025 sector_extension        0026 coords_auto
+0027 last_news_seen          0028 item_parent             0029 admin_audit
+0030 create_shops            0031 create_bankers          0032 coin_version
+0033 channeling_json         0034 admin_audit_account     0035 settings_json
+0036 account_logins          0037 characters_pvp          0038 create_trainers
+0039 pending_pools
 
-Architecture changes since last full pass (selection):
-  - Phase A: help topics, pager, goto/transfer/summon/wizinvis,
-    shutdown/reboot, admin_audit table, ; macro chaining
-  - Phase B: equipment slots + wear/wield/remove, shops, banks
-  - Phase C: chargen catalog + multi-step CharacterCreate substeps
-    (name/race/bg/class/abilities/identity/feat/skills/review)
-  - 21 new migrations (0011 → 0032)
-  - New repos: Shop, Banker, AdminAudit
+New verbs since last commands.md
+--------------------------------
+attack/kill, flee/run, parry, pvp, score, group (+invite/accept/decline/
+leave/kick/disband), follow, unfollow, xp, train, learn, goto, transfer,
+summon, wizinvis, shutdown, reboot, examine, map, zonemap, coords, track,
+time, news, prompt, whereami, zones, spawn, list/buy/sell/value (shop),
+balance/deposit/withdraw (banker), wear/wield/remove/equipment,
+inventory/get/drop/give/put, open/close/lock/unlock/pick (door),
+shout/yell, every dynamic channel verb.
+
+Architecture changes worth flagging
+-----------------------------------
+- Combat pipeline (D #18-22): per-room Fight, initiative roll, attack/
+  damage resolution, threat tables, group XP split via GroupResolver
+  callback.
+- Progression spend pattern (E #24): chargen.HashID hoist; spend verbs
+  call new repo methods (RecordSkillRank shape) rather than widening
+  RecordLevelUp.
+- Cross-session output rule formalised: WriteAsync replays cached
+  prompt + Input. Read-goroutine echoes wrapped in EditAndWrite for
+  serialisation.
+- Single-session-per-account session.Registry with kick-on-rebind.
+- Audit policy: refusals MUST NOT audit; success writes one row.
+
+Staleness check
+---------------
+None — all five codemaps regenerated this pass.
+
+Pending integrations not yet documented
+---------------------------------------
+- Affects/buffs/debuffs (§12) — no schema yet
+- Cooldowns + global lag (§12) — no impl yet
+- OLC editors (§16) — blocked behind §15 quest engine
+- Lua sandbox (§F) — biggest deferred lift; design pending
