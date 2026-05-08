@@ -267,6 +267,30 @@ func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordLevelUp(ctx context.Context, id int64,
+	classLevels map[creature.Class]int8,
+	hpCurrent, hpMax int32, bab int16, saves creature.Saves) error {
+	js, err := jsonMarshalString(classLevels)
+	if err != nil {
+		return fmt.Errorf("marshal class levels: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters
+		   SET hp_current = ?, hp_max = ?, bab = ?,
+		       save_fort = ?, save_ref = ?, save_will = ?,
+		       class_levels_json = ?
+		 WHERE id = ?`,
+		hpCurrent, hpMax, bab, saves.Fort, saves.Ref, saves.Will, js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record level up: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordPvP(ctx context.Context, id int64, on bool) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters SET pvp = ? WHERE id = ?`,

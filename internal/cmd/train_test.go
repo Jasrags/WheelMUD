@@ -7,7 +7,6 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
-	"github.com/Jasrags/WheelMUD/internal/progression"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -15,13 +14,13 @@ import (
 
 // trainFixture stages a trainer mob in room 1 plus the Alice player
 // session. Standalone (does not use invFixture) so we can seed
-// Alice's ClassLevels at character-create time — there's no repo
-// method to mutate ClassLevels on an existing row in slice 2.
+// Alice's ClassLevels and Core abilities at character-create time.
 type trainFixture struct {
 	characters *repo.MemoryCharacterRepo
 	mobs       *repo.MemoryMobInstanceRepo
 	templates  *repo.MemoryMobTemplateRepo
 	trainers   *repo.MemoryTrainerRepo
+	audits     *repo.MemoryAdminAuditRepo
 	cat        *chargen.Catalog
 	sessions   *session.Registry
 	alice      *telnet.Session
@@ -30,7 +29,9 @@ type trainFixture struct {
 }
 
 // newTrainFixture seeds Alice with the given XP and Armsman class
-// level (single-class for V1) and a trainer NPC keyed to trainerClassID.
+// level (single-class baseline) and a trainer NPC keyed to
+// trainerClassID. Alice's abilities are 14 Con / 12 Dex / 10 Wis so
+// HP/save deltas have non-zero modifiers in commit assertions.
 func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLvl int8) *trainFixture {
 	t.Helper()
 
@@ -41,6 +42,16 @@ func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLv
 		CurrentRoomID: 1,
 		ClassLevels:   map[creature.Class]int8{creature.ClassArmsman: aliceLvl},
 		XP:            aliceXP,
+		Core: creature.Core{
+			HPCurrent: 12, HPMax: 12,
+			BAB: 1, // chargen-seeded armsman L1
+			Saves: creature.Saves{Fort: 4, Ref: 1, Will: 0},
+			Abilities: creature.Abilities{
+				Con: creature.AbilityScore{Current: 14, Max: 14},
+				Dex: creature.AbilityScore{Current: 12, Max: 12},
+				Wis: creature.AbilityScore{Current: 10, Max: 10},
+			},
+		},
 	}); err != nil {
 		t.Fatalf("seed Alice: %v", err)
 	}
@@ -48,6 +59,7 @@ func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLv
 	templates := repo.NewMemoryMobTemplateRepo()
 	mobs := repo.NewMemoryMobInstanceRepo()
 	trainers := repo.NewMemoryTrainerRepo()
+	audits := repo.NewMemoryAdminAuditRepo()
 
 	tpl, err := templates.Create(context.Background(), creature.MobTemplate{
 		ExternalID: "city.weaponmaster",
@@ -92,6 +104,7 @@ func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLv
 		mobs:       mobs,
 		templates:  templates,
 		trainers:   trainers,
+		audits:     audits,
 		cat:        cat,
 		sessions:   sessions,
 		alice:      alice,
@@ -101,7 +114,7 @@ func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLv
 }
 
 func (f *trainFixture) trainCmd() *telnet.Command {
-	return NewTrain(f.characters, f.mobs, f.templates, f.trainers, f.cat)
+	return NewTrain(f.characters, f.mobs, f.templates, f.trainers, f.cat, f.audits)
 }
 
 func TestTrain_NoTrainerInRoom(t *testing.T) {
@@ -111,6 +124,9 @@ func TestTrain_NoTrainerInRoom(t *testing.T) {
 	runCmd(t, f.trainCmd(), f.alice, "")
 	if !strings.Contains(f.aOut.String(), "no trainer here") {
 		t.Fatalf("expected refusal:\n%s", f.aOut.String())
+	}
+	if rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10}); len(rows) != 0 {
+		t.Fatalf("refusal must not audit: %d rows", len(rows))
 	}
 }
 
@@ -123,62 +139,114 @@ func TestTrain_NotReadyToAdvance(t *testing.T) {
 	if !strings.Contains(out, "not ready to advance") {
 		t.Fatalf("expected 'not ready to advance':\n%s", out)
 	}
-	if !strings.Contains(out, "Lan") {
-		t.Fatalf("expected trainer name in line:\n%s", out)
+	if rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10}); len(rows) != 0 {
+		t.Fatalf("refusal must not audit: %d rows", len(rows))
 	}
 }
 
-func TestTrain_PendingShowsClassLabel(t *testing.T) {
+func TestTrain_CommitsLevelAndPersists(t *testing.T) {
 	// XP 1500 → level 2; classTotal 1 → 1 pending.
 	f := newTrainFixture(t, "armsman", 1500, 1)
 
 	runCmd(t, f.trainCmd(), f.alice, "")
 	out := f.aOut.String()
-	if !strings.Contains(out, "Armsman") {
-		t.Fatalf("expected catalog Class.Name 'Armsman' in line:\n%s", out)
+	if !strings.Contains(out, "Armsman") || !strings.Contains(out, "L2") {
+		t.Fatalf("expected commit line with class+level:\n%s", out)
 	}
-	if !strings.Contains(out, "still being mapped") {
-		t.Fatalf("slice 2 stub message missing:\n%s", out)
+
+	got, err := f.characters.FindByName(context.Background(), "Alice")
+	if err != nil {
+		t.Fatalf("find alice: %v", err)
+	}
+	if got.ClassLevels[creature.ClassArmsman] != 2 {
+		t.Errorf("class level = %d, want 2", got.ClassLevels[creature.ClassArmsman])
+	}
+	// Armsman d10 + Con+2 = 8 HP delta. Pre: 12/12. Post: 20/20.
+	if got.Core.HPMax != 20 || got.Core.HPCurrent != 20 {
+		t.Errorf("HP after train = %d/%d, want 20/20", got.Core.HPCurrent, got.Core.HPMax)
+	}
+	// Armsman L2 BAB high = 2.
+	if got.Core.BAB != 2 {
+		t.Errorf("BAB = %d, want 2", got.Core.BAB)
+	}
+	// Armsman L2 Fort high = 2 + 2/2 = 3, +Con(+2) = 5.
+	if got.Core.Saves.Fort != 5 {
+		t.Errorf("Fort = %d, want 5", got.Core.Saves.Fort)
 	}
 }
 
-func TestTrain_UnknownClassFallsBackToID(t *testing.T) {
-	// Trainer pointed at a class id that's NOT in the chargen catalog.
-	// Slice 2 logs and degrades to the raw id.
-	f := newTrainFixture(t, "ghoulkin", 1500, 1)
+func TestTrain_AuditsOnSuccess(t *testing.T) {
+	f := newTrainFixture(t, "armsman", 1500, 1)
 
 	runCmd(t, f.trainCmd(), f.alice, "")
-	out := f.aOut.String()
-	if !strings.Contains(out, "ghoulkin") {
-		t.Fatalf("expected fallback class id 'ghoulkin':\n%s", out)
+	rows, err := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list audits: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(rows))
+	}
+	if rows[0].Verb != "train" {
+		t.Errorf("verb = %q, want \"train\"", rows[0].Verb)
+	}
+	if rows[0].Target != "armsman" {
+		t.Errorf("target = %q, want \"armsman\"", rows[0].Target)
+	}
+	if rows[0].Args != "L2" {
+		t.Errorf("args = %q, want \"L2\"", rows[0].Args)
 	}
 }
 
-func TestTrain_NilCatalogDegrades(t *testing.T) {
-	f := newTrainFixture(t, "armsman", 1500, 1)
+func TestTrain_OpensNewClassMulticlass(t *testing.T) {
+	// Alice is Armsman L1 with XP for L2; visiting a Wilder trainer
+	// opens Wilder at L1 (multiclass).
+	f := newTrainFixture(t, "wilder", 1500, 1)
 
-	cmd := NewTrain(f.characters, f.mobs, f.templates, f.trainers, nil)
-	runCmd(t, cmd, f.alice, "")
-	out := f.aOut.String()
-	if !strings.Contains(out, "armsman") {
-		t.Fatalf("expected raw class id when catalog is nil:\n%s", out)
+	runCmd(t, f.trainCmd(), f.alice, "")
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	if got.ClassLevels[creature.ClassWilder] != 1 {
+		t.Errorf("wilder = %d, want 1", got.ClassLevels[creature.ClassWilder])
+	}
+	if got.ClassLevels[creature.ClassArmsman] != 1 {
+		t.Errorf("armsman preserved = %d, want 1", got.ClassLevels[creature.ClassArmsman])
 	}
 }
 
-func TestTrain_DoesNotMutate(t *testing.T) {
-	f := newTrainFixture(t, "armsman", 1500, 1)
+func TestTrain_RefusesOnUnknownClassID(t *testing.T) {
+	// Trainer's class id isn't in the chargen catalog.
+	f := newTrainFixture(t, "ghoulkin", 1500, 1)
 
 	before, _ := f.characters.FindByName(context.Background(), "Alice")
 	runCmd(t, f.trainCmd(), f.alice, "")
-	after, _ := f.characters.FindByName(context.Background(), "Alice")
+	out := f.aOut.String()
+	if !strings.Contains(out, "path's broken") {
+		t.Fatalf("expected catalog-miss refusal:\n%s", out)
+	}
 
-	if after.XP != before.XP {
-		t.Fatalf("slice 2 must not mutate XP: before=%d after=%d", before.XP, after.XP)
-	}
+	after, _ := f.characters.FindByName(context.Background(), "Alice")
 	if after.ClassLevels[creature.ClassArmsman] != before.ClassLevels[creature.ClassArmsman] {
-		t.Fatalf("slice 2 must not mutate ClassLevels")
+		t.Errorf("catalog miss must not mutate ClassLevels")
 	}
-	if got := progression.LevelForXP(after.XP); got != 2 {
-		t.Fatalf("XP curve sanity: LevelForXP=%d, want 2", got)
+	if after.Core.HPMax != before.Core.HPMax {
+		t.Errorf("catalog miss must not mutate HP")
+	}
+	if rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10}); len(rows) != 0 {
+		t.Fatalf("catalog miss must not audit: %d rows", len(rows))
+	}
+}
+
+func TestTrain_NilCatalogRefuses(t *testing.T) {
+	f := newTrainFixture(t, "armsman", 1500, 1)
+
+	cmd := NewTrain(f.characters, f.mobs, f.templates, f.trainers, nil, f.audits)
+	runCmd(t, cmd, f.alice, "")
+	out := f.aOut.String()
+	if !strings.Contains(out, "path's broken") {
+		t.Fatalf("expected catalog-miss refusal on nil catalog:\n%s", out)
+	}
+
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	if got.ClassLevels[creature.ClassArmsman] != 1 {
+		t.Errorf("nil catalog must not mutate ClassLevels")
 	}
 }

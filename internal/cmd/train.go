@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/progression"
@@ -73,14 +74,18 @@ func findTrainer(ctx context.Context, roomID int64,
 	return resolvedTrainer{}, errNoTrainerHere
 }
 
-// NewTrain builds the `train` verb. Slice 2: read-only diagnostic
-// only. The verb resolves the trainer in the current room, looks up
-// the trainer's class against the chargen catalog, computes pending
-// level-ups (LevelForXP - characterLevel), and reports the next step
-// to the player. No state mutation.
+// NewTrain builds the `train` verb. Slice 3: commits one class level
+// when the player has banked XP and is at a trainer for that class.
+// Multiclass is at-will — visiting a different-class trainer opens
+// the new class at level 1.
+//
+// Refusal paths (no trainer, not ready, catalog miss, repo error)
+// do NOT audit. Successful commits write one admin_audit row via
+// audit.Record(verb="train", target=classID, args="L<n>").
 func NewTrain(characters repo.CharacterRepo,
 	mobs repo.MobInstanceRepo, templates repo.MobTemplateRepo,
 	trainers repo.TrainerRepo, cat *chargen.Catalog,
+	audits repo.AdminAuditRepo,
 ) *telnet.Command {
 	return &telnet.Command{
 		Name: "train",
@@ -98,20 +103,16 @@ func NewTrain(characters repo.CharacterRepo,
 				return s.WriteString("{{The trainer can't help you right now.}}::red\r\n")
 			}
 
-			var className string
-			if cat != nil {
-				if cl, ok := cat.Class(res.trainer.ClassID); ok {
-					className = cl.Name
-				}
-			}
-			if className == "" {
-				// Catalog miss is not a player-facing error in V1 —
-				// the slice 3 commit path will refuse politely. Log
-				// for ops so a builder typo surfaces.
+			// Hard refuse on catalog miss — a typoed YAML must not
+			// dump the player into a broken progression state.
+			cl, ok := lookupClass(cat, res.trainer.ClassID)
+			if !ok {
 				slog.Warn("train: trainer class not in catalog",
 					"class_id", res.trainer.ClassID,
 					"mob_template_id", res.trainer.MobTemplateID)
-				className = res.trainer.ClassID
+				return s.WriteString(fmt.Sprintf(
+					"{{%s shakes their head. \"I can't help you advance — that path's broken.\"}}::red\r\n",
+					res.keeperName()))
 			}
 
 			char, err := characters.FindByName(c.Ctx, s.CharacterName)
@@ -129,10 +130,45 @@ func NewTrain(characters repo.CharacterRepo,
 					res.keeperName()))
 			}
 
-			// Slice 2 stops here — no mutation, no audit.
+			gains, err := progression.ComputeLevelUp(char, cat, cl.Enum)
+			if err != nil {
+				// Should be unreachable given lookupClass succeeded,
+				// but guard against future catalog drift.
+				slog.Error("train: compute level-up",
+					"class_id", res.trainer.ClassID, "error", err)
+				return s.WriteString("{{Something blocks the lesson. Try again later.}}::red\r\n")
+			}
+
+			if err := characters.RecordLevelUp(c.Ctx, char.ID,
+				gains.ClassLevels,
+				gains.NewHPCurrent, gains.NewHPMax,
+				gains.NewBAB, gains.NewSaves); err != nil {
+				slog.Error("train: record level-up",
+					"char", char.ID, "class_id", res.trainer.ClassID, "error", err)
+				return s.WriteString("{{The lesson slips away as you reach for it.}}::red\r\n")
+			}
+
+			audit.Record(c.Ctx, audits, s, "train", res.trainer.ClassID,
+				fmt.Sprintf("L%d", gains.NewLevel))
+
 			return s.WriteString(fmt.Sprintf(
-				"{{%s eyes you up and down. \"You could train as a %s — but that path's still being mapped.\"}}::cyan\r\n",
-				res.keeperName(), className))
+				"{{%s teaches you the next step. (%s — L%d, +%d HP)}}::green|bold\r\n",
+				res.keeperName(), cl.Name, gains.NewLevel, gains.HPDelta))
 		},
 	}
 }
+
+// lookupClass resolves a trainer's class id against the chargen
+// catalog. Returns ok=false on nil catalog or unknown id; the cmd
+// translates this into a player-facing refusal.
+func lookupClass(cat *chargen.Catalog, id string) (*chargen.Class, bool) {
+	if cat == nil {
+		return nil, false
+	}
+	cl, ok := cat.Class(id)
+	if !ok {
+		return nil, false
+	}
+	return cl, true
+}
+

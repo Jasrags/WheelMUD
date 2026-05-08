@@ -211,6 +211,15 @@ type CharacterRepo interface {
 	// characters.pvp (migration 0037). Returns ErrCharacterNotFound
 	// when no row matches id.
 	RecordPvP(ctx context.Context, id int64, on bool) error
+	// RecordLevelUp atomically writes the new ClassLevels map plus
+	// the recomputed Core fields (HP/MaxHP/BAB/Saves) for the trainer
+	// commit path (Phase E #23 slice 3). The caller computes the
+	// new totals via progression.ComputeLevelUp; the repo persists
+	// them in one UPDATE. Returns ErrCharacterNotFound when no row
+	// matches id.
+	RecordLevelUp(ctx context.Context, id int64,
+		classLevels map[creature.Class]int8,
+		hpCurrent, hpMax int32, bab int16, saves creature.Saves) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.

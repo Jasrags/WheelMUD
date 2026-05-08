@@ -241,6 +241,30 @@ func (r *MemoryCharacterRepo) RecordPromptTemplate(_ context.Context, id int64, 
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordLevelUp(_ context.Context, id int64,
+	classLevels map[creature.Class]int8,
+	hpCurrent, hpMax int32, bab int16, saves creature.Saves) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			// Defensive copy of the ClassLevels map so the caller
+			// mutating it after the call doesn't bleed back.
+			cp := make(map[creature.Class]int8, len(classLevels))
+			for k, v := range classLevels {
+				cp[k] = v
+			}
+			c.ClassLevels = cp
+			c.Core.HPCurrent = hpCurrent
+			c.Core.HPMax = hpMax
+			c.Core.BAB = bab
+			c.Core.Saves = saves
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

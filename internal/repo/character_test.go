@@ -352,6 +352,71 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_level_up_persists", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{
+			AccountID: acc.ID, Name: "Egwene",
+			ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1},
+			Core:        creature.Core{HPCurrent: 12, HPMax: 12, BAB: 1},
+		})
+		newLevels := map[creature.Class]int8{
+			creature.ClassArmsman: 2,
+			creature.ClassWilder:  1,
+		}
+		newSaves := creature.Saves{Fort: 5, Ref: 1, Will: 3}
+		if err := cr.RecordLevelUp(ctx, c.ID, newLevels, 20, 20, 3, newSaves); err != nil {
+			t.Fatalf("RecordLevelUp: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Egwene")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if got.Core.HPCurrent != 20 || got.Core.HPMax != 20 {
+			t.Fatalf("HP not persisted: %+v", got.Core)
+		}
+		if got.Core.BAB != 3 {
+			t.Fatalf("BAB = %d, want 3", got.Core.BAB)
+		}
+		if got.Core.Saves != newSaves {
+			t.Fatalf("Saves = %+v, want %+v", got.Core.Saves, newSaves)
+		}
+		if got.ClassLevels[creature.ClassArmsman] != 2 ||
+			got.ClassLevels[creature.ClassWilder] != 1 {
+			t.Fatalf("ClassLevels not persisted: %+v", got.ClassLevels)
+		}
+	})
+
+	t.Run(name+"/record_level_up_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordLevelUp(context.Background(), 9999,
+			map[creature.Class]int8{creature.ClassArmsman: 1}, 1, 1, 0,
+			creature.Saves{})
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/record_level_up_isolates_caller_map", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Mat",
+			ClassLevels: map[creature.Class]int8{creature.ClassArmsman: 1}})
+		levels := map[creature.Class]int8{creature.ClassArmsman: 2}
+		if err := cr.RecordLevelUp(ctx, c.ID, levels, 12, 12, 2,
+			creature.Saves{}); err != nil {
+			t.Fatalf("RecordLevelUp: %v", err)
+		}
+		// Mutate the caller's map; stored state must not move.
+		levels[creature.ClassArmsman] = 99
+		got, _ := cr.FindByName(ctx, "Mat")
+		if got.ClassLevels[creature.ClassArmsman] != 2 {
+			t.Fatalf("caller mutation bled through: %+v", got.ClassLevels)
+		}
+	})
+
 	t.Run(name+"/first_character_promoted_to_admin", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)
