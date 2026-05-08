@@ -365,9 +365,12 @@ func (m *Manager) tickParticipantAffects(ctx context.Context, roomID int64) {
 			continue
 		}
 		next, expired := affects.Tick(core.Affects)
-		// changed is true when at least one entry expired or carried
-		// forward; Tick returns identical-length slice only when no
-		// entries existed, which we already filtered above.
+		// Always write back: Tick decrements every entry's
+		// DurationTicks, so even when no affect expires the row needs
+		// the new durations or next round reloads the original values
+		// and the affect never counts down. Cheap single-column
+		// UPDATE; the optimisation slot if write pressure shows up at
+		// scale is an in-memory affects cache, not a write skip.
 		if err := m.chars.RecordAffects(ctx, ref.ID, next); err != nil {
 			slog.Warn("combat: affects write-back failed",
 				"room", roomID, "char", ref.ID, "error", err)

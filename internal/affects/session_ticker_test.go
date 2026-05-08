@@ -188,6 +188,36 @@ func TestSessionTicker_LoadErrorContinues(t *testing.T) {
 	}
 }
 
+func TestSessionTicker_WriteErrorContinues(t *testing.T) {
+	rows := map[int64]Character{
+		7: {Affects: []creature.Affect{{Name: "x", DurationTicks: 1}}},
+		8: {Affects: []creature.Affect{{Name: "y", DurationTicks: 1}}},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	chars.writeErr = map[int64]error{7: errors.New("disk full")}
+	cand := func() []Candidate {
+		return []Candidate{
+			{CharacterID: 7, RoomID: 100},
+			{CharacterID: 8, RoomID: 100},
+		}
+	}
+
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.Tick(context.Background())
+
+	// char 7's write fails → no event should fire for it. char 8 still
+	// ticks and emits Expired (its only affect just expired).
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.events) != 1 {
+		t.Fatalf("want 1 event for char 8 only; got %d", len(bus.events))
+	}
+	ev, ok := bus.events[0].(Expired)
+	if !ok || ev.CharacterID != 8 {
+		t.Fatalf("event: %+v", bus.events[0])
+	}
+}
+
 func TestSessionTicker_NilSafe(t *testing.T) {
 	var tk *SessionTicker
 	tk.Tick(context.Background()) // must not panic

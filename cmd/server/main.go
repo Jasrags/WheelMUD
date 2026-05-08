@@ -20,10 +20,10 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/creature"
-	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
@@ -1021,7 +1021,6 @@ func (srv *server) broadcast(msg string) {
 		}
 	}
 }
-
 
 // characterAffectsLoader adapts repo.CharacterRepo to the slim
 // affects.CharLoader interface. Only the Affects field of the loaded
