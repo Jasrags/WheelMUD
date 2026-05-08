@@ -622,6 +622,11 @@ type MobTemplate struct {
 
 	CorpseDecayTicks   int32
 	RespawnZoneResetID int64
+	// HomeRoomID is the room the loader originally spawned this
+	// template into. The §9 Respawner uses it as the anchor location
+	// when topping up a zone's mob population. 0 means "not
+	// respawnable" — admin spawns via the `spawn` verb leave it 0.
+	HomeRoomID int64
 
 	// Shadowspawn-only fields. Zero values for non-Shadowspawn.
 	ShadowLinkMyrddraalID int64
@@ -633,6 +638,22 @@ type MobTemplate struct {
 
 	// nil for non-channelers.
 	Channeling *Channeling
+}
+
+// NewInstanceFromTemplate constructs a fresh, full-HP MobInstance
+// for the given template, anchored at roomID. boundResetID identifies
+// the zone-reset that produced the spawn (0 = manual / admin spawn).
+// Used by the spawn admin verb and the §9 Respawner so the
+// template→instance copy stays in one place.
+func NewInstanceFromTemplate(tpl MobTemplate, roomID, boundResetID int64) MobInstance {
+	return MobInstance{
+		TemplateID:   tpl.ID,
+		BoundResetID: boundResetID,
+		Core: Core{
+			HPCurrent:     tpl.Core.HPMax,
+			CurrentRoomID: roomID,
+		},
+	}
 }
 
 // MobInstance is a live spawned mob in the world. Stat mutations

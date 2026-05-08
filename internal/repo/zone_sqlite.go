@@ -98,6 +98,30 @@ func (r *SQLiteZoneRepo) List(ctx context.Context) ([]Zone, error) {
 	return out, rows.Err()
 }
 
+func (r *SQLiteZoneRepo) LastResetTs(ctx context.Context, zoneID int64) (int64, error) {
+	var ts int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT last_reset_ts FROM zones WHERE id = ?`, zoneID,
+	).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrZoneNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("query zone last_reset_ts: %w", err)
+	}
+	return ts, nil
+}
+
+func (r *SQLiteZoneRepo) RecordLastResetTs(ctx context.Context, zoneID int64, ts int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE zones SET last_reset_ts = ? WHERE id = ?`, ts, zoneID,
+	)
+	if err != nil {
+		return fmt.Errorf("update zone last_reset_ts: %w", err)
+	}
+	return checkRowsAffected(res, ErrZoneNotFound)
+}
+
 func scanZone(s rowScanner) (Zone, error) {
 	var (
 		z           Zone

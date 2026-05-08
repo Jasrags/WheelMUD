@@ -159,7 +159,13 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 	if err := insertItems(ctx, tx, w.Items, roomIDs); err != nil {
 		return err
 	}
-	if err := insertMobs(ctx, tx, w.Mobs, roomIDs); err != nil {
+	roomZones := make(map[string]int64, len(w.Rooms))
+	for _, r := range w.Rooms {
+		if zid, ok := zoneIDs[r.ZoneExternalID]; ok {
+			roomZones[r.ID] = zid
+		}
+	}
+	if err := insertMobs(ctx, tx, w.Mobs, roomIDs, roomZones); err != nil {
 		return err
 	}
 
@@ -479,7 +485,7 @@ func encodeItemStatsJSON(s repo.ItemStats) (string, error) {
 // `mobs.yaml` as before and the loader manufactures defaults for
 // the rest of the Core stat block (Medium humanoid, HP 1, Defense
 // 10, ChallengeCode 'A').
-func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]int64) error {
+func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones map[string]int64) error {
 	templates := repo.NewSQLiteMobTemplateRepo(tx)
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
 	shops := repo.NewSQLiteShopRepo(tx)
@@ -518,13 +524,20 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 		if err != nil {
 			return fmt.Errorf("insert mob template %q: %w", m.ID, err)
 		}
-		spawn := creature.MobInstance{
-			TemplateID: created.ID,
-			Core: creature.Core{
-				HPCurrent:     created.Core.HPMax,
-				CurrentRoomID: roomID,
-			},
+		// Stamp the §9 spawn anchor so the §19 Respawner can top up
+		// this mob's population on AreaReset ticks. roomZones[m.Room]
+		// is 0 for orphan rooms (validation already rejects those),
+		// so a zero zone is a loader bug worth surfacing.
+		zoneID := roomZones[m.Room]
+		if zoneID == 0 {
+			return fmt.Errorf("mob %q in room %q: room has no zone", m.ID, m.Room)
 		}
+		if err := templates.SetSpawnAnchor(ctx, created.ID, zoneID, roomID); err != nil {
+			return fmt.Errorf("set spawn anchor for mob %q: %w", m.ID, err)
+		}
+		created.RespawnZoneResetID = zoneID
+		created.HomeRoomID = roomID
+		spawn := creature.NewInstanceFromTemplate(created, roomID, 0)
 		if _, err := instances.Create(ctx, spawn); err != nil {
 			return fmt.Errorf("spawn mob instance %q: %w", m.ID, err)
 		}

@@ -259,6 +259,65 @@ func testListExternalIDs(t *testing.T, name string, newRepo func(t *testing.T) M
 			t.Fatalf("unsorted: %+v", got)
 		}
 	})
+
+	t.Run(name+"/spawn_anchor_round_trip", func(t *testing.T) {
+		r := newRepo(t)
+		ctx := context.Background()
+		stub := func(id string) creature.MobTemplate {
+			return creature.MobTemplate{
+				ExternalID:    id,
+				ChallengeCode: 'A',
+				Core: creature.Core{
+					Name: id, Size: creature.SizeMedium, Type: creature.TypeHumanoid,
+					HPMax: 1, Defense: 10, Speed: creature.Speed{BaseFt: 30},
+					ReachFt: 5, FaceFt: 5, ThreatFt: 5,
+				},
+			}
+		}
+		a, err := r.Create(ctx, stub("anchor.a"))
+		if err != nil {
+			t.Fatalf("create a: %v", err)
+		}
+		b, err := r.Create(ctx, stub("anchor.b"))
+		if err != nil {
+			t.Fatalf("create b: %v", err)
+		}
+		// Anchor a → zone 7 / room 100; b → zone 9 / room 200.
+		if err := r.SetSpawnAnchor(ctx, a.ID, 7, 100); err != nil {
+			t.Fatalf("SetSpawnAnchor a: %v", err)
+		}
+		if err := r.SetSpawnAnchor(ctx, b.ID, 9, 200); err != nil {
+			t.Fatalf("SetSpawnAnchor b: %v", err)
+		}
+
+		got, err := r.GetByID(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("GetByID a: %v", err)
+		}
+		if got.RespawnZoneResetID != 7 || got.HomeRoomID != 100 {
+			t.Fatalf("a anchor = (%d,%d), want (7,100)", got.RespawnZoneResetID, got.HomeRoomID)
+		}
+
+		zone7, err := r.ListByRespawnZone(ctx, 7)
+		if err != nil {
+			t.Fatalf("ListByRespawnZone 7: %v", err)
+		}
+		if len(zone7) != 1 || zone7[0].ID != a.ID {
+			t.Fatalf("zone 7 list = %+v, want [a]", zone7)
+		}
+
+		empty, err := r.ListByRespawnZone(ctx, 12345)
+		if err != nil {
+			t.Fatalf("ListByRespawnZone empty: %v", err)
+		}
+		if len(empty) != 0 {
+			t.Fatalf("empty zone list = %+v", empty)
+		}
+
+		if err := r.SetSpawnAnchor(ctx, a.ID+999, 1, 1); !errors.Is(err, ErrTemplateNotFound) {
+			t.Fatalf("unknown id err = %v, want ErrTemplateNotFound", err)
+		}
+	})
 }
 
 func TestMemoryMobTemplateRepo(t *testing.T) {

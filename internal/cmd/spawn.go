@@ -105,13 +105,7 @@ func spawnMobs(c *telnet.Context, mobTemplates repo.MobTemplateRepo, mobs repo.M
 
 	created := 0
 	for i := 0; i < count; i++ {
-		spawn := creature.MobInstance{
-			TemplateID: tpl.ID,
-			Core: creature.Core{
-				HPCurrent:     tpl.Core.HPMax,
-				CurrentRoomID: s.CurrentRoomID,
-			},
-		}
+		spawn := creature.NewInstanceFromTemplate(tpl, s.CurrentRoomID, 0)
 		if _, err := mobs.Create(c.Ctx, spawn); err != nil {
 			slog.Warn("spawn: mob_instance create", "ext", ext, "i", i, "error", err)
 			return s.WriteString(fmt.Sprintf("{{Spawned %d of %d before error: %v}}::red\r\n", created, count, err))

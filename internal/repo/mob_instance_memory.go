@@ -154,6 +154,18 @@ func (r *MemoryMobInstanceRepo) RecentTrails(_ context.Context, mobID int64, lim
 	return out, nil
 }
 
+func (r *MemoryMobInstanceRepo) CountByTemplate(_ context.Context, templateID int64) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, m := range r.byID {
+		if m.TemplateID == templateID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (r *MemoryMobInstanceRepo) Delete(_ context.Context, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

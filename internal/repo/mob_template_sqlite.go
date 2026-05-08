@@ -28,7 +28,7 @@ func NewSQLiteMobTemplateRepo(db DBTX) *SQLiteMobTemplateRepo {
 const templateExtraColumns = `challenge_code, organization, behavior_flags,
 		wander_chance,
 		loot_table_id, gold_dice, dialogue_tree_id, shopkeeper_json,
-		corpse_decay_ticks, respawn_zone_reset_id,
+		corpse_decay_ticks, respawn_zone_reset_id, home_room_id,
 		shadow_link_myrddraal_id, taint_immune, fade_link_master_ticks,
 		short_desc, long_desc,
 		natural_attacks_json, special_attacks_json, traits_json,
@@ -84,7 +84,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		challengeCode, t.Organization, t.BehaviorFlags,
 		clampWanderChance(t.WanderChance),
 		t.LootTableID, t.GoldDice, t.DialogueTreeID, shopJSON,
-		t.CorpseDecayTicks, t.RespawnZoneResetID,
+		t.CorpseDecayTicks, t.RespawnZoneResetID, t.HomeRoomID,
 		t.ShadowLinkMyrddraalID, boolToInt(t.TaintImmune), fadeTicks,
 		t.ShortDesc, t.LongDesc,
 		j.natural, j.special, j.traits,
@@ -139,6 +139,92 @@ func (r *SQLiteMobTemplateRepo) ListExternalIDs(ctx context.Context) ([]string, 
 	return out, rows.Err()
 }
 
+// ListByRespawnZone returns every template anchored to zoneID via
+// respawn_zone_reset_id. The Phase D §19 Respawner walks this set on
+// every AreaReset tick, so the column is indexed (migration 0042).
+func (r *SQLiteMobTemplateRepo) ListByRespawnZone(ctx context.Context, zoneID int64) ([]creature.MobTemplate, error) {
+	query := fmt.Sprintf(
+		`SELECT id, external_id, name, %s, %s
+		 FROM mob_templates WHERE respawn_zone_reset_id = ? ORDER BY id`,
+		coreColumns, templateExtraColumns,
+	)
+	rows, err := r.db.QueryContext(ctx, query, zoneID)
+	if err != nil {
+		return nil, fmt.Errorf("list mob_templates by respawn zone: %w", err)
+	}
+	defer rows.Close()
+	var out []creature.MobTemplate
+	for rows.Next() {
+		t, err := scanTemplateRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// scanTemplateRow runs the same scan + post-process the queryOne
+// path uses, but against a multi-row scanner so ListByRespawnZone
+// can iterate without duplicating the dest list.
+func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
+	var (
+		t             creature.MobTemplate
+		j             templateJSON
+		challengeCode string
+		shopJSON      sql.NullString
+		taintImmune   int
+		fadeTicks     int64
+	)
+	dest := []any{&t.ID, &t.ExternalID, &t.Core.Name}
+	dest = append(dest, coreScanDest(&t.Core, &j.dr, &j.resists)...)
+	dest = append(dest,
+		&challengeCode, &t.Organization, &t.BehaviorFlags,
+		&t.WanderChance,
+		&t.LootTableID, &t.GoldDice, &t.DialogueTreeID, &shopJSON,
+		&t.CorpseDecayTicks, &t.RespawnZoneResetID, &t.HomeRoomID,
+		&t.ShadowLinkMyrddraalID, &taintImmune, &fadeTicks,
+		&t.ShortDesc, &t.LongDesc,
+		&j.natural, &j.special, &j.traits,
+		&j.advancement, &j.climate, &j.terrain, &j.scripts,
+		&t.XPValue,
+	)
+	if err := s.Scan(dest...); err != nil {
+		return creature.MobTemplate{}, fmt.Errorf("scan mob_template: %w", err)
+	}
+	if len(challengeCode) > 0 {
+		t.ChallengeCode = creature.ChallengeCode(rune(challengeCode[0]))
+	}
+	t.TaintImmune = taintImmune != 0
+	t.FadeOnLinkMasterTimer = time.Duration(fadeTicks) * time.Second
+	t.Core.ID = t.ID
+	if err := j.unmarshalInto(&t); err != nil {
+		return creature.MobTemplate{}, err
+	}
+	if shopJSON.Valid {
+		var sc creature.ShopConfig
+		if err := jsonUnmarshalString(shopJSON.String, &sc); err != nil {
+			return creature.MobTemplate{}, err
+		}
+		t.ShopkeeperConfig = &sc
+	}
+	return t, nil
+}
+
+// SetSpawnAnchor stamps respawn_zone_reset_id + home_room_id on an
+// existing template row. Called by the world loader after Create so
+// YAML-seeded mobs become respawnable.
+func (r *SQLiteMobTemplateRepo) SetSpawnAnchor(ctx context.Context, templateID, zoneID, homeRoomID int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE mob_templates SET respawn_zone_reset_id = ?, home_room_id = ? WHERE id = ?`,
+		zoneID, homeRoomID, templateID,
+	)
+	if err != nil {
+		return fmt.Errorf("update mob_template spawn anchor: %w", err)
+	}
+	return checkRowsAffected(res, ErrTemplateNotFound)
+}
+
 func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg any) (creature.MobTemplate, error) {
 	query := fmt.Sprintf(
 		`SELECT id, external_id, name, %s, %s
@@ -159,7 +245,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		&challengeCode, &t.Organization, &t.BehaviorFlags,
 		&t.WanderChance,
 		&t.LootTableID, &t.GoldDice, &t.DialogueTreeID, &shopJSON,
-		&t.CorpseDecayTicks, &t.RespawnZoneResetID,
+		&t.CorpseDecayTicks, &t.RespawnZoneResetID, &t.HomeRoomID,
 		&t.ShadowLinkMyrddraalID, &taintImmune, &fadeTicks,
 		&t.ShortDesc, &t.LongDesc,
 		&j.natural, &j.special, &j.traits,

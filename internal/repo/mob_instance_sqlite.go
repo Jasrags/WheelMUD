@@ -209,6 +209,16 @@ func (r *SQLiteMobInstanceRepo) RecentTrails(ctx context.Context, mobID int64, l
 	return out, rows.Err()
 }
 
+func (r *SQLiteMobInstanceRepo) CountByTemplate(ctx context.Context, templateID int64) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM mob_instances WHERE template_id = ?`, templateID,
+	).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count mob_instances by template: %w", err)
+	}
+	return n, nil
+}
+
 func (r *SQLiteMobInstanceRepo) Delete(ctx context.Context, id int64) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM mob_instances WHERE id = ?`, id)
 	if err != nil {

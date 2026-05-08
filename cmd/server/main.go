@@ -221,6 +221,29 @@ func main() {
 	restocker := world.NewRestocker(shops)
 	buckets.AreaReset.Subscribe(restocker.Tick)
 
+	// Phase D §19 mob respawner: tops up zones whose YAML-seeded
+	// populations have died off. Empty-mode zones consult the
+	// session registry via zoneOccupied so a respawn can't tick on
+	// a fight in progress.
+	respawner := world.NewRespawner(zones, mobTemplates, mobs,
+		world.OccupancyCheckerFunc(func(ctx context.Context, zoneID int64) bool {
+			for _, sess := range sessions.Snapshot() {
+				roomID := sess.CurrentRoomID
+				if roomID == 0 {
+					continue
+				}
+				room, err := rooms.FindByID(ctx, roomID)
+				if err != nil {
+					continue
+				}
+				if room.ZoneID == zoneID {
+					return true
+				}
+			}
+			return false
+		}))
+	buckets.AreaReset.Subscribe(respawner.Tick)
+
 	// §11 / Phase D #16 combat tick spine. Manager owns per-room
 	// Fight aggregates, advances Round on every Combat-bucket pulse,
 	// and emits CombatStarted / RoundStarted / CombatEnded events.

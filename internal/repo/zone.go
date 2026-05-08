@@ -67,6 +67,14 @@ type ZoneRepo interface {
 	// List returns every zone, sorted by external_id for deterministic
 	// admin output. An empty result is not an error.
 	List(ctx context.Context) ([]Zone, error)
+	// LastResetTs returns the unix-second timestamp of the most
+	// recent successful AreaReset pass for zoneID, or 0 if the zone
+	// has never been reset. Used by the §9 Respawner to gate each
+	// zone's pass on reset_interval_s.
+	LastResetTs(ctx context.Context, zoneID int64) (int64, error)
+	// RecordLastResetTs writes ts (unix seconds) to zones.last_reset_ts.
+	// Absolute write — mirrors RecordCoin / RecordXP.
+	RecordLastResetTs(ctx context.Context, zoneID int64, ts int64) error
 }
 
 var (

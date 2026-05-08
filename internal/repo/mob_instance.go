@@ -63,4 +63,12 @@ type MobInstanceRepo interface {
 	// if id is unknown. Trail rows for the mob are removed alongside
 	// (sqlite via FK CASCADE; memory mirrors this).
 	Delete(ctx context.Context, id int64) error
+	// CountByTemplate returns how many live instance rows exist for
+	// templateID, regardless of room (including room_id == 0
+	// "removed from world but not despawned" rows). The §9
+	// Respawner uses this on every AreaReset tick to decide whether
+	// a template needs to be topped up; "live" here means "row
+	// still in mob_instances", since handleMobDeath deletes on
+	// death rather than soft-flagging.
+	CountByTemplate(ctx context.Context, templateID int64) (int, error)
 }

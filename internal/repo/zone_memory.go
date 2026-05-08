@@ -13,12 +13,15 @@ import (
 // `zones show` queries. Reads vastly outnumber writes (one Create
 // per zone per boot vs. continuous List/GetByID).
 type MemoryZoneRepo struct {
-	mu    sync.RWMutex
-	zones []Zone
-	maxID int64
+	mu        sync.RWMutex
+	zones     []Zone
+	lastReset map[int64]int64
+	maxID     int64
 }
 
-func NewMemoryZoneRepo() *MemoryZoneRepo { return &MemoryZoneRepo{} }
+func NewMemoryZoneRepo() *MemoryZoneRepo {
+	return &MemoryZoneRepo{lastReset: make(map[int64]int64)}
+}
 
 // Insert adds a zone directly without uniqueness checks. Test fixtures
 // use this; production code (the YAML loader) goes through Create.
@@ -85,4 +88,27 @@ func (r *MemoryZoneRepo) List(_ context.Context) ([]Zone, error) {
 	copy(out, r.zones)
 	sort.Slice(out, func(i, j int) bool { return out[i].ExternalID < out[j].ExternalID })
 	return out, nil
+}
+
+func (r *MemoryZoneRepo) LastResetTs(_ context.Context, zoneID int64) (int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, z := range r.zones {
+		if z.ID == zoneID {
+			return r.lastReset[zoneID], nil
+		}
+	}
+	return 0, ErrZoneNotFound
+}
+
+func (r *MemoryZoneRepo) RecordLastResetTs(_ context.Context, zoneID int64, ts int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, z := range r.zones {
+		if z.ID == zoneID {
+			r.lastReset[zoneID] = ts
+			return nil
+		}
+	}
+	return ErrZoneNotFound
 }

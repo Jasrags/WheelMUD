@@ -165,6 +165,35 @@ func runZoneRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Zone
 		}
 	})
 
+	t.Run(name+"/last_reset_ts_round_trip", func(t *testing.T) {
+		r := newRepo(t)
+		ctx := context.Background()
+		created, err := r.Create(ctx, sample("ts"))
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		ts, err := r.LastResetTs(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("LastResetTs initial: %v", err)
+		}
+		if ts != 0 {
+			t.Fatalf("initial ts = %d, want 0", ts)
+		}
+		if err := r.RecordLastResetTs(ctx, created.ID, 12345); err != nil {
+			t.Fatalf("RecordLastResetTs: %v", err)
+		}
+		ts, err = r.LastResetTs(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("LastResetTs after record: %v", err)
+		}
+		if ts != 12345 {
+			t.Fatalf("ts = %d, want 12345", ts)
+		}
+		if err := r.RecordLastResetTs(ctx, created.ID+999, 1); !errors.Is(err, ErrZoneNotFound) {
+			t.Fatalf("unknown zone err = %v, want ErrZoneNotFound", err)
+		}
+	})
+
 	t.Run(name+"/reset_modes_all_accepted", func(t *testing.T) {
 		repo := newRepo(t)
 		ctx := context.Background()

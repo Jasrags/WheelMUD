@@ -75,3 +75,29 @@ func (r *MemoryMobTemplateRepo) ListExternalIDs(_ context.Context) ([]string, er
 	sort.Strings(out)
 	return out, nil
 }
+
+func (r *MemoryMobTemplateRepo) ListByRespawnZone(_ context.Context, zoneID int64) ([]creature.MobTemplate, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []creature.MobTemplate
+	for _, t := range r.byID {
+		if t.RespawnZoneResetID == zoneID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (r *MemoryMobTemplateRepo) SetSpawnAnchor(_ context.Context, templateID, zoneID, homeRoomID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.byID[templateID]
+	if !ok {
+		return ErrTemplateNotFound
+	}
+	t.RespawnZoneResetID = zoneID
+	t.HomeRoomID = homeRoomID
+	r.byID[templateID] = t
+	return nil
+}

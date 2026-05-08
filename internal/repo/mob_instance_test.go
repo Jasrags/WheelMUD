@@ -401,6 +401,40 @@ func runMobInstanceRepoTests(t *testing.T, name string, newFix func(t *testing.T
 		}
 	})
 
+	t.Run(name+"/count_by_template", func(t *testing.T) {
+		fix, roomID, tplID := makeFixtures(t)
+		ctx := context.Background()
+		got, err := fix.instances.CountByTemplate(ctx, tplID)
+		if err != nil {
+			t.Fatalf("CountByTemplate empty: %v", err)
+		}
+		if got != 0 {
+			t.Fatalf("empty count = %d, want 0", got)
+		}
+		for i := 0; i < 3; i++ {
+			if _, err := fix.instances.Create(ctx, creature.MobInstance{
+				TemplateID: tplID,
+				Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+		got, err = fix.instances.CountByTemplate(ctx, tplID)
+		if err != nil {
+			t.Fatalf("CountByTemplate: %v", err)
+		}
+		if got != 3 {
+			t.Fatalf("count = %d, want 3", got)
+		}
+		other, err := fix.instances.CountByTemplate(ctx, tplID+999)
+		if err != nil {
+			t.Fatalf("CountByTemplate unknown: %v", err)
+		}
+		if other != 0 {
+			t.Fatalf("unknown template count = %d, want 0", other)
+		}
+	})
+
 	t.Run(name+"/recent_trails_limit_zero", func(t *testing.T) {
 		fix, roomID, tplID := makeFixtures(t)
 		ctx := context.Background()
