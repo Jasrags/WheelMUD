@@ -15,9 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/affects"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/display"
@@ -382,6 +384,52 @@ func main() {
 		// eyes hollow." stacked on top would be noise.
 		combatBroadcastExcept(ev.RoomID,
 			"{{"+name+" appears, eyes hollow.}}::cyan\r\n", victim)
+	})
+
+	// Phase E #26: out-of-combat affects ticker. Walks every in-world
+	// session, skips characters already in a fight (combat's end-of-
+	// round tick handles those), and decrements affect durations on
+	// the rest. Cadence is 6 s — just slow enough that scanning the
+	// session map per pulse stays cheap, fast enough that short buffs
+	// have visible feedback.
+	affectsCandidates := func() []affects.Candidate {
+		snap := sessions.Snapshot()
+		out := make([]affects.Candidate, 0, len(snap))
+		for _, s := range snap {
+			if s == nil {
+				continue
+			}
+			charID, _, roomID := s.InWorld()
+			if charID == 0 || roomID == 0 {
+				continue
+			}
+			out = append(out, affects.Candidate{CharacterID: charID, RoomID: roomID})
+		}
+		return out
+	}
+	affectsTicker := affects.NewSessionTicker(
+		affectsCandidates,
+		combatMgr,
+		characterAffectsLoader{characters},
+		eventbusAdapter{bus},
+		slog.Default(),
+	)
+	buckets.Affects.Subscribe(affectsTicker.Tick)
+
+	// affects.Expired subscriber: emits one cfmt line per name to the
+	// owning session via WriteAsync (cross-session output rule).
+	eventbus.Subscribe[affects.Expired](bus, func(_ context.Context, ev affects.Expired) {
+		victim := cmd.LookupByCharacterID(sessions, ev.CharacterID)
+		if victim == nil {
+			return
+		}
+		for _, n := range ev.Names {
+			msg := "{{Your " + n + " fades.}}::cyan\r\n"
+			if err := victim.WriteAsync(msg); err != nil {
+				slog.Debug("affects: expired notify failed",
+					"char", ev.CharacterID, "name", n, "error", err)
+			}
+		}
 	})
 
 	// srv is constructed before buildRegistry so the shutdown / reboot
@@ -972,4 +1020,40 @@ func (srv *server) broadcast(msg string) {
 				"session", s.RemoteAddress, "error", err)
 		}
 	}
+}
+
+
+// characterAffectsLoader adapts repo.CharacterRepo to the slim
+// affects.CharLoader interface. Only the Affects field of the loaded
+// row is exposed to the ticker — everything else stays in the repo.
+type characterAffectsLoader struct {
+	chars repo.CharacterRepo
+}
+
+func (a characterAffectsLoader) GetByID(ctx context.Context, id int64) (affects.Character, error) {
+	ch, err := a.chars.GetByID(ctx, id)
+	if err != nil {
+		return affects.Character{}, err
+	}
+	return affects.Character{Affects: ch.Core.Affects}, nil
+}
+
+func (a characterAffectsLoader) RecordAffects(ctx context.Context, id int64, list []creature.Affect) error {
+	return a.chars.RecordAffects(ctx, id, list)
+}
+
+// eventbusAdapter wraps *eventbus.Bus to satisfy affects.EventPublisher.
+// affects.EventPublisher takes an `any` so the affects package stays
+// free of the eventbus import; eventbus.Event is interface{}, so any
+// payload (including the typed affects.Expired struct) round-trips
+// through reflection inside Publish.
+type eventbusAdapter struct {
+	bus *eventbus.Bus
+}
+
+func (a eventbusAdapter) Publish(ctx context.Context, ev any) {
+	if a.bus == nil {
+		return
+	}
+	a.bus.Publish(ctx, ev)
 }

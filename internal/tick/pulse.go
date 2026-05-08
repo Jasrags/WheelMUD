@@ -116,6 +116,13 @@ type Buckets struct {
 	// from below by the bucket interval, not the entry's per-item
 	// duration, so 30 s is a fine default — corpses live minutes.
 	Decay *Bucket
+	// Affects ticks down timed buffs/debuffs on out-of-combat
+	// characters (Phase E #26). In-combat participants tick on Combat
+	// instead — the Affects subscriber filters them out via
+	// combat.Manager.Active(roomID). 6 s gives a usable feedback
+	// granularity for short buffs without scanning the session
+	// registry too aggressively.
+	Affects *Bucket
 }
 
 // Default cadences for the game-loop pulse buckets. These can be
@@ -129,6 +136,7 @@ const (
 	DefaultSaveInterval      = 30 * time.Second
 	DefaultPhaseInterval     = 1 * time.Second
 	DefaultDecayInterval     = 30 * time.Second
+	DefaultAffectsInterval   = 6 * time.Second
 )
 
 // NewBuckets registers the default game-loop buckets on s.
@@ -141,6 +149,7 @@ func NewBuckets(s *Scheduler) *Buckets {
 		Save:      NewBucket(s, "save", DefaultSaveInterval),
 		Phase:     NewBucket(s, "phase", DefaultPhaseInterval),
 		Decay:     NewBucket(s, "decay", DefaultDecayInterval),
+		Affects:   NewBucket(s, "affects", DefaultAffectsInterval),
 	}
 }
 
@@ -169,5 +178,8 @@ func (bs *Buckets) Stop() {
 	}
 	if bs.Decay != nil {
 		bs.Decay.Stop()
+	}
+	if bs.Affects != nil {
+		bs.Affects.Stop()
 	}
 }

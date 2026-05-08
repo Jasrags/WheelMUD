@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/affects"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -320,6 +321,66 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 	if hasAction {
 		m.resolveAction(ctx, roomID, round, active, pending)
 	}
+
+	// Phase E #26: tick every participant's affects once per round so
+	// in-fight buffs/debuffs count down. Out-of-combat ticking lives
+	// in the Affects bucket subscriber. Pruning runs at the top of
+	// the next round-tick, so a death this round still ticks here
+	// (harmless — the row is gone next round). Mob affects are
+	// in-memory only and are dropped on despawn anyway.
+	m.tickParticipantAffects(ctx, roomID)
+}
+
+// tickParticipantAffects decrements affect durations for every
+// participant of the active fight in roomID and persists changes for
+// character actors. Mob affects mutate the in-memory snapshot only —
+// MobInstanceRepo doesn't have an affects column and dead mobs drop
+// the slice anyway. Errors per-participant log-and-continue (mirrors
+// the §19 mob-death rule).
+func (m *Manager) tickParticipantAffects(ctx context.Context, roomID int64) {
+	m.mu.RLock()
+	f, ok := m.fights[roomID]
+	if !ok {
+		m.mu.RUnlock()
+		return
+	}
+	order := append([]ActorEntry(nil), f.Order...)
+	m.mu.RUnlock()
+
+	for _, entry := range order {
+		ref := entry.Ref
+		if ref.Kind != ActorKindCharacter {
+			// Mob affects: skip — no persistence, the in-memory Core
+			// goes away on despawn. When a content source starts
+			// applying mob affects in V2 this is the natural slot.
+			continue
+		}
+		core, err := m.resolveCore(ctx, ref)
+		if err != nil {
+			slog.Warn("combat: affects tick resolve failed",
+				"room", roomID, "actor", ref, "error", err)
+			continue
+		}
+		if len(core.Affects) == 0 {
+			continue
+		}
+		next, expired := affects.Tick(core.Affects)
+		// changed is true when at least one entry expired or carried
+		// forward; Tick returns identical-length slice only when no
+		// entries existed, which we already filtered above.
+		if err := m.chars.RecordAffects(ctx, ref.ID, next); err != nil {
+			slog.Warn("combat: affects write-back failed",
+				"room", roomID, "char", ref.ID, "error", err)
+			continue
+		}
+		if len(expired) > 0 && m.bus != nil {
+			m.bus.Publish(ctx, affects.Expired{
+				CharacterID: ref.ID,
+				RoomID:      roomID,
+				Names:       expired,
+			})
+		}
+	}
 }
 
 // resolveAction is the active actor's slice-1 turn handler. Today it
@@ -394,19 +455,28 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	}
 	m.mu.Unlock()
 
+	// Phase E #26: combat math reads through-affect values so timed
+	// buffs/debuffs (Defense+, Str+, Dex-, Saves, Speed, BAB) influence
+	// the roll. Effective returns a copy; original Cores are untouched
+	// so the HP write-back below uses unfolded values. Effective does
+	// not modify DR/Resists slices, so applyDamage's reads through the
+	// original defCore observe the same DR/Resists either way.
+	atkEff := affects.Effective(atkCore)
+	defEff := affects.Effective(defCore)
+
 	m.rngMu.Lock()
-	roll := RollAttack(m.rng, atkCore, defCore, stats, defenderFlatFooted)
+	roll := RollAttack(m.rng, atkEff, defEff, stats, defenderFlatFooted)
 	parried := false
 	parryTotal := 0
 	if roll.Hit && defenderParrying {
-		parryTotal = RollParry(m.rng, defCore)
+		parryTotal = RollParry(m.rng, defEff)
 		if parryTotal > roll.Total {
 			parried = true
 		}
 	}
 	var dealt int32
 	if roll.Hit && !parried {
-		raw := RollDamage(m.rng, atkCore, stats, roll.IsCrit)
+		raw := RollDamage(m.rng, atkEff, stats, roll.IsCrit)
 		dealt = applyDamage(&defCore, raw, weaponPrimaryDamageType(stats))
 	}
 	m.rngMu.Unlock()
@@ -441,7 +511,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 				Attacker:  actor,
 				Defender:  action.Target,
 				RollTotal: roll.Total,
-				Defense:   defCore.Defense,
+				Defense:   defEff.Defense,
 			})
 		}
 		return

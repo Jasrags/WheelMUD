@@ -79,6 +79,68 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_affects", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Egwene"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		// Empty round-trip: writing nil onto a row that never had affects
+		// is a no-op the read should observe.
+		if err := cr.RecordAffects(ctx, c.ID, nil); err != nil {
+			t.Fatalf("record empty affects: %v", err)
+		}
+		got, _ := cr.GetByID(ctx, c.ID)
+		if len(got.Core.Affects) != 0 {
+			t.Fatalf("empty affects: got %d entries", len(got.Core.Affects))
+		}
+
+		// Single-affect round-trip.
+		want := []creature.Affect{{
+			Source:        7,
+			Name:          "blessed",
+			DurationTicks: 12,
+			Modifiers:     []creature.StatMod{{Field: "Defense", Delta: 2}},
+		}}
+		if err := cr.RecordAffects(ctx, c.ID, want); err != nil {
+			t.Fatalf("record affects: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.Core.Affects) != 1 {
+			t.Fatalf("len: got %d, want 1", len(got.Core.Affects))
+		}
+		if got.Core.Affects[0].Name != "blessed" || got.Core.Affects[0].DurationTicks != 12 {
+			t.Fatalf("round-trip: %+v", got.Core.Affects[0])
+		}
+
+		// Overwrite: passing a different slice replaces the prior write.
+		next := []creature.Affect{{Source: 8, Name: "hasted", DurationTicks: 5}}
+		if err := cr.RecordAffects(ctx, c.ID, next); err != nil {
+			t.Fatalf("overwrite affects: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.Core.Affects) != 1 || got.Core.Affects[0].Name != "hasted" {
+			t.Fatalf("overwrite: %+v", got.Core.Affects)
+		}
+
+		// Clear back to empty.
+		if err := cr.RecordAffects(ctx, c.ID, nil); err != nil {
+			t.Fatalf("clear affects: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.Core.Affects) != 0 {
+			t.Fatalf("clear: got %d entries", len(got.Core.Affects))
+		}
+
+		// Missing id returns ErrCharacterNotFound.
+		if err := cr.RecordAffects(ctx, c.ID+999, nil); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing id: err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/get_by_id", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

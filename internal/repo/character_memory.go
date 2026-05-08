@@ -374,6 +374,24 @@ func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) er
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordAffects(_ context.Context, id int64, affects []creature.Affect) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if len(affects) == 0 {
+				c.Core.Affects = nil
+			} else {
+				cp := make([]creature.Affect, len(affects))
+				copy(cp, affects)
+				c.Core.Affects = cp
+			}
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) Delete(_ context.Context, id int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

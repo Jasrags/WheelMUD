@@ -290,6 +290,13 @@ type CharacterRepo interface {
 	// nil (defense-in-depth — should be unreachable from verb).
 	RecordWeavePick(ctx context.Context, id int64,
 		weaveID string, newPendingWeaves int32) error
+	// RecordAffects rewrites the character's affects_json column with
+	// the supplied slice. Phase E #26 — combat round-end and the
+	// out-of-combat affects bucket call this when affects.Tick changes
+	// the slice (expiry) or affects.Apply mutates it (refresh / new
+	// cast). Pass nil or an empty slice to clear all affects. Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.

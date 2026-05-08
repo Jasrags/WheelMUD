@@ -506,6 +506,24 @@ func (r *SQLiteCharacterRepo) RecordPvP(ctx context.Context, id int64, on bool) 
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error {
+	js, err := marshalJSONSlice(affects)
+	if err != nil {
+		return fmt.Errorf("marshal affects: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET affects_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record affects: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) MarkNewsSeen(ctx context.Context, id int64, when time.Time) error {
 	if when.IsZero() {
 		// Defensive: a zero time would store the "never seen" sentinel

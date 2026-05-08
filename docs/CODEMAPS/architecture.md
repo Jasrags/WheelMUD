@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt + mob respawn anchors | Token estimate: ~1370 -->
+<!-- Generated: 2026-05-08 | Updated for Phase E #26: timed affects + dual-cadence ticking | Token estimate: ~1390 -->
 
 # Architecture
 
@@ -60,6 +60,8 @@ account is enforced via a process-level session registry.
 │                         WorldState — sqlite + memory + shared tests │
 │   internal/creature/    Core stat block, Equipment, Channeling,     │
 │                         SkillRanks shared by characters + mobs      │
+│   internal/affects/     pure Effective/Tick/Apply over Core.Affects;│
+│                         SessionTicker for out-of-combat duration    │
 │   internal/currency/    Amount type + denomination conversions      │
 │   internal/world/       YAML loader (parse → validate → tx-sync),   │
 │                         Restocker + Respawner (areaReset), Clock    │
@@ -258,6 +260,7 @@ drained by player-driven spend verbs. Level-up cycle is end-to-end functional.
 | `Combat` | 4 s | `combat.Manager.Tick` per active room |
 | `Regen` | 6 s | (HP/subdual regen — pending) |
 | `AreaReset` | 5 min | `world.Restocker` (refill sub-max shop_stock); `world.Respawner` (re-spawn dead YAML mobs once `now - zones.last_reset_ts >= reset_interval_s`; only templates with `home_room_id != 0`) |
+| `Affects` | 6 s | `affects.SessionTicker` walks `sessions.Snapshot()`, skips characters in active fights (combat ticks those at end-of-round), decrements `Core.Affects` durations and persists via `CharacterRepo.RecordAffects`. Publishes `affects.Expired` per character that lost ≥1 affect (Phase E #26) |
 | `Save` | 30 s | `persist.Manager` autosave (lastPlayed, ticks counter) |
 
 ## Cross-session output rule

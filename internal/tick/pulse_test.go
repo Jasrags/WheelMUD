@@ -105,6 +105,9 @@ func TestNewBucketsDefaults(t *testing.T) {
 	if bs.Decay.Interval() != DefaultDecayInterval {
 		t.Errorf("decay interval = %v, want %v", bs.Decay.Interval(), DefaultDecayInterval)
 	}
+	if bs.Affects.Interval() != DefaultAffectsInterval {
+		t.Errorf("affects interval = %v, want %v", bs.Affects.Interval(), DefaultAffectsInterval)
+	}
 }
 
 func TestNilSubscribeIsNoop(t *testing.T) {
