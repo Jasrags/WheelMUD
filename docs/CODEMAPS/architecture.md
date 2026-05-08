@@ -104,9 +104,11 @@ main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-004
         respawner wired to tick.Buckets.AreaReset
      ─► combat.NewManager(...) + group.NewManager()
         combatMgr.SetGroupResolver(groups.MembersInRoom)
+     ─► affects.NewSessionTicker(candidates, combatMgr, chars, bus)
+        wired to tick.Buckets.Affects (6 s)
      ─► session.NewRegistry()               single-session-per-account
      ─► eventbus.New()                      typed pub/sub
-     ─► tick.New() + tick.NewBuckets()      combat / regen / areaReset / save
+     ─► tick.New() + tick.NewBuckets()      combat / regen / areaReset / save / wander / phase / decay / affects
      ─► persist.New()                       autosave + shutdown flush
      ─► buildRegistry(...)                  ~50 verbs registered
      ─► mode.NewGame(registry)              shared in-world target
