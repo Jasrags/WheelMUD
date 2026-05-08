@@ -1,0 +1,15 @@
+-- 0040_mob_templates_xp_value.sql
+--
+-- Phase D §19 polish: per-template XP override. Today
+-- `combat.xpValueForChallenge(code)` reads a hard-coded A→I table
+-- keyed off `MobTemplate.ChallengeCode`. This adds a YAML-tunable
+-- override so a quest boss or unique mob can pay more XP than its
+-- challenge code suggests, without bumping the entire challenge
+-- bracket.
+--
+-- Semantics: 0 means "fall back to the ChallengeCode table"
+-- (existing behavior). Non-zero is the absolute XP value awarded
+-- on death (before the damage-tally weighting and group split).
+--
+-- Forward-only per CLAUDE.md (no down migration).
+ALTER TABLE mob_templates ADD COLUMN xp_value INTEGER NOT NULL DEFAULT 0;

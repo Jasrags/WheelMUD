@@ -200,6 +200,19 @@ type Mob struct {
 	// are clamped at the repo layer.
 	WanderChance *float64 `yaml:"wander_chance,omitempty"`
 
+	// GoldDice rolls a coin pile into the corpse on death (Phase D
+	// §19 polish). Format "NdM" or "NdM+K"; empty means no coin
+	// drop. Stored on the mob template as a string and parsed at
+	// death time via combat.rollDice.
+	GoldDice string `yaml:"gold_dice,omitempty"`
+
+	// XPValue overrides the per-challenge-code XP table for this
+	// mob (Phase D §19 polish). Optional; zero means "use the
+	// ChallengeCode → XP fallback table". Non-zero is the absolute
+	// XP awarded on death (before damage-tally weighting + group
+	// split).
+	XPValue int64 `yaml:"xp_value,omitempty"`
+
 	// Shop, if present, marks this mob as a shopkeeper (§14). The
 	// loader inserts the matching `shops` row keyed to the
 	// mob_template the mob spawns from. Stock lines materialize as

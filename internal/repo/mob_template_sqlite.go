@@ -32,7 +32,8 @@ const templateExtraColumns = `challenge_code, organization, behavior_flags,
 		shadow_link_myrddraal_id, taint_immune, fade_link_master_ticks,
 		short_desc, long_desc,
 		natural_attacks_json, special_attacks_json, traits_json,
-		advancement_json, climate_json, terrain_json, trigger_scripts_json`
+		advancement_json, climate_json, terrain_json, trigger_scripts_json,
+		xp_value`
 
 // clampWanderChance pins values to the CHECK-enforced [0, 1] range
 // so a Create with an out-of-range field reports the typo via the
@@ -88,6 +89,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		t.ShortDesc, t.LongDesc,
 		j.natural, j.special, j.traits,
 		j.advancement, j.climate, j.terrain, j.scripts,
+		t.XPValue,
 		time.Now().UTC(),
 	)
 
@@ -162,6 +164,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		&t.ShortDesc, &t.LongDesc,
 		&j.natural, &j.special, &j.traits,
 		&j.advancement, &j.climate, &j.terrain, &j.scripts,
+		&t.XPValue,
 	)
 
 	err := r.db.QueryRowContext(ctx, query, arg).Scan(dest...)

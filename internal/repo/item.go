@@ -233,6 +233,15 @@ type ItemRepo interface {
 	SetOwner(ctx context.Context, itemID, ownerCharID int64) error
 	// SetRoom unconditionally places an item on a room's floor.
 	SetRoom(ctx context.Context, itemID, roomID int64) error
+	// SetParent unconditionally nests an item inside a parent
+	// container by setting parent_item_id and clearing room_id +
+	// owner_character_id atomically. Sibling to SetOwner / SetRoom
+	// — skips the prior-location check; intended for the death
+	// pipeline (mob inventory → corpse) and admin / seed paths.
+	// Returns ErrItemNotFound when no row matches itemID. Cmd-layer
+	// callers should use TransferOwnerToContainer instead so a
+	// give/drop race surfaces as ErrItemMoved.
+	SetParent(ctx context.Context, itemID, parentID int64) error
 	// TransferRoomToOwner picks an item up from a room into a
 	// character's inventory. The update only commits if the item is
 	// currently in fromRoomID with no owner — concurrent grabs by

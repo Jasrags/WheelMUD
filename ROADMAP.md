@@ -927,12 +927,26 @@ will need on top of those tables.
       `CombatXPAwarded` events. `Fight.Dead` set pruned from
       `Order` at top of next `tickRoom` so ActiveIdx math observes
       a stable slice during resolution; fight auto-ends when Order
-      empties. Pending: corpse decay timer + new tick bucket,
-      transfer mob inventory + carried gold into the corpse,
-      player death (despawn → bound/temple room respawn → XP-debt
-      penalty), mob respawn via §9 zone reset (depends on Phase F),
-      looting (`get from corpse` already works via existing
-      container plumbing).
+      empties. **Looting bundle landed 2026-05-07** — Phase D §19
+      polish. Corpse decay landed earlier as the in-memory `Decayer`
+      + `tick.Buckets.Decay` 30s sweep. Now: mob inventory transfers
+      into the corpse via new `ItemRepo.SetParent(itemID, parentID)`
+      (unconditional sibling to `SetOwner` / `SetRoom` — clears the
+      other two location columns atomically); `MobTemplate.GoldDice`
+      is parsed via the existing `combat.rollDice` helper and
+      spawns a single `ItemTypeTradeGood` "a small pile of coins"
+      inside the corpse with `Value = rolledCp` and `FlagTradeGood`
+      so it sells back at full value through the §14 shop verbs.
+      `MobTemplate.XPValue int64` (migration 0040) overrides the
+      `xpValueForChallenge` table when non-zero; zero falls back to
+      the A→I curve. Optional `xp_value:` and `gold_dice:` YAML
+      keys on mob entries. All three additions are best-effort:
+      a SetParent failure logs and continues, an empty / malformed
+      `GoldDice` produces no pile, `XPValue == 0` is the silent
+      fallback. Still pending: durable decay (persist scheduled
+      sweeps across restart), player death (despawn →
+      bound/temple room respawn → XP-debt penalty), mob respawn
+      via §9 zone reset (depends on Phase F).
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in

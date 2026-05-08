@@ -190,6 +190,33 @@ func (r *SQLiteItemRepo) SetRoom(ctx context.Context, itemID, roomID int64) erro
 	return nil
 }
 
+// SetParent nests an item inside a container and clears any room /
+// owner. Mirrors SetOwner / SetRoom; intended for the death pipeline
+// (mob inventory → corpse) and admin / seed paths.
+func (r *SQLiteItemRepo) SetParent(ctx context.Context, itemID, parentID int64) error {
+	if itemID == 0 {
+		return fmt.Errorf("set parent: itemID must be non-zero")
+	}
+	if parentID == 0 {
+		return fmt.Errorf("set parent: parentID must be non-zero")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET parent_item_id = ?, room_id = NULL, owner_character_id = NULL WHERE id = ?`,
+		parentID, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("set parent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set parent rows: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
 // transferRowsResult inspects an UPDATE's rows-affected count and a
 // follow-up existence probe to disambiguate ErrItemMoved (item exists
 // but at a different location) from ErrItemNotFound (no such item).

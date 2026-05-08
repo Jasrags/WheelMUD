@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
@@ -644,6 +645,36 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 
 	corpseID := m.spawnCorpse(ctx, mob)
 
+	// Phase D §19 polish: transfer the mob's inventory into the
+	// corpse so `look in corpse` / `get from corpse` show real
+	// loot. Best-effort per item — a single SetParent failure logs
+	// and continues so the despawn still resolves cleanly. Skipped
+	// when the corpse spawn fizzled (corpseID == 0).
+	if corpseID != 0 && m.items != nil {
+		for _, itemID := range mob.Inventory {
+			if itemID == 0 {
+				continue
+			}
+			if err := m.items.SetParent(ctx, itemID, corpseID); err != nil {
+				slog.Warn("combat: corpse loot transfer failed",
+					"mob", victim.ID, "item", itemID, "corpse", corpseID, "error", err)
+			}
+		}
+	}
+
+	// Phase D §19 polish: roll the mob's GoldDice and spawn a
+	// coin pile inside the corpse. Best-effort — empty / malformed
+	// dice strings just don't produce a pile. The roll holds rngMu
+	// so concurrent fights don't share the *rand.Rand mutably.
+	if corpseID != 0 && tmpl.GoldDice != "" {
+		m.rngMu.Lock()
+		amt, ok := rollDice(m.rng, tmpl.GoldDice)
+		m.rngMu.Unlock()
+		if ok && amt > 0 {
+			m.spawnCoinPile(ctx, corpseID, currency.Amount(amt))
+		}
+	}
+
 	// Despawn: clear room first (records a final trail row, frees
 	// any presence-keyed lookups) then delete. Failure of either
 	// path is logged but doesn't gate the rest of the kill.
@@ -684,7 +715,7 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 	resolver := m.groupShare
 	m.mu.Unlock()
 	tallySnap = expandTallyByGroup(tallySnap, roomID, resolver)
-	awards := allocateXP(tallySnap, xpValueForChallenge(tmpl.ChallengeCode), killer)
+	awards := allocateXP(tallySnap, xpValueForTemplate(tmpl), killer)
 	for ref, amount := range awards {
 		if ref.Kind != ActorKindCharacter || amount <= 0 {
 			continue
@@ -769,6 +800,34 @@ func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int
 	}
 	if m.decayer != nil {
 		m.decayer.Schedule(created.ID, created.RoomID, m.now().Add(corpseDecayDuration))
+	}
+	return created.ID
+}
+
+// spawnCoinPile drops a TradeGood "coin pile" inside a corpse worth
+// the rolled coin amount (Phase D §19 polish). Best-effort: a repo
+// failure logs and returns 0 — the kill still resolves and the
+// corpse just doesn't have a coin entry. ExternalID embeds the
+// corpse id and a nano timestamp so a kill that re-uses a recycled
+// corpse id doesn't collide.
+func (m *Manager) spawnCoinPile(ctx context.Context, corpseID int64, amount currency.Amount) int64 {
+	if m.items == nil || corpseID == 0 || amount <= 0 {
+		return 0
+	}
+	pile := repo.Item{
+		ExternalID:   fmt.Sprintf("coin-pile-%d-%d", corpseID, m.now().UnixNano()),
+		Name:         "a small pile of coins",
+		ShortDesc:    "A small pile of coins lies here.",
+		ParentItemID: corpseID,
+		Type:         repo.ItemTypeTradeGood,
+		Value:        amount,
+		Flags:        repo.FlagTradeGood,
+	}
+	created, err := m.items.Create(ctx, pile)
+	if err != nil {
+		slog.Warn("combat: coin pile spawn failed",
+			"corpse", corpseID, "amount", amount, "error", err)
+		return 0
 	}
 	return created.ID
 }

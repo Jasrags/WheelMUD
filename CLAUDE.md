@@ -268,6 +268,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   the four counters in the same UPDATE that writes ClassLevels +
   HP/BAB/saves. The pending columns slot strictly between `pvp`
   (0037) and `auth_level`.
+  0040 added `mob_templates.xp_value INTEGER NOT NULL DEFAULT 0`
+  backing Phase D §19 polish — per-template XP override consumed
+  by `combat.xpValueForTemplate` (zero falls back to the
+  `xpValueForChallenge` A→I curve). Optional `xp_value:` YAML key
+  on mob entries; the loader threads it from `world.Mob.XPValue`
+  into `MobTemplate.XPValue`. The same slice wires
+  `MobTemplate.GoldDice` (already in 0008) end-to-end: at death
+  the dice roll spawns an `ItemTypeTradeGood` "a small pile of
+  coins" inside the corpse with `Value = rolledCp` and
+  `FlagTradeGood`. Mob inventory transfer uses the new
+  `ItemRepo.SetParent(itemID, parentID)` — unconditional sibling
+  to `SetOwner` / `SetRoom`; clears the other two location
+  columns atomically. Death-pipeline rule: per-item / per-roll
+  failures log via `slog.Warn` and continue so the despawn still
+  resolves.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

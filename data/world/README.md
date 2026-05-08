@@ -141,6 +141,28 @@ The v1 loader spawns each YAML mob as a one-of-a-kind template plus a
 single instance into the named room. Stat blocks (HP, Defense, etc.)
 get safe defaults — full template authoring lands later.
 
+Optional death-loot fields (Phase D §19 polish):
+
+```yaml
+- id: tr.trolloc_grunt
+  room: tr.blight.scout_camp
+  name: a trolloc warrior
+  short: a hulking shadowspawn with matted black fur
+  gold_dice: "2d10"     # rolled at death → coin pile inside the corpse
+  xp_value: 600         # overrides the ChallengeCode → XP table when > 0
+```
+
+`gold_dice` is parsed via `combat.rollDice` (`NdM` or `NdM±K`). On a
+successful roll the result spawns a single `ItemTypeTradeGood` "a
+small pile of coins" inside the corpse with `Value` set to the rolled
+copper amount and `FlagTradeGood` set so the shop verbs sell it back
+at full price. Empty / malformed strings produce no pile.
+
+`xp_value > 0` is the absolute XP awarded on this template's death
+(before damage-tally weighting + group split). `xp_value == 0` (the
+default) falls back to the hard-coded ChallengeCode A→I curve in
+`combat.xpValueForChallenge`.
+
 #### Shopkeeper sub-block
 
 A mob entry may carry an optional `shop:` block to mark the mob as a

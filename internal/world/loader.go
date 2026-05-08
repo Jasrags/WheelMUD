@@ -487,6 +487,10 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 	trainers := repo.NewSQLiteTrainerRepo(tx)
 
 	for _, m := range mobs {
+		if m.XPValue < 0 {
+			return fmt.Errorf("mob %q: xp_value must be >= 0, got %d "+
+				"(0 = fall back to challenge_code table)", m.ID, m.XPValue)
+		}
 		roomID := roomIDs[m.Room]
 		wander := creature.DefaultWanderChance
 		if m.WanderChance != nil {
@@ -497,6 +501,8 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs map[string]
 			ChallengeCode: 'A',
 			Organization:  "solitary",
 			WanderChance:  wander,
+			GoldDice:      m.GoldDice,
+			XPValue:       m.XPValue,
 			ShortDesc:     m.Short,
 			Core: creature.Core{
 				Name:    m.Name,

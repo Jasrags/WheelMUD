@@ -220,6 +220,72 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 		}
 	})
 
+	t.Run(name+"/set_parent_clears_room_and_owner", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		corpse, err := fix.items.Create(ctx, Item{
+			ExternalID: "corpse-test", Name: "corpse",
+			Type: ItemTypeContainer, RoomID: roomID,
+			Stats: &ContainerStats{CapacityLbs: 100, CapacityCuFt: 10},
+		})
+		if err != nil {
+			t.Fatalf("Create corpse: %v", err)
+		}
+		// Item starts in a room; after SetParent it should be inside corpse.
+		it, err := fix.items.Create(ctx, Item{ExternalID: "loot", Name: "a coin", RoomID: roomID})
+		if err != nil {
+			t.Fatalf("Create loot: %v", err)
+		}
+		if err := fix.items.SetParent(ctx, it.ID, corpse.ID); err != nil {
+			t.Fatalf("SetParent: %v", err)
+		}
+		got, err := fix.items.GetByID(ctx, it.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if got.ParentItemID != corpse.ID {
+			t.Errorf("ParentItemID = %d, want %d", got.ParentItemID, corpse.ID)
+		}
+		if got.RoomID != 0 {
+			t.Errorf("RoomID not cleared: %d", got.RoomID)
+		}
+		if got.OwnerCharacterID != 0 {
+			t.Errorf("OwnerCharacterID not cleared: %d", got.OwnerCharacterID)
+		}
+		// And the room no longer lists the item.
+		floor, _ := fix.items.ListInRoom(ctx, roomID)
+		// Only the corpse itself remains on the floor.
+		if len(floor) != 1 || floor[0].ID != corpse.ID {
+			t.Errorf("room contents after nest: %+v", floor)
+		}
+		// The corpse contains the item.
+		kids, err := fix.items.ListInContainer(ctx, corpse.ID)
+		if err != nil || len(kids) != 1 || kids[0].ID != it.ID {
+			t.Fatalf("ListInContainer: err=%v got=%+v", err, kids)
+		}
+	})
+
+	t.Run(name+"/set_parent_missing_item", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.items.SetParent(context.Background(), 999999, 1)
+		if !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("SetParent(missing) = %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/set_parent_zero_id_rejected", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		it, err := fix.items.Create(ctx, Item{ExternalID: "x", Name: "x", OwnerCharacterID: 1})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.items.SetParent(ctx, it.ID, 0); err == nil {
+			t.Fatalf("SetParent with parentID=0 should error")
+		}
+	})
+
 	t.Run(name+"/get_by_id_round_trip", func(t *testing.T) {
 		fix := newFix(t)
 		roomID := makeRoom(t, fix)

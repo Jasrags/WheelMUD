@@ -251,6 +251,26 @@ func (r *MemoryItemRepo) SetRoom(_ context.Context, itemID, roomID int64) error 
 	return ErrItemNotFound
 }
 
+func (r *MemoryItemRepo) SetParent(_ context.Context, itemID, parentID int64) error {
+	if itemID == 0 {
+		return fmt.Errorf("set parent: itemID must be non-zero")
+	}
+	if parentID == 0 {
+		return fmt.Errorf("set parent: parentID must be non-zero")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID == itemID {
+			r.items[idx].ParentItemID = parentID
+			r.items[idx].RoomID = 0
+			r.items[idx].OwnerCharacterID = 0
+			return nil
+		}
+	}
+	return ErrItemNotFound
+}
+
 func (r *MemoryItemRepo) TransferRoomToOwner(_ context.Context, itemID, fromRoomID, toOwnerID int64) error {
 	if fromRoomID == 0 || toOwnerID == 0 {
 		return fmt.Errorf("transfer room->owner: ids must be non-zero")

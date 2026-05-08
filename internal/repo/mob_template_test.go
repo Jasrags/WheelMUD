@@ -36,6 +36,7 @@ func runMobTemplateRepoTests(t *testing.T, name string, newRepo func(t *testing.
 			Advancement:      []creature.AdvanceRule{{HDRange: "5-8", SizeChange: creature.SizeLarge}},
 			LootTableID:      42,
 			GoldDice:         "2d10",
+			XPValue:          1500,
 			DialogueTreeID:   0,
 			ShopkeeperConfig: nil,
 			TriggerScripts:   []string{"trolloc.on_enter"},
@@ -197,6 +198,9 @@ func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {
 	}
 	if got.ChallengeCode != want.ChallengeCode {
 		t.Fatalf("ChallengeCode = %q, want %q", got.ChallengeCode, want.ChallengeCode)
+	}
+	if got.XPValue != want.XPValue {
+		t.Fatalf("XPValue = %d, want %d", got.XPValue, want.XPValue)
 	}
 	if got.BehaviorFlags != want.BehaviorFlags {
 		t.Fatalf("BehaviorFlags = %x, want %x", got.BehaviorFlags, want.BehaviorFlags)

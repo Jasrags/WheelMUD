@@ -586,6 +586,13 @@ type MobTemplate struct {
 	Core       Core   // base stats; copied to instance on spawn
 
 	ChallengeCode ChallengeCode
+	// XPValue is the per-template XP override (Phase D §19 polish).
+	// Zero means "use the ChallengeCode → XP fallback table"
+	// (combat.xpValueForChallenge); non-zero is the absolute XP
+	// awarded on this template's death, before the damage-tally
+	// weighting + group split. Persisted as INTEGER NOT NULL
+	// DEFAULT 0 (migration 0040). Optional `xp_value:` YAML key.
+	XPValue       int64
 	Organization  string   // "solitary", "pack (3-6)", …
 	Climate       []string // "temperate", "cold", …
 	Terrain       []string // "forest", "mountain", …

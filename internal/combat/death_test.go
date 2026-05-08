@@ -293,3 +293,210 @@ func TestDeath_E2E(t *testing.T) {
 			gotEnded.Reason, ReasonNoParticipants)
 	}
 }
+
+// killTrollocWithLoot runs the full kill pipeline using the same
+// shape as TestDeath_E2E but accepts a template + a list of items to
+// pre-seed as the mob's carried inventory. The mob.Inventory id list
+// is built from the actual Create-returned ids so a future change in
+// id-allocation order doesn't silently invalidate the assertion.
+func killTrollocWithLoot(t *testing.T, tmpl creature.MobTemplate,
+	preseedItems []repo.Item,
+) (*repo.MemoryItemRepo, *repo.MemoryCharacterRepo, int64, []CombatXPAwarded) {
+	t.Helper()
+	ctx := context.Background()
+	bus := eventbus.New()
+	chars := repo.NewMemoryCharacterRepo()
+	accs := repo.NewMemoryAccountRepo()
+	acc, _ := accs.Create(ctx, repo.Account{Username: "owner", PasswordHash: "h"})
+	ch, err := chars.Create(ctx, repo.Character{
+		AccountID: acc.ID, Name: "Alice", CurrentRoomID: 1,
+		Core: creature.Core{
+			HPCurrent: 50, HPMax: 50, BAB: 50, Defense: 10,
+			Abilities: creature.Abilities{
+				Str: creature.AbilityScore{Current: 18},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed char: %v", err)
+	}
+
+	templates := repo.NewMemoryMobTemplateRepo()
+	tmpl.ExternalID = "trolloc-grunt"
+	created, err := templates.Create(ctx, tmpl)
+	if err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+
+	items := repo.NewMemoryItemRepo()
+	mobInv := make([]int64, 0, len(preseedItems))
+	for _, it := range preseedItems {
+		got, err := items.Create(ctx, it)
+		if err != nil {
+			t.Fatalf("seed item %q: %v", it.ExternalID, err)
+		}
+		mobInv = append(mobInv, got.ID)
+	}
+
+	mobs := repo.NewMemoryMobInstanceRepo()
+	mob, _ := mobs.Create(ctx, creature.MobInstance{
+		TemplateID: created.ID,
+		Inventory:  mobInv,
+		Core: creature.Core{
+			Name: "trolloc", HPCurrent: 1, HPMax: 30, Defense: 0,
+			CurrentRoomID: 1,
+		},
+	})
+	if err := mobs.UpdateRoom(ctx, mob.ID, 1); err != nil {
+		t.Fatalf("place mob: %v", err)
+	}
+
+	mgr := New(bus, chars, mobs, templates, items)
+	var awards []CombatXPAwarded
+	var amu sync.Mutex
+	eventbus.Subscribe[CombatXPAwarded](bus, func(_ context.Context, ev CombatXPAwarded) {
+		amu.Lock()
+		awards = append(awards, ev)
+		amu.Unlock()
+	})
+
+	parts := []ActorRef{
+		{Kind: ActorKindCharacter, ID: ch.ID},
+		{Kind: ActorKindMob, ID: mob.ID},
+	}
+	if _, err := mgr.Start(ctx, 1, parts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := mgr.EnqueueAction(1, parts[0], Action{
+		Kind: ActionAttack, Target: parts[1],
+	}); err != nil {
+		t.Fatalf("EnqueueAction: %v", err)
+	}
+	for i := 0; i < 4 && mgr.Active(1); i++ {
+		mgr.Tick(ctx)
+		if !mgr.Active(1) {
+			break
+		}
+		_ = mgr.EnqueueAction(1, parts[0], Action{
+			Kind: ActionAttack, Target: parts[1],
+		})
+	}
+
+	amu.Lock()
+	out := append([]CombatXPAwarded(nil), awards...)
+	amu.Unlock()
+	return items, chars, ch.ID, out
+}
+
+// findCorpseID returns the id of the corpse container in the given
+// room. Fails the test if not found.
+func findCorpseID(t *testing.T, items *repo.MemoryItemRepo, roomID int64) int64 {
+	t.Helper()
+	all, err := items.ListInRoom(context.Background(), roomID)
+	if err != nil {
+		t.Fatalf("list room: %v", err)
+	}
+	for _, it := range all {
+		if it.Type == repo.ItemTypeContainer {
+			return it.ID
+		}
+	}
+	t.Fatalf("no corpse in room %d: %+v", roomID, all)
+	return 0
+}
+
+func TestDeath_TransfersInventoryToCorpse(t *testing.T) {
+	// Two unattached items pre-created; mob.Inventory points at them
+	// by id. After the kill, both should be parent_item_id = corpse.ID.
+	preseed := []repo.Item{
+		{ExternalID: "loot-helm", Name: "a rusted helm", Type: repo.ItemTypeClothing},
+		{ExternalID: "loot-ring", Name: "a copper ring", Type: repo.ItemTypeClothing},
+	}
+	items, _, _, _ := killTrollocWithLoot(t,
+		creature.MobTemplate{ChallengeCode: 'A'},
+		preseed,
+	)
+	corpseID := findCorpseID(t, items, 1)
+	kids, err := items.ListInContainer(context.Background(), corpseID)
+	if err != nil {
+		t.Fatalf("list container: %v", err)
+	}
+	if len(kids) != 2 {
+		t.Fatalf("corpse children = %d, want 2: %+v", len(kids), kids)
+	}
+	for _, k := range kids {
+		if k.ParentItemID != corpseID {
+			t.Errorf("item %d ParentItemID = %d, want %d", k.ID, k.ParentItemID, corpseID)
+		}
+		if k.RoomID != 0 || k.OwnerCharacterID != 0 {
+			t.Errorf("item %d location not exclusive: %+v", k.ID, k)
+		}
+	}
+}
+
+func TestDeath_RollsGoldDiceIntoCorpse(t *testing.T) {
+	items, _, _, _ := killTrollocWithLoot(t,
+		creature.MobTemplate{ChallengeCode: 'A', GoldDice: "2d4"},
+		nil,
+	)
+	corpseID := findCorpseID(t, items, 1)
+	kids, _ := items.ListInContainer(context.Background(), corpseID)
+	if len(kids) != 1 {
+		t.Fatalf("corpse children = %d, want 1 coin pile: %+v", len(kids), kids)
+	}
+	pile := kids[0]
+	if pile.Type != repo.ItemTypeTradeGood {
+		t.Errorf("pile.Type = %q, want trade_good", pile.Type)
+	}
+	if pile.Name != "a small pile of coins" {
+		t.Errorf("pile.Name = %q", pile.Name)
+	}
+	// 2d4 → range [2, 8].
+	if pile.Value < 2 || pile.Value > 8 {
+		t.Errorf("pile.Value = %d, want [2..8]", pile.Value)
+	}
+	if pile.Flags&repo.FlagTradeGood == 0 {
+		t.Errorf("pile missing FlagTradeGood: %v", pile.Flags)
+	}
+}
+
+func TestDeath_NoCoinPileWhenGoldDiceEmpty(t *testing.T) {
+	items, _, _, _ := killTrollocWithLoot(t,
+		creature.MobTemplate{ChallengeCode: 'A'},
+		nil,
+	)
+	corpseID := findCorpseID(t, items, 1)
+	kids, _ := items.ListInContainer(context.Background(), corpseID)
+	if len(kids) != 0 {
+		t.Errorf("empty GoldDice still spawned children: %+v", kids)
+	}
+}
+
+func TestDeath_XPValueOverridesChallengeCode(t *testing.T) {
+	// XPValue = 777 must beat ChallengeCode 'A' (which would have
+	// returned 100).
+	_, chars, charID, awards := killTrollocWithLoot(t,
+		creature.MobTemplate{ChallengeCode: 'A', XPValue: 777},
+		nil,
+	)
+	got, _ := chars.GetByID(context.Background(), charID)
+	if got.XP != 777 {
+		t.Errorf("Alice XP = %d, want 777 (XPValue override)", got.XP)
+	}
+	if len(awards) != 1 || awards[0].Amount != 777 {
+		t.Errorf("awards = %+v, want one for 777", awards)
+	}
+}
+
+func TestDeath_XPValueZeroFallsBackToChallengeCode(t *testing.T) {
+	// XPValue = 0 (unset) must use the old ChallengeCode table —
+	// here ChallengeCode 'C' = 600.
+	_, chars, charID, _ := killTrollocWithLoot(t,
+		creature.MobTemplate{ChallengeCode: 'C', XPValue: 0},
+		nil,
+	)
+	got, _ := chars.GetByID(context.Background(), charID)
+	if got.XP != 600 {
+		t.Errorf("Alice XP = %d, want 600 (ChallengeCode 'C' fallback)", got.XP)
+	}
+}

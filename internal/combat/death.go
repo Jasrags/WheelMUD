@@ -4,11 +4,23 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/creature"
 )
 
+// xpValueForTemplate returns the base XP awarded when a mob of the
+// given template dies. Phase D §19 polish: an explicit XPValue > 0
+// on the template overrides the ChallengeCode → XP table so a quest
+// boss or unique mob can pay more (or less) than its challenge
+// bracket suggests, without bumping the entire bracket. XPValue == 0
+// (the default for migrated rows) falls back to xpValueForChallenge.
+func xpValueForTemplate(t creature.MobTemplate) int64 {
+	if t.XPValue > 0 {
+		return t.XPValue
+	}
+	return xpValueForChallenge(t.ChallengeCode)
+}
+
 // xpValueForChallenge returns the base XP awarded when a mob of the
 // given ChallengeCode dies. WoT canon uses A–I letter codes; the
 // curve below is a linear-then-doubling table the design notes call
-// out for V1. A YAML-overridable value on MobTemplate is a deferred
-// follow-up.
+// out for V1.
 //
 // Unknown / zero codes default to the A-tier amount so a malformed
 // template still grants something rather than silently zeroing the
