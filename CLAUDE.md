@@ -147,7 +147,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0039. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0043. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -301,6 +301,28 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `cmd.RenderRoom` (the repo-side `RecordRoom` already
   persisted the move). Player keeps inventory / equipment /
   coin — no player corpse spawned.
+  0043 added the `weave_teachers` table backing Phase E #28
+  mid-game weave learning — keyed 1:1 to a mob_template (UNIQUE
+  on `mob_template_id`), carrying `max_level_taught int8` and
+  `affinity_filter int8` (creature.PowerSet bitmask; 0 = "teach
+  any in-affinity weave"). Optional `weave_teacher:` YAML block
+  on a mob seeds the row. The `learn weave` verb now branches
+  on room context: with a teacher present it drains
+  `characters.practice_points` (column added in 0009 but
+  previously unwritten) and consults `chargen.Weave.PracticeCost`
+  per pick; without a teacher it keeps the existing
+  `pending_weaves` chargen-pool drain. New repo method
+  `RecordWeaveStudy(ctx, id, weaveID, newPracticePoints int16)`
+  mirrors `RecordWeavePick`'s tx shape but writes
+  `practice_points` instead of `pending_weaves`. PP earning:
+  `progression.ComputeLevelUp.PracticeDelta = 1` per level (every
+  class — non-channelers accrue but have no spend path yet),
+  threaded into `LevelUpFields.PracticePointsDelta` by the
+  `train` verb and applied via `RecordLevelUp`'s incrementing
+  UPDATE. Audit row on the mid-game path:
+  `verb=learn target=<weaveID> args=kind=weave_study power=<p> cost=<n>`.
+  V1 has no fees, no time cost, no outside-affinity learning;
+  the `learn weave` affinity refusal still applies on both paths.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

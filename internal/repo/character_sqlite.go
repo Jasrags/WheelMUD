@@ -366,6 +366,56 @@ func (r *SQLiteCharacterRepo) RecordWeavePick(ctx context.Context, id int64,
 	return tx.Commit()
 }
 
+func (r *SQLiteCharacterRepo) RecordWeaveStudy(ctx context.Context, id int64,
+	weaveID string, newPracticePoints int32) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin weave study tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var channelingNS sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT channeling_json FROM characters WHERE id = ?`, id,
+	).Scan(&channelingNS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCharacterNotFound
+		}
+		return fmt.Errorf("read channeling: %w", err)
+	}
+	raw := ""
+	if channelingNS.Valid {
+		raw = channelingNS.String
+	}
+
+	var ch *creature.Channeling
+	if err := jsonUnmarshalString(raw, &ch); err != nil {
+		return fmt.Errorf("unmarshal channeling: %w", err)
+	}
+	if ch == nil {
+		return ErrNotChanneler
+	}
+	ch.WeavesKnownIDs = append(ch.WeavesKnownIDs, weaveID)
+	js, err := jsonMarshalString(ch)
+	if err != nil {
+		return fmt.Errorf("marshal channeling: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE characters
+		   SET channeling_json = ?, practice_points = ?
+		 WHERE id = ?`,
+		js, newPracticePoints, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record weave study: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCharacterNotFound
+	}
+	return tx.Commit()
+}
+
 // abilityCurColumn maps the AbilityKey enum to the str/dex/con/int/
 // wis/cha _cur column name. Returns ("", false) on unknown enum.
 func abilityCurColumn(a AbilityKey) (string, bool) {
@@ -474,13 +524,15 @@ func (r *SQLiteCharacterRepo) RecordLevelUp(ctx context.Context, id int64, f Lev
 		       pending_feats          = pending_feats          + ?,
 		       pending_skill_points   = pending_skill_points   + ?,
 		       pending_ability_bumps  = pending_ability_bumps  + ?,
-		       pending_weaves         = pending_weaves         + ?
+		       pending_weaves         = pending_weaves         + ?,
+		       practice_points        = practice_points        + ?
 		 WHERE id = ?`,
 		f.HPCurrent, f.HPMax, f.BAB,
 		f.Saves.Fort, f.Saves.Ref, f.Saves.Will,
 		js,
 		f.PendingFeatsDelta, f.PendingSkillPointsDelta,
 		f.PendingAbilityBumpsDelta, f.PendingWeavesDelta,
+		f.PracticePointsDelta,
 		id,
 	)
 	if err != nil {

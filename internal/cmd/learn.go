@@ -34,6 +34,8 @@ import (
 // NewLearn builds the `learn` verb.
 func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 	audits repo.AdminAuditRepo,
+	mobs repo.MobInstanceRepo, templates repo.MobTemplateRepo,
+	weaveTeachers repo.WeaveTeacherRepo,
 ) *telnet.Command {
 	return &telnet.Command{
 		Name: "learn",
@@ -53,7 +55,7 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 			// in learn_weave.go. That helper does its own char lookup
 			// + Channeling gate.
 			if len(args) >= 1 && strings.EqualFold(args[0], "weave") {
-				return runLearnWeave(c, characters, cat, audits)
+				return runLearnWeave(c, characters, cat, audits, mobs, templates, weaveTeachers)
 			}
 
 			if cat == nil {

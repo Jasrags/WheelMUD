@@ -289,6 +289,26 @@ func TestComputeLevelUp_PendingPoolDeltas(t *testing.T) {
 			t.Errorf("L%d→%d WeaveDelta = %d, want %d",
 				tc.startLvl, got.NewLevel, got.WeaveDelta, tc.wantWeave)
 		}
+		if got.PracticeDelta != 1 {
+			t.Errorf("L%d→%d PracticeDelta = %d, want 1 (#28: +1 every level)",
+				tc.startLvl, got.NewLevel, got.PracticeDelta)
+		}
+	}
+}
+
+func TestComputeLevelUp_PracticeDeltaForChannelerToo(t *testing.T) {
+	// Sanity: channeler classes also get +1 PP per level (PP isn't
+	// channeler-only — non-channelers accrue but have no spend path
+	// until a future skill-shaped use lands).
+	cat := loadCat(t)
+	ch := mkCharInt(10, 10, 10, 10)
+	ch.ClassLevels = map[creature.Class]int8{creature.ClassWilder: 1}
+	got, err := ComputeLevelUp(ch, cat, creature.ClassWilder)
+	if err != nil {
+		t.Fatalf("ComputeLevelUp: %v", err)
+	}
+	if got.PracticeDelta != 1 {
+		t.Errorf("PracticeDelta = %d, want 1", got.PracticeDelta)
 	}
 }
 

@@ -117,6 +117,31 @@ func TestWeavesAtLevel(t *testing.T) {
 	}
 }
 
+func TestWeavePracticeCost_LoadsAndDefaults(t *testing.T) {
+	withCost := "- {id: spark, name: Spark, level: 0, power: Fire, practice_cost: 2}\n" +
+		"- {id: candle, name: Candle, level: 0, power: Fire}\n"
+	cat, err := Load(mapFS(minimalBackgrounds, minimalClasses, minimalFeats, minimalSkills, withCost))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	w, _ := cat.Weave("spark")
+	if w.PracticeCost != 2 {
+		t.Errorf("spark PracticeCost = %d, want 2", w.PracticeCost)
+	}
+	c, _ := cat.Weave("candle")
+	if c.PracticeCost != 0 {
+		t.Errorf("candle PracticeCost = %d, want 0 (default)", c.PracticeCost)
+	}
+}
+
+func TestWeavePracticeCost_NegativeRejected(t *testing.T) {
+	bad := "- {id: spark, name: Spark, level: 0, power: Fire, practice_cost: -1}\n"
+	_, err := Load(mapFS(minimalBackgrounds, minimalClasses, minimalFeats, minimalSkills, bad))
+	if err == nil || !strings.Contains(err.Error(), "practice_cost") {
+		t.Errorf("want practice_cost error, got %v", err)
+	}
+}
+
 func TestEnumStamping(t *testing.T) {
 	cat := liveDir(t)
 	bg, _ := cat.Background("midlander")

@@ -145,10 +145,11 @@ type LevelGains struct {
 	// 4. The cmd-layer renders any non-zero values into the train
 	// success line and forwards them to RecordLevelUp where they
 	// `pending_x += delta` on the row.
-	FeatDelta    int32 // +1 when NewLevel%3==0
-	SkillDelta   int32 // max(1, class.SkillPoints + IntMod)
-	AbilityDelta int32 // +1 when NewLevel%4==0
-	WeaveDelta   int32 // +1 for channeler classes, else 0
+	FeatDelta     int32 // +1 when NewLevel%3==0
+	SkillDelta    int32 // max(1, class.SkillPoints + IntMod)
+	AbilityDelta  int32 // +1 when NewLevel%4==0
+	WeaveDelta    int32 // +1 for channeler classes, else 0
+	PracticeDelta int32 // +1 every level (Phase E #28 — mid-game weave currency)
 }
 
 // ComputeLevelUp returns the LevelGains for advancing classKey by
@@ -213,17 +214,18 @@ func ComputeLevelUp(ch repo.Character, cat *chargen.Catalog,
 	}
 
 	return LevelGains{
-		NewHPCurrent: newCur,
-		NewHPMax:     newMax,
-		NewBAB:       bab,
-		NewSaves:     saves,
-		ClassLevels:  newLevels,
-		HPDelta:      hpDelta,
-		NewLevel:     newLevel,
-		FeatDelta:    featDelta,
-		SkillDelta:   skillDelta,
-		AbilityDelta: abilityDelta,
-		WeaveDelta:   weaveDelta,
+		NewHPCurrent:  newCur,
+		NewHPMax:      newMax,
+		NewBAB:        bab,
+		NewSaves:      saves,
+		ClassLevels:   newLevels,
+		HPDelta:       hpDelta,
+		NewLevel:      newLevel,
+		FeatDelta:     featDelta,
+		SkillDelta:    skillDelta,
+		AbilityDelta:  abilityDelta,
+		WeaveDelta:    weaveDelta,
+		PracticeDelta: 1,
 	}, nil
 }
 

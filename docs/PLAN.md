@@ -468,9 +468,37 @@ catalogs.
     perception, saidar aura, gender detection within 15 ft),
     angreal/sa'angreal slot bonuses, bond/circle/a'dam
     interactions.
-28. **Mid-game weave learning** (§12). New weaves added to
+28. ~~**Mid-game weave learning** (§12). New weaves added to
     `WeavesKnown` via trainer NPC + practice-points spend. Catalog
-    already loaded by Phase C #10.
+    already loaded by Phase C #10.~~ **LANDED 2026-05-08.**
+    Migration 0043 added the `weave_teachers` table (1:1 to
+    `mob_template`, carrying `max_level_taught` + `affinity_filter`
+    PowerSet). Optional `weave_teacher:` YAML block on a mob seeds
+    the row (data/world/README.md updated). Chargen `Weave` gained
+    `practice_cost int` (validated `>= 0`); all eight catalog level-0
+    weaves seeded with `practice_cost: 1`. Practice-points earning:
+    `ComputeLevelUp.PracticeDelta = 1` per level for every class,
+    threaded through `LevelUpFields.PracticePointsDelta` and
+    deposited by `RecordLevelUp` (the existing `practice_points`
+    column from migration 0009 was previously unwritten). Verb:
+    `learn weave` now detects a weave-teacher in the room — present
+    drains `practice_points` via the new
+    `RecordWeaveStudy(ctx, id, weaveID, newPP)` (mirrors
+    `RecordWeavePick`'s tx shape); absent keeps the existing
+    `pending_weaves` chargen-pool drain. Menu shows the teacher
+    byline + per-weave PP cost + filtered offerings (level cap +
+    affinity filter intersected with the channeler's own
+    affinities). Audit on the mid-game path: `kind=weave_study
+    power=<p> cost=<n>`. `score`'s Channeling block gained a
+    Practice line. Deferred: outside-affinity learning at premium
+    cost (Wilders 2 / Initiates 0 from §12 lines 43–50; both paths
+    still refuse outside-affinity entirely), class-based weave-level
+    caps (moot — catalog is level-0 only), PP earning from sources
+    other than level-up, time-cost / lesson-fee, the §12 numeric
+    weave-table reconciliation between `WeavesKnown []WeaveRef` and
+    `WeavesKnownIDs []string`. RMW TOCTOU on `RecordWeaveStudy`
+    inherits the same followup as `RecordWeavePick` — see
+    `optimistic_lock_followups.md`.
 
 After E: meaningful vertical progression on top of a chargen-
 complete character.

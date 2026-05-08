@@ -66,7 +66,7 @@ func newLearnFixture(t *testing.T, pending int32, level int8) *learnFixture {
 }
 
 func (f *learnFixture) learnCmd() *telnet.Command {
-	return NewLearn(f.characters, f.cat, f.audits)
+	return NewLearn(f.characters, f.cat, f.audits, nil, nil, nil)
 }
 
 func TestLearn_BareMenuListsAllowedSkills(t *testing.T) {

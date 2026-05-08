@@ -719,7 +719,7 @@ type Character struct {
 	XP             int64
 	Feats          []int32
 	Skills         map[int32]SkillRanks
-	PracticePoints int16
+	PracticePoints int32
 	ClassFeatures  []int32
 
 	HeightCm   int16

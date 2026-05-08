@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
@@ -901,6 +902,80 @@ func TestLoadAndSync_TrainerRejectsEmptyClass(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "trainer.class") {
 		t.Fatalf("err = %q, want it to mention trainer.class", err)
+	}
+}
+
+func TestLoadAndSync_WeaveTeacherRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"city/zone.yaml":  &fstest.MapFile{Data: []byte("id: city\nname: City\n")},
+		"city/rooms.yaml": &fstest.MapFile{Data: []byte("- id: city.tower\n  starter: true\n  name: Tower\n  long: A weave-teacher's chamber.\n")},
+		"city/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: city.aes_sedai
+  room: city.tower
+  name: Sister Anaiya
+  short: a kindly Aes Sedai
+  weave_teacher:
+    max_level_taught: 1
+    affinity_filter: [air, fire]
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	templates := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := templates.GetByExternalID(ctx, "city.aes_sedai")
+	if err != nil {
+		t.Fatalf("template lookup: %v", err)
+	}
+	teachers := repo.NewSQLiteWeaveTeacherRepo(conn)
+	teacher, err := teachers.GetByMobTemplateID(ctx, tpl.ID)
+	if err != nil {
+		t.Fatalf("teacher lookup: %v", err)
+	}
+	if teacher.MaxLevelTaught != 1 {
+		t.Errorf("MaxLevelTaught = %d, want 1", teacher.MaxLevelTaught)
+	}
+	wantFilter := creature.PowerSet(1<<creature.PowerAir | 1<<creature.PowerFire)
+	if teacher.AffinityFilter != wantFilter {
+		t.Errorf("AffinityFilter = %d, want %d", teacher.AffinityFilter, wantFilter)
+	}
+}
+
+func TestLoadAndSync_WeaveTeacherRejectsBadPower(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.teacher
+  room: z.r
+  name: Suspicious Teacher
+  weave_teacher:
+    max_level_taught: 0
+    affinity_filter: [chaos]
+`)},
+	}
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on bad Power name")
+	}
+	if !strings.Contains(err.Error(), "weave_teacher") {
+		t.Fatalf("err = %q, want it to mention weave_teacher", err)
 	}
 }
 

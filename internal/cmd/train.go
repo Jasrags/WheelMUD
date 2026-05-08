@@ -149,6 +149,7 @@ func NewTrain(characters repo.CharacterRepo,
 				PendingSkillPointsDelta:  gains.SkillDelta,
 				PendingAbilityBumpsDelta: gains.AbilityDelta,
 				PendingWeavesDelta:       gains.WeaveDelta,
+				PracticePointsDelta:      gains.PracticeDelta,
 			}); err != nil {
 				slog.Error("train: record level-up",
 					"char", char.ID, "class_id", res.trainer.ClassID, "error", err)

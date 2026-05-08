@@ -273,6 +273,7 @@ func (r *MemoryCharacterRepo) RecordLevelUp(_ context.Context, id int64, f Level
 			c.PendingSkillPoints += f.PendingSkillPointsDelta
 			c.PendingAbilityBumps += f.PendingAbilityBumpsDelta
 			c.PendingWeaves += f.PendingWeavesDelta
+			c.PracticePoints += f.PracticePointsDelta
 			return nil
 		}
 	}
@@ -356,6 +357,26 @@ func (r *MemoryCharacterRepo) RecordWeavePick(_ context.Context, id int64,
 			cp.WeavesKnownIDs = append(cp.WeavesKnownIDs, weaveID)
 			c.Channeling = &cp
 			c.PendingWeaves = newPending
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordWeaveStudy(_ context.Context, id int64,
+	weaveID string, newPracticePoints int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if c.Channeling == nil {
+				return ErrNotChanneler
+			}
+			cp := *c.Channeling
+			cp.WeavesKnownIDs = append([]string(nil), c.Channeling.WeavesKnownIDs...)
+			cp.WeavesKnownIDs = append(cp.WeavesKnownIDs, weaveID)
+			c.Channeling = &cp
+			c.PracticePoints = newPracticePoints
 			return nil
 		}
 	}

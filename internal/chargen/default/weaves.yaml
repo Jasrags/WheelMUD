@@ -3,44 +3,56 @@
 # weaves) presents these filtered by the player's selected
 # affinities. Higher-level weaves are added as combat math (Phase D)
 # and progression (Phase E) come online.
+#
+# practice_cost is the cost in practice-points for the mid-game
+# `learn weave` path (Phase E #28). Chargen ignores this field —
+# starting weaves draw from pending_weaves, not practice points.
 
 - id: spark
   name: Spark
   level: 0
   power: Fire
+  practice_cost: 1
   description: A small sustained flame in the palm; lights torches and tinder.
 - id: candle
   name: Candle
   level: 0
   power: Fire
+  practice_cost: 1
   description: Lights a single candle, lamp, or campfire from a few paces away.
 - id: cool_breeze
   name: Cool Breeze
   level: 0
   power: Air
+  practice_cost: 1
   description: A gentle wind across the channeler and one nearby companion.
 - id: clean
   name: Clean
   level: 0
   power: Water
+  practice_cost: 1
   description: Removes a small stain or layer of grime from cloth or skin.
 - id: trickle
   name: Trickle
   level: 0
   power: Water
+  practice_cost: 1
   description: Calls a thin stream of water from a humid air for a few seconds.
 - id: settle_dust
   name: Settle Dust
   level: 0
   power: Earth
+  practice_cost: 1
   description: Briefly settles dust or loose grit in a small room or trail.
 - id: steady_hand
   name: Steady Hand
   level: 0
   power: Spirit
+  practice_cost: 1
   description: Calms minor tremors, stilling fingers and quieting nerves.
 - id: warmth
   name: Warmth
   level: 0
   power: Fire
+  practice_cost: 1
   description: Gently warms a small object — a cup, a stone, a hand.

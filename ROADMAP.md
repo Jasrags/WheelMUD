@@ -1065,6 +1065,23 @@ will need on top of those tables.
       check), consumes a slot of that level (or higher), accrues
       `madness` for men, then resolves via the effect script (§15).
       No mana pool — slots refresh after 8h rest.
+      **Mid-game weave learning landed 2026-05-08** — Phase E #28.
+      Migration 0043 added `weave_teachers` (1:1 to mob_template
+      with `max_level_taught` + `affinity_filter` PowerSet); the
+      optional `weave_teacher:` YAML block on a mob seeds the row.
+      Chargen `Weave` gained `practice_cost` (validated `>= 0`).
+      `progression.ComputeLevelUp.PracticeDelta = 1` per level for
+      every class; `LevelUpFields.PracticePointsDelta` deposits
+      into `characters.practice_points` (column from 0009 was
+      previously unwritten). `learn weave` now branches: with a
+      teacher present in the room it drains practice_points via
+      `RecordWeaveStudy(ctx, id, weaveID, newPP)` and applies the
+      teacher's level cap + affinity filter intersected with the
+      channeler's own affinities; without a teacher the existing
+      `pending_weaves` chargen-pool drain runs verbatim. Cast
+      time / Concentration / mana-pool / slot-refresh-on-rest
+      mechanics still pending — slot refresh itself landed in
+      Phase E #27 (off the Regen bucket, 8h wall-clock).
 - [x] Levels & XP curve — d20 geometric XP table
       (`xp(n) = 1000 × n × (n-1) / 2`; cap level 20 v1). Level-up
       grants: roll new HD for HP (deterministic avg + Con mod, no

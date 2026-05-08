@@ -491,6 +491,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 	shops := repo.NewSQLiteShopRepo(tx)
 	bankers := repo.NewSQLiteBankerRepo(tx)
 	trainers := repo.NewSQLiteTrainerRepo(tx)
+	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(tx)
 
 	for _, m := range mobs {
 		if m.XPValue < 0 {
@@ -556,6 +557,11 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 				return fmt.Errorf("insert trainer for mob %q: %w", m.ID, err)
 			}
 		}
+		if m.WeaveTeacher != nil {
+			if err := insertWeaveTeacher(ctx, weaveTeachers, created.ID, m); err != nil {
+				return fmt.Errorf("insert weave teacher for mob %q: %w", m.ID, err)
+			}
+		}
 	}
 	return nil
 }
@@ -566,6 +572,36 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 func insertTrainer(ctx context.Context, trainers repo.TrainerRepo, mobTemplateID int64, m Mob) error {
 	cfg := repo.Trainer{MobTemplateID: mobTemplateID, ClassID: m.Trainer.Class}
 	if _, err := trainers.Create(ctx, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+// insertWeaveTeacher materializes one `weave_teacher:` YAML block
+// into a weave_teachers row (Phase E #28). The block has already
+// cleared validateWeaveTeacher (range + power names).
+func insertWeaveTeacher(ctx context.Context, teachers repo.WeaveTeacherRepo, mobTemplateID int64, m Mob) error {
+	var aff creature.PowerSet
+	for _, p := range m.WeaveTeacher.AffinityFilter {
+		switch strings.ToLower(strings.TrimSpace(p)) {
+		case "air":
+			aff |= 1 << creature.PowerAir
+		case "earth":
+			aff |= 1 << creature.PowerEarth
+		case "fire":
+			aff |= 1 << creature.PowerFire
+		case "water":
+			aff |= 1 << creature.PowerWater
+		case "spirit":
+			aff |= 1 << creature.PowerSpirit
+		}
+	}
+	cfg := repo.WeaveTeacher{
+		MobTemplateID:  mobTemplateID,
+		MaxLevelTaught: int8(m.WeaveTeacher.MaxLevelTaught),
+		AffinityFilter: aff,
+	}
+	if _, err := teachers.Create(ctx, cfg); err != nil {
 		return err
 	}
 	return nil

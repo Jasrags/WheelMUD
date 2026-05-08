@@ -181,4 +181,9 @@ type Weave struct {
 	Level       int    `yaml:"level"`
 	Power       string `yaml:"power"`
 	Description string `yaml:"description,omitempty"`
+	// PracticeCost is the practice-points cost to learn this weave
+	// from a teacher NPC (Phase E #28). Default 0; chargen's
+	// pending_weaves path ignores this field — only the mid-game
+	// `learn weave` path consults it. Validated >= 0 at Load.
+	PracticeCost int `yaml:"practice_cost,omitempty"`
 }

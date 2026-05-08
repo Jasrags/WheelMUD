@@ -232,6 +232,41 @@ Banker hours follow the same rules as shop hours:
 - Otherwise the banker is open for `[open_hour, close_hour)`. A
   wrap (e.g. `open: 22, close: 4`) covers a late-night window.
 
+A mob entry may also carry an optional `weave_teacher:` block to mark
+the mob as a Phase E #28 mid-game weave teacher. The loader inserts a
+`weave_teachers` row keyed to the mob template. With a teacher in the
+room, `learn weave` drains `characters.practice_points` (1 PP/level
+earned at level-up) per weave's `practice_cost` instead of the
+chargen `pending_weaves` pool. V1 has no fees, no time cost, and no
+outside-affinity learning — the teacher's offerings intersect with
+the channeler's own affinities.
+
+```yaml
+- id: tr.aes_sedai_anaiya
+  room: tr.tar_valon.tower.green_ajah
+  name: Sister Anaiya
+  short: a kindly Aes Sedai of the Green Ajah
+  weave_teacher:
+    max_level_taught: 1     # 0..9, the highest weave level offered
+    affinity_filter:        # optional; empty = teach any in-affinity
+      - air                 # Power names: air, earth, fire, water, spirit
+      - fire
+```
+
+Teacher rules:
+
+- `max_level_taught` is `[0, 9]`. The chargen catalog is level-0 only
+  today, so 0 is the conventional value; the column is in place for
+  when level-1+ weaves are authored.
+- `affinity_filter` is a list of Power names. An empty (or absent)
+  list means "teach any weave the channeler can learn from her
+  Affinities." A non-empty list restricts the teacher to those
+  Powers; the verb still intersects with the channeler's own
+  Affinities.
+- A mob can be both a class trainer and a weave teacher
+  simultaneously by carrying both `trainer:` and `weave_teacher:`
+  blocks.
+
 ## Conventions
 
 ### Room ID naming

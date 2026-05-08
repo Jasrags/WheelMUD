@@ -712,6 +712,76 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_weave_study_appends_and_writes_pp", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "study", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{
+			AccountID:      acc.ID, Name: "Egwene",
+			PracticePoints: 5,
+			Channeling: &creature.Channeling{
+				ChannelerType:  creature.ChannelerInitiate,
+				Affinities:     creature.PowerSet(1 << creature.PowerFire),
+				WeavesKnownIDs: []string{"spark"},
+			},
+		})
+		if err := cr.RecordWeaveStudy(ctx, c.ID, "candle", 4); err != nil {
+			t.Fatalf("RecordWeaveStudy: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Egwene")
+		if got.Channeling == nil {
+			t.Fatalf("Channeling cleared")
+		}
+		if !reflect.DeepEqual(got.Channeling.WeavesKnownIDs, []string{"spark", "candle"}) {
+			t.Fatalf("WeavesKnownIDs = %v", got.Channeling.WeavesKnownIDs)
+		}
+		if got.PracticePoints != 4 {
+			t.Errorf("PracticePoints = %d, want 4", got.PracticePoints)
+		}
+	})
+
+	t.Run(name+"/record_weave_study_non_channeler_returns_err", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "noch", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Mat"})
+		err := cr.RecordWeaveStudy(ctx, c.ID, "spark", 0)
+		if !errors.Is(err, ErrNotChanneler) {
+			t.Fatalf("err = %v, want ErrNotChanneler", err)
+		}
+	})
+
+	t.Run(name+"/record_weave_study_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordWeaveStudy(context.Background(), 9999, "spark", 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/record_level_up_deposits_practice_points", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "lvl", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Nynaeve",
+			ClassLevels: map[creature.Class]int8{creature.ClassWilder: 1}})
+		err := cr.RecordLevelUp(ctx, c.ID, LevelUpFields{
+			ClassLevels:         map[creature.Class]int8{creature.ClassWilder: 2},
+			HPCurrent:           c.Core.HPCurrent,
+			HPMax:               c.Core.HPMax,
+			BAB:                 c.Core.BAB,
+			Saves:               c.Core.Saves,
+			PracticePointsDelta: 1,
+		})
+		if err != nil {
+			t.Fatalf("RecordLevelUp: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Nynaeve")
+		if got.PracticePoints != 1 {
+			t.Errorf("PracticePoints = %d, want 1", got.PracticePoints)
+		}
+	})
+
 	t.Run(name+"/first_character_promoted_to_admin", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

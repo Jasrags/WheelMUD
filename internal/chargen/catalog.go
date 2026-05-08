@@ -292,6 +292,9 @@ func (c *Catalog) validate() error {
 		if w.Level < 0 || w.Level > 9 {
 			errs = append(errs, fmt.Sprintf("weave %q: level %d out of range", w.ID, w.Level))
 		}
+		if w.PracticeCost < 0 || w.PracticeCost > 255 {
+			errs = append(errs, fmt.Sprintf("weave %q: practice_cost %d out of range [0,255]", w.ID, w.PracticeCost))
+		}
 	}
 
 	// Items: typed Stats decode + cross-reference every

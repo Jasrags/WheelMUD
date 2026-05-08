@@ -233,6 +233,14 @@ type Mob struct {
 	// `train` verb against CharacterRepo.
 	Trainer *Trainer `yaml:"trainer,omitempty"`
 
+	// WeaveTeacher, if present, marks this mob as a mid-game weave
+	// teacher (Phase E #28). The loader inserts the matching
+	// `weave_teachers` row keyed to the mob_template. The cmd-layer
+	// `learn weave` verb resolves it at runtime; with a teacher in
+	// the room, learn drains practice_points instead of the
+	// pending_weaves chargen pool.
+	WeaveTeacher *WeaveTeacher `yaml:"weave_teacher,omitempty"`
+
 	SourceFile string `yaml:"-"`
 	Line       int    `yaml:"-"`
 }
@@ -271,6 +279,18 @@ type Banker struct {
 // doesn't require a DB migration.
 type Trainer struct {
 	Class string `yaml:"class"`
+}
+
+// WeaveTeacher is the optional `weave_teacher:` sub-block on a mob
+// YAML entry (Phase E #28). MaxLevelTaught is the highest weave
+// level (0..9) the teacher offers; AffinityFilter, if non-empty,
+// restricts the teacher to those Powers (e.g. ["fire", "air"]).
+// An empty AffinityFilter means "teach any in-affinity weave the
+// channeler can learn." Loader maps the strings to the
+// creature.PowerSet bitmask before persisting.
+type WeaveTeacher struct {
+	MaxLevelTaught  int      `yaml:"max_level_taught"`
+	AffinityFilter  []string `yaml:"affinity_filter,omitempty"`
 }
 
 // World is the parsed-and-validated set of every zone the loader saw.

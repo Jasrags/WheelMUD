@@ -2,6 +2,7 @@ package world
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
@@ -293,6 +294,11 @@ func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 				return err
 			}
 		}
+		if m.WeaveTeacher != nil {
+			if err := validateWeaveTeacher(m); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -309,6 +315,25 @@ func validateTrainer(m Mob) error {
 	if !validExternalID(m.Trainer.Class) {
 		return fmt.Errorf("%s:%d: mob %q trainer.class %q has invalid format",
 			m.SourceFile, m.Line, m.ID, m.Trainer.Class)
+	}
+	return nil
+}
+
+// validateWeaveTeacher checks the optional `weave_teacher:` block:
+// max_level_taught in [0, 9] and every affinity_filter entry is one
+// of the five Power names. Phase E #28.
+func validateWeaveTeacher(m Mob) error {
+	if m.WeaveTeacher.MaxLevelTaught < 0 || m.WeaveTeacher.MaxLevelTaught > 9 {
+		return fmt.Errorf("%s:%d: mob %q weave_teacher.max_level_taught %d out of range [0,9]",
+			m.SourceFile, m.Line, m.ID, m.WeaveTeacher.MaxLevelTaught)
+	}
+	for _, p := range m.WeaveTeacher.AffinityFilter {
+		switch strings.ToLower(strings.TrimSpace(p)) {
+		case "air", "earth", "fire", "water", "spirit":
+		default:
+			return fmt.Errorf("%s:%d: mob %q weave_teacher.affinity_filter %q is not a Power",
+				m.SourceFile, m.Line, m.ID, p)
+		}
 	}
 	return nil
 }

@@ -121,6 +121,54 @@ func TestScore_RendersIdentityVitalsAbilitiesWealth(t *testing.T) {
 	}
 }
 
+func TestScore_ChannelerBlockShowsPracticeAndState(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	in := repo.Character{
+		AccountID: 200,
+		Name:      "Moiraine",
+		ClassLevels: map[creature.Class]int8{
+			creature.ClassInitiate: 1,
+		},
+		Core: creature.Core{HPCurrent: 8, HPMax: 8, Gender: creature.GenderFemale},
+		Channeling: &creature.Channeling{
+			GenderSource: creature.SourceSaidar,
+			Affinities:   creature.PowerSet(1 << creature.PowerFire),
+			Slots: [10]creature.SlotPool{
+				{Cur: 3, Max: 4},
+			},
+			Embraced: true,
+		},
+		PracticePoints: 2,
+		AuthLevel:      repo.AuthLevelPlayer,
+	}
+	if _, err := chars.Create(context.Background(), in); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, out := bufSession(t)
+	s.AuthLevel = telnet.AuthPlayer
+	s.CharacterName = "Moiraine"
+	s.Width = 80
+
+	cmd := NewScore(chars, nil)
+	runCmd(t, cmd, s, "")
+
+	got := out.String()
+	wants := []string{
+		"Channeling",
+		"Saidar",
+		"L0 3/4",
+		"Madness:",
+		"Practice:",
+		"2",
+		"embraced",
+	}
+	for _, w := range wants {
+		if !strings.Contains(got, w) {
+			t.Fatalf("missing %q in score output:\n%s", w, got)
+		}
+	}
+}
+
 func TestScore_LoadFailureWritesError(t *testing.T) {
 	chars := repo.NewMemoryCharacterRepo()
 	s, out := bufSession(t)

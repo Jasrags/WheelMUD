@@ -42,7 +42,7 @@ type Character struct {
 	ClassLevels map[creature.Class]int8
 
 	XP             int64
-	PracticePoints int16
+	PracticePoints int32
 
 	HeightCm   int16
 	WeightKg   int16
@@ -290,6 +290,16 @@ type CharacterRepo interface {
 	// nil (defense-in-depth — should be unreachable from verb).
 	RecordWeavePick(ctx context.Context, id int64,
 		weaveID string, newPendingWeaves int32) error
+	// RecordWeaveStudy is the Phase E #28 mid-game weave-learning
+	// path. Atomically appends weaveID to channeling_json's
+	// WeavesKnownIDs and writes practice_points to newPracticePoints
+	// (absolute, not delta — caller computes the post-spend value).
+	// Returns ErrCharacterNotFound when no row matches id;
+	// ErrNotChanneler when the row's channeling_json is nil
+	// (defense-in-depth — verb refuses non-channelers before this
+	// call). Caller is responsible for the duplicate-pick guard.
+	RecordWeaveStudy(ctx context.Context, id int64,
+		weaveID string, newPracticePoints int32) error
 	// RecordAffects rewrites the character's affects_json column with
 	// the supplied slice. Phase E #26 — combat round-end and the
 	// out-of-combat affects bucket call this when affects.Tick changes
@@ -341,6 +351,10 @@ type LevelUpFields struct {
 	PendingSkillPointsDelta  int32
 	PendingAbilityBumpsDelta int32
 	PendingWeavesDelta       int32
+	// PracticePointsDelta deposits Phase E #28 mid-game weave-learning
+	// currency. +1 per class level for now; non-channelers accrue but
+	// have no spend path until a future skill-shaped use lands.
+	PracticePointsDelta int32
 }
 
 var (
