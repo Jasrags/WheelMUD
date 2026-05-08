@@ -38,12 +38,24 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 	return &telnet.Command{
 		Name: "learn",
 		Help: "Learn — spend pending skill points on class/background skills",
-		Long: "Usage: learn                  show menu\n" +
-			"       learn <skill> [n]      put n ranks (default 1) into <skill>\n" +
-			"       learn info <skill>     show description for <skill>",
+		Long: "Usage: learn                       show skill menu\n" +
+			"       learn <skill> [n]           put n ranks (default 1) into <skill>\n" +
+			"       learn info <skill>          show description for <skill>\n" +
+			"       learn weave                 show channeler weave menu\n" +
+			"       learn weave <id>            spend a pending weave on <id>\n" +
+			"       learn weave info <id>       show description for a weave",
 		Auth: telnet.AuthPlayer,
 		Run: func(c *telnet.Context) error {
 			s := c.Session
+			args := c.Args
+
+			// `learn weave …` delegates to the channeler-spend path
+			// in learn_weave.go. That helper does its own char lookup
+			// + Channeling gate.
+			if len(args) >= 1 && strings.EqualFold(args[0], "weave") {
+				return runLearnWeave(c, characters, cat, audits)
+			}
+
 			if cat == nil {
 				return s.WriteString("{{Skill catalog unavailable.}}::red\r\n")
 			}
@@ -54,7 +66,6 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 			}
 			allowed := allowedSkillIDsFor(char, cat)
 
-			args := c.Args
 			if len(args) == 0 {
 				return writeLearnMenu(s, char, allowed, cat)
 			}

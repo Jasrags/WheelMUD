@@ -252,6 +252,140 @@ func (r *SQLiteCharacterRepo) RecordSkillRank(ctx context.Context, id int64,
 	return tx.Commit()
 }
 
+func (r *SQLiteCharacterRepo) RecordFeatPick(ctx context.Context, id int64,
+	featID int32, newPending int32) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin feat pick tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var featsJSON string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT feats_json FROM characters WHERE id = ?`, id,
+	).Scan(&featsJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCharacterNotFound
+		}
+		return fmt.Errorf("read feats: %w", err)
+	}
+
+	var feats []int32
+	if err := unmarshalJSONSlice(featsJSON, &feats); err != nil {
+		return fmt.Errorf("unmarshal feats: %w", err)
+	}
+	feats = append(feats, featID)
+	js, err := marshalJSONSlice(feats)
+	if err != nil {
+		return fmt.Errorf("marshal feats: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE characters
+		   SET feats_json = ?, pending_feats = ?
+		 WHERE id = ?`,
+		js, newPending, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record feat pick: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCharacterNotFound
+	}
+	return tx.Commit()
+}
+
+func (r *SQLiteCharacterRepo) RecordAbilityBump(ctx context.Context, id int64,
+	ability AbilityKey, newScore int8, newPending int32) error {
+	col, ok := abilityCurColumn(ability)
+	if !ok {
+		return fmt.Errorf("record ability bump: unknown ability %d", ability)
+	}
+	// Column name is from a fixed allow-list — no injection risk.
+	q := fmt.Sprintf(
+		`UPDATE characters SET %s = ?, pending_ability_bumps = ? WHERE id = ?`,
+		col,
+	)
+	res, err := r.db.ExecContext(ctx, q, newScore, newPending, id)
+	if err != nil {
+		return fmt.Errorf("record ability bump: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteCharacterRepo) RecordWeavePick(ctx context.Context, id int64,
+	weaveID string, newPending int32) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin weave pick tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var channelingNS sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT channeling_json FROM characters WHERE id = ?`, id,
+	).Scan(&channelingNS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCharacterNotFound
+		}
+		return fmt.Errorf("read channeling: %w", err)
+	}
+	raw := ""
+	if channelingNS.Valid {
+		raw = channelingNS.String
+	}
+
+	var ch *creature.Channeling
+	if err := jsonUnmarshalString(raw, &ch); err != nil {
+		return fmt.Errorf("unmarshal channeling: %w", err)
+	}
+	if ch == nil {
+		return ErrNotChanneler
+	}
+	ch.WeavesKnownIDs = append(ch.WeavesKnownIDs, weaveID)
+	js, err := jsonMarshalString(ch)
+	if err != nil {
+		return fmt.Errorf("marshal channeling: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE characters
+		   SET channeling_json = ?, pending_weaves = ?
+		 WHERE id = ?`,
+		js, newPending, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record weave pick: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCharacterNotFound
+	}
+	return tx.Commit()
+}
+
+// abilityCurColumn maps the AbilityKey enum to the str/dex/con/int/
+// wis/cha _cur column name. Returns ("", false) on unknown enum.
+func abilityCurColumn(a AbilityKey) (string, bool) {
+	switch a {
+	case AbilityStr:
+		return "str_cur", true
+	case AbilityDex:
+		return "dex_cur", true
+	case AbilityCon:
+		return "con_cur", true
+	case AbilityInt:
+		return "int_cur", true
+	case AbilityWis:
+		return "wis_cur", true
+	case AbilityCha:
+		return "cha_cur", true
+	}
+	return "", false
+}
+
 func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters

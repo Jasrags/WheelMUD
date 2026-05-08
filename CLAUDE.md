@@ -114,7 +114,15 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   progression verbs (`xp` showing pending levels, `train` at a
   trainer NPC committing one class level), the §E #24 spend verb
   (`learn <skill> [n]` / `learn info <skill>` — anywhere, no
-  trainer required), the admin movement verbs (`goto <player|
+  trainer required), the §E #25 remaining spend verbs
+  (`feat [id]` / `feat info <id>` draining `pending_feats`, no
+  prereq enforcement V1; `bump <ability>` draining
+  `pending_ability_bumps` with a hard cap of 20 — verb name `feat`
+  not `pick feat` because `pick` is the lockpicking verb;
+  `learn weave [id]` / `learn weave info <id>` draining
+  `pending_weaves`, channeler-only and affinity-gated via
+  `Channeling.Affinities`, dispatched off the `learn` verb's
+  router with a leading `weave` arg), the admin movement verbs (`goto <player|
   room>`, `transfer <player> [<room>]`, `summon <player>`,
   `wizinvis` toggle), the `shutdown` / `reboot` countdown verbs,
   and the admin tools (`whereami`, `zones`,
@@ -417,16 +425,24 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   the very last entry in all three lists — the SQLite first-character
   bootstrap CASE expression in `Create` consumes it as the trailing
   placeholder; new columns belong before it.
-- Progression spend verbs (`learn`, future `pick feat` / `bump
-  <abil>` / `learn weave`) follow the §E #24 pattern: a new repo
-  method named `RecordX` that takes the absolute new pending value
-  and the per-pool entry to upsert (mirroring `RecordCoin` /
-  `RecordXP` rather than widening `RecordLevelUp`). Cmd-layer
-  computes the cap + budget guards before the call; refusals do
-  NOT mutate or audit; success writes one `audit.Record(verb=X,
-  target=<id>, args=<n>)` row. Catalog string ids that need int32
-  keys go through `chargen.HashID(id)` so chargen-persisted entries
-  round-trip.
+- Progression spend verbs (`learn`, `feat`, `bump`, `learn weave`)
+  follow the §E #24 pattern: a per-verb repo method named `RecordX`
+  that takes the absolute new pending value and the per-pool entry
+  to upsert (mirroring `RecordCoin` / `RecordXP` rather than
+  widening `RecordLevelUp`). Cmd-layer computes the cap + budget
+  guards before the call; refusals do NOT mutate or audit; success
+  writes one `audit.Record(verb=X, target=<id>, args=<n>)` row.
+  Catalog string ids that need int32 keys go through
+  `chargen.HashID(id)` so chargen-persisted entries round-trip.
+  All four pending pools deposited by `RecordLevelUp` now have a
+  drain (#24 + #25). `RecordWeavePick` is the one repo method that
+  returns a non-`ErrCharacterNotFound` typed error (`ErrNotChanneler`)
+  as defense in depth — the verb layer already refuses non-channelers
+  with `Character.Channeling == nil`. New ability-bump verbs use the
+  `repo.AbilityKey` enum (Str/Dex/Con/Int/Wis/Cha) to select which
+  `*_cur` column SQLite updates; the column lookup is from a fixed
+  allow-list (`abilityCurColumn`), no SQL injection surface despite
+  the format-string assembly.
 - AuthLevel lives on the character row, not the account. The session
   stays at AuthGuest through login + account-create; it's stamped by
   `mode/postauth.promoteToGame` from `Character.AuthLevel` once a

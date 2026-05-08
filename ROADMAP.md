@@ -1055,9 +1055,23 @@ will need on top of those tables.
       `RecordLevelUp` accumulates the four counters in the same
       UPDATE; `train` appends a single cyan "You gained N feat
       pick, M skill points." line on success, suppressed when no
-      pool grew. Spend side: `learn` shipped as #24 above; `pick
-      feat` / `bump <abil>` / `learn weave` are template work
-      after #24, deferred to subsequent slices.
+      pool grew. Spend side: `learn` shipped as #24; `feat` /
+      `bump <abil>` / `learn weave` shipped as Phase E #25
+      (2026-05-07). Verb `feat` (not `pick feat` — `pick` collides
+      with the lockpicking verb): `feat` / `feat <id>` /
+      `feat info <id>`. `bump <ability>` accepts str/dex/con/
+      int/wis/cha (or full names); hard cap at 20. `learn weave`
+      is channeler-only and affinity-gated against
+      `Channeling.Affinities`. New repo methods
+      `RecordFeatPick` / `RecordAbilityBump` / `RecordWeavePick`
+      mirror the `RecordSkillRank` shape (caller passes absolute
+      new pending value; `RecordWeavePick` returns
+      `ErrNotChanneler` on a nil Channeling row as defense in
+      depth). All four pending pools now have a drain path; the
+      level-up cycle is end-to-end functional. Refusals (empty
+      pool, cap, duplicate, miss-affinity, unknown id) do not
+      mutate or audit; success writes one `feat` / `bump` /
+      `learn` audit row.
 - [ ] Affects / buffs / debuffs with durations — `creature_affects`
       list `(source_id, name, modifiers []StatMod, duration_ticks,
       tick_effect)`. Must support the WoT condition enum from §9:

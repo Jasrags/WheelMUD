@@ -489,6 +489,135 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_feat_pick_appends_and_decrements", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{
+			AccountID:    acc.ID, Name: "Egwene",
+			PendingFeats: 2,
+			Feats:        []int32{111},
+		})
+		if err := cr.RecordFeatPick(ctx, c.ID, 222, 1); err != nil {
+			t.Fatalf("RecordFeatPick first: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Egwene")
+		if !reflect.DeepEqual(got.Feats, []int32{111, 222}) {
+			t.Fatalf("Feats = %v, want [111 222]", got.Feats)
+		}
+		if got.PendingFeats != 1 {
+			t.Errorf("PendingFeats = %d, want 1", got.PendingFeats)
+		}
+		if err := cr.RecordFeatPick(ctx, c.ID, 333, 0); err != nil {
+			t.Fatalf("RecordFeatPick second: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Egwene")
+		if !reflect.DeepEqual(got.Feats, []int32{111, 222, 333}) {
+			t.Fatalf("Feats = %v, want [111 222 333]", got.Feats)
+		}
+		if got.PendingFeats != 0 {
+			t.Errorf("PendingFeats = %d, want 0", got.PendingFeats)
+		}
+	})
+
+	t.Run(name+"/record_feat_pick_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordFeatPick(context.Background(), 9999, 42, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/record_ability_bump_writes_one_column", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		seed := Character{AccountID: acc.ID, Name: "Lan", PendingAbilityBumps: 3}
+		seed.Core.Abilities.Str.Current = 14
+		seed.Core.Abilities.Dex.Current = 12
+		c, _ := cr.Create(ctx, seed)
+
+		if err := cr.RecordAbilityBump(ctx, c.ID, AbilityStr, 15, 2); err != nil {
+			t.Fatalf("bump str: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Lan")
+		if got.Core.Abilities.Str.Current != 15 {
+			t.Errorf("Str = %d, want 15", got.Core.Abilities.Str.Current)
+		}
+		if got.Core.Abilities.Dex.Current != 12 {
+			t.Errorf("Dex clobbered: %d, want 12", got.Core.Abilities.Dex.Current)
+		}
+		if got.PendingAbilityBumps != 2 {
+			t.Errorf("PendingAbilityBumps = %d, want 2", got.PendingAbilityBumps)
+		}
+
+		if err := cr.RecordAbilityBump(ctx, c.ID, AbilityDex, 13, 1); err != nil {
+			t.Fatalf("bump dex: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Lan")
+		if got.Core.Abilities.Dex.Current != 13 {
+			t.Errorf("Dex after bump = %d, want 13", got.Core.Abilities.Dex.Current)
+		}
+		if got.Core.Abilities.Str.Current != 15 {
+			t.Errorf("Str regressed: %d, want 15", got.Core.Abilities.Str.Current)
+		}
+	})
+
+	t.Run(name+"/record_ability_bump_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordAbilityBump(context.Background(), 9999, AbilityStr, 10, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
+	t.Run(name+"/record_weave_pick_appends_and_decrements", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{
+			AccountID:     acc.ID, Name: "Moiraine",
+			PendingWeaves: 2,
+			Channeling: &creature.Channeling{
+				ChannelerType:  creature.ChannelerInitiate,
+				Affinities:     creature.PowerSet(1<<creature.PowerFire) | creature.PowerSet(1<<creature.PowerSpirit),
+				WeavesKnownIDs: []string{"spark"},
+			},
+		})
+		if err := cr.RecordWeavePick(ctx, c.ID, "ember", 1); err != nil {
+			t.Fatalf("RecordWeavePick: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Moiraine")
+		if got.Channeling == nil {
+			t.Fatalf("Channeling cleared")
+		}
+		if !reflect.DeepEqual(got.Channeling.WeavesKnownIDs, []string{"spark", "ember"}) {
+			t.Fatalf("WeavesKnownIDs = %v", got.Channeling.WeavesKnownIDs)
+		}
+		if got.PendingWeaves != 1 {
+			t.Errorf("PendingWeaves = %d, want 1", got.PendingWeaves)
+		}
+	})
+
+	t.Run(name+"/record_weave_pick_non_channeler_returns_err", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Perrin"})
+		err := cr.RecordWeavePick(ctx, c.ID, "spark", 0)
+		if !errors.Is(err, ErrNotChanneler) {
+			t.Fatalf("err = %v, want ErrNotChanneler", err)
+		}
+	})
+
+	t.Run(name+"/record_weave_pick_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordWeavePick(context.Background(), 9999, "spark", 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/first_character_promoted_to_admin", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

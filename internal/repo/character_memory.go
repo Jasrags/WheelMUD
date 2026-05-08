@@ -287,6 +287,69 @@ func (r *MemoryCharacterRepo) RecordSkillRank(_ context.Context, id int64,
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordFeatPick(_ context.Context, id int64,
+	featID int32, newPending int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.Feats = append(c.Feats, featID)
+			c.PendingFeats = newPending
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordAbilityBump(_ context.Context, id int64,
+	ability AbilityKey, newScore int8, newPending int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			switch ability {
+			case AbilityStr:
+				c.Core.Abilities.Str.Current = newScore
+			case AbilityDex:
+				c.Core.Abilities.Dex.Current = newScore
+			case AbilityCon:
+				c.Core.Abilities.Con.Current = newScore
+			case AbilityInt:
+				c.Core.Abilities.Int.Current = newScore
+			case AbilityWis:
+				c.Core.Abilities.Wis.Current = newScore
+			case AbilityCha:
+				c.Core.Abilities.Cha.Current = newScore
+			default:
+				return ErrCharacterNotFound // shouldn't happen — verb refuses earlier
+			}
+			c.PendingAbilityBumps = newPending
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+func (r *MemoryCharacterRepo) RecordWeavePick(_ context.Context, id int64,
+	weaveID string, newPending int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if c.Channeling == nil {
+				return ErrNotChanneler
+			}
+			cp := *c.Channeling
+			cp.WeavesKnownIDs = append([]string(nil), c.Channeling.WeavesKnownIDs...)
+			cp.WeavesKnownIDs = append(cp.WeavesKnownIDs, weaveID)
+			c.Channeling = &cp
+			c.PendingWeaves = newPending
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

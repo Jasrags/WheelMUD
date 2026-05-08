@@ -245,6 +245,36 @@ type CharacterRepo interface {
 	RecordSkillRank(ctx context.Context, id int64,
 		skillID int32, newRanks int8, isClassSkill bool,
 		newPendingSkillPoints int32) error
+	// RecordFeatPick appends a single feat hash to feats_json and
+	// stamps the new pending_feats balance. Phase E #25 (`pick feat`).
+	// Caller computes the absolute new pending value. The feats_json
+	// column is rewritten with the appended entry. Verb layer
+	// enforces duplicate-pick + empty-pool refusals before this call.
+	// Returns ErrCharacterNotFound when no row matches id.
+	RecordFeatPick(ctx context.Context, id int64,
+		featID int32, newPendingFeats int32) error
+	// RecordAbilityBump increments one ability's Current score by 1
+	// and stamps the new pending_ability_bumps balance. Phase E #25
+	// (`bump <abil>`). The ability column written is selected by the
+	// AbilityKey enum. Caller passes the absolute new score so the
+	// repo doesn't need to read-modify-write. Verb layer enforces
+	// the cap-at-20 + empty-pool refusals before this call.
+	// Returns ErrCharacterNotFound when no row matches id.
+	RecordAbilityBump(ctx context.Context, id int64,
+		ability AbilityKey, newScore int8,
+		newPendingAbilityBumps int32) error
+	// RecordWeavePick appends a weave id to channeling_json's
+	// WeavesKnownIDs slice and stamps the new pending_weaves balance.
+	// Phase E #25 (`learn weave`). Caller computes the absolute new
+	// pending value. The channeling_json column is rewritten with
+	// the appended entry; the row's existing Channeling sub-record
+	// must be non-nil (verb layer refuses non-channelers). Verb
+	// layer enforces affinity + duplicate-pick + empty-pool refusals
+	// before this call. Returns ErrCharacterNotFound when no row
+	// matches id; ErrNotChanneler when the row's channeling_json is
+	// nil (defense-in-depth — should be unreachable from verb).
+	RecordWeavePick(ctx context.Context, id int64,
+		weaveID string, newPendingWeaves int32) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.
@@ -294,4 +324,44 @@ var (
 	// write. Verbs surface this as "your balance changed, try again"
 	// and let the player re-issue the command.
 	ErrCoinConflict = errors.New("repo: coin version conflict")
+
+	// ErrNotChanneler is returned by RecordWeavePick when the row's
+	// channeling_json is nil. Defense-in-depth — the verb layer
+	// should already have refused non-channelers before the repo
+	// call.
+	ErrNotChanneler = errors.New("repo: character is not a channeler")
 )
+
+// AbilityKey selects one of the six ability scores for
+// RecordAbilityBump. Values are stable (do not reorder) — the SQLite
+// implementation switches on these to pick the column to update.
+type AbilityKey uint8
+
+const (
+	AbilityStr AbilityKey = iota
+	AbilityDex
+	AbilityCon
+	AbilityInt
+	AbilityWis
+	AbilityCha
+)
+
+// String returns the lower-case three-letter ability token, useful for
+// audit args and log output.
+func (a AbilityKey) String() string {
+	switch a {
+	case AbilityStr:
+		return "str"
+	case AbilityDex:
+		return "dex"
+	case AbilityCon:
+		return "con"
+	case AbilityInt:
+		return "int"
+	case AbilityWis:
+		return "wis"
+	case AbilityCha:
+		return "cha"
+	}
+	return "?"
+}

@@ -696,6 +696,12 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewLearn(characters, chargenCatalog, audits)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewFeat(characters, chargenCatalog, audits)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewBump(characters, audits)); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
