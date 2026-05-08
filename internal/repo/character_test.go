@@ -489,6 +489,38 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_xp_debt_roundtrips", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Rand"})
+		if c.XPDebt != 0 {
+			t.Fatalf("fresh XPDebt = %d, want 0", c.XPDebt)
+		}
+		if err := cr.RecordXPDebt(ctx, c.ID, 1234); err != nil {
+			t.Fatalf("RecordXPDebt: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Rand")
+		if got.XPDebt != 1234 {
+			t.Errorf("XPDebt after set = %d, want 1234", got.XPDebt)
+		}
+		if err := cr.RecordXPDebt(ctx, c.ID, 0); err != nil {
+			t.Fatalf("RecordXPDebt clear: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Rand")
+		if got.XPDebt != 0 {
+			t.Errorf("XPDebt after clear = %d, want 0", got.XPDebt)
+		}
+	})
+
+	t.Run(name+"/record_xp_debt_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordXPDebt(context.Background(), 9999, 100)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/record_feat_pick_appends_and_decrements", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

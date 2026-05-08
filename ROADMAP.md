@@ -943,10 +943,30 @@ will need on top of those tables.
       keys on mob entries. All three additions are best-effort:
       a SetParent failure logs and continues, an empty / malformed
       `GoldDice` produces no pile, `XPValue == 0` is the silent
-      fallback. Still pending: durable decay (persist scheduled
-      sweeps across restart), player death (despawn →
-      bound/temple room respawn → XP-debt penalty), mob respawn
-      via §9 zone reset (depends on Phase F).
+      fallback.
+      **Player death + respawn + XP-debt landed 2026-05-08** —
+      Phase D §19 player-death slice. `combat.handleCharacterDeath`
+      now fires when a character's HP hits zero (resolveAction's
+      death gate dispatches by ActorKind). Pipeline: heal to
+      HPMax, clear `CondDying|CondUnconscious` + position_flags
+      via `RecordCore`, move to `BoundRoomID` via `RecordRoom`,
+      stack an XP-debt delta = `(xp - XPForLevel(level)) / 10`
+      (10% of current XP-into-level, clamped at 0). Migration
+      0041 adds `characters.xp_debt`. Combat events
+      `CharacterDied` (death-room peer broadcast + "You die!"
+      private) and `CharacterRespawned` (subscriber stamps the
+      session room, renders the bound room, broadcasts to peers
+      in the new room) wire it end-to-end. Future XP awards
+      drain debt off the top via
+      `combat.ApplyXPAward(award, debt) → (gain, newDebt)`;
+      `CombatXPAwarded` carries both the net gain and the
+      `DebtTaken` share. The `xp` verb shows the debt line when
+      non-zero. No tick-scheduled decay — debt clears through
+      play. Inventory / equipment / coin stay with the player;
+      no player corpse spawned. Still pending: durable corpse
+      decay, mob respawn via §9 zone reset (depends on Phase
+      F), `bind` verb to retarget BoundRoomID, drop-on-death
+      toggle if play-tests demand it.
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in

@@ -1,0 +1,18 @@
+-- 0041_characters_xp_debt.sql
+--
+-- Phase D §19 — player death + respawn. Adds a passive XP-debt
+-- counter on `characters` that's deducted off the top of future XP
+-- awards (kill rewards, quest payouts) until it clears. There's no
+-- tick-scheduled decay; debt clears through play.
+--
+-- Semantics: 0 means "no debt"; positive values are owed. Cleared
+-- by the next-XP-award offset arithmetic in
+-- combat.ApplyXPAward(award, debt) → (gain, newDebt).
+--
+-- Placement: strictly between `pending_weaves` (0039) and
+-- `auth_level`. The auth_level column MUST stay the very last entry
+-- in charPlayerColumns / charPlayerValues / charPlayerScanDest for
+-- the SQLite first-character bootstrap CASE in CharacterRepo.Create.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+ALTER TABLE characters ADD COLUMN xp_debt INTEGER NOT NULL DEFAULT 0;

@@ -433,6 +433,20 @@ func (r *SQLiteCharacterRepo) RecordXP(ctx context.Context, id int64, xp int64) 
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordXPDebt(ctx context.Context, id int64, debt int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET xp_debt = ? WHERE id = ?`,
+		debt, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record xp debt: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordPromptTemplate(ctx context.Context, id int64, tmpl string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters SET prompt_template = ? WHERE id = ?`,
@@ -584,7 +598,8 @@ func scanCharacter(s scanner) (Character, error) {
 		&j.questLog, &j.dialogueState, &j.equipment, &j.inventory,
 		&j.channelSettings, &channelingNS,
 		&newsSeenSecs, &pvpInt,
-		&c.PendingFeats, &c.PendingSkillPoints, &c.PendingAbilityBumps, &c.PendingWeaves)...)
+		&c.PendingFeats, &c.PendingSkillPoints, &c.PendingAbilityBumps, &c.PendingWeaves,
+		&c.XPDebt)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err

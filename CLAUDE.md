@@ -283,6 +283,24 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   columns atomically. Death-pipeline rule: per-item / per-roll
   failures log via `slog.Warn` and continue so the despawn still
   resolves.
+  0041 added `characters.xp_debt INTEGER NOT NULL DEFAULT 0`
+  backing Phase D §19 player-death — passive XP-debt drained off
+  the top of future XP awards via
+  `combat.ApplyXPAward(award, debt) → (gain, newDebt)`. Slots
+  strictly between `pending_weaves` (0039) and `auth_level`
+  (must remain trailing for the bootstrap CASE). Debt is set on
+  death (`combat.handleCharacterDeath`, delta =
+  `(xp - XPForLevel(level)) / 10`) and decremented by the
+  kill-XP loop. New repo method
+  `RecordXPDebt(ctx, id, debt int64)` — absolute write, mirrors
+  `RecordXP`. New combat events: `CharacterDied` and
+  `CharacterRespawned`; `CombatXPAwarded` extended with
+  `DebtTaken int64`. Cmd-layer subscribers in
+  `cmd/server/main.go` broadcast death/respawn lines and stamp
+  the victim's session via `Session.SetCurrentRoom` +
+  `cmd.RenderRoom` (the repo-side `RecordRoom` already
+  persisted the move). Player keeps inventory / equipment /
+  coin — no player corpse spawned.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

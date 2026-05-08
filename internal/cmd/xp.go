@@ -75,6 +75,18 @@ func renderXP(s *telnet.Session, ch repo.Character) error {
 		}
 	}
 
+	if ch.XPDebt > 0 {
+		if err := display.FieldRow(s, "XP debt",
+			fmt.Sprintf("%d", ch.XPDebt), xpLabelGutter); err != nil {
+			return err
+		}
+		if err := s.WriteString(
+			"  {{(drained off your next XP awards before they credit)}}::gray\r\n",
+		); err != nil {
+			return err
+		}
+	}
+
 	if pending := level - classTotal; pending > 0 {
 		word := "level-up"
 		if pending != 1 {

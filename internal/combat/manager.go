@@ -504,12 +504,17 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		})
 	}
 
-	// Slice 1 of #19: only mob death triggers the corpse + XP path.
-	// Player death (#19 slice 2) sticks with the existing HP write-
-	// back; the character is unconscious / disabled but still in the
-	// fight order until respawn lands.
-	if defCore.HPCurrent <= 0 && action.Target.Kind == ActorKindMob {
-		m.handleMobDeath(ctx, actor, action.Target)
+	// Death dispatch. Mob death follows the corpse + XP pipeline
+	// (#19 slice 1 + looting); character death follows the
+	// respawn + XP-debt pipeline (#19 slice 2). Both run outside
+	// any caller-held lock; m.mu is taken inside each handler.
+	if defCore.HPCurrent <= 0 {
+		switch action.Target.Kind {
+		case ActorKindMob:
+			m.handleMobDeath(ctx, actor, action.Target)
+		case ActorKindCharacter:
+			m.handleCharacterDeath(ctx, actor, action.Target)
+		}
 	}
 }
 
@@ -726,18 +731,43 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 				"char", ref.ID, "error", err)
 			continue
 		}
-		newTotal := ch.XP + amount
-		if err := m.chars.RecordXP(ctx, ref.ID, newTotal); err != nil {
-			slog.Warn("combat: xp write-back failed",
-				"char", ref.ID, "error", err)
-			continue
+		// Phase D §19: drain any outstanding XP debt off the top of
+		// the gross share before crediting the player. `gain` is the
+		// net XP added to the row; `paid` is the share that went to
+		// debt (for the audit / event surface).
+		//
+		// TOCTOU: this is two non-atomic UPDATEs (RecordXP +
+		// RecordXPDebt) computed off a GetByID snapshot. Safe under
+		// single-session-per-account because no other path mutates
+		// these columns concurrently. When multi-session lands, swap
+		// to a single CAS-style UPDATE keyed off a version token
+		// (mirroring coin_version / 0032). Tracked in the existing
+		// optimistic_lock_followups / progression_24_followups memos.
+		gain, newDebt := ApplyXPAward(amount, ch.XPDebt)
+		paid := ch.XPDebt - newDebt
+		if gain > 0 {
+			if err := m.chars.RecordXP(ctx, ref.ID, ch.XP+gain); err != nil {
+				slog.Warn("combat: xp write-back failed",
+					"char", ref.ID, "error", err)
+				continue
+			}
+		}
+		if paid > 0 {
+			if err := m.chars.RecordXPDebt(ctx, ref.ID, newDebt); err != nil {
+				slog.Warn("combat: xp debt write-back failed",
+					"char", ref.ID, "error", err)
+				// Continue: the gross gain (if any) already
+				// landed; the debt counter just stays high. The
+				// player gets the next chance to drain it.
+			}
 		}
 		if m.bus != nil {
 			m.bus.Publish(ctx, CombatXPAwarded{
-				RoomID:  roomID,
-				Awardee: ref,
-				Amount:  amount,
-				Killed:  victim,
+				RoomID:    roomID,
+				Awardee:   ref,
+				Amount:    gain,
+				DebtTaken: paid,
+				Killed:    victim,
 			})
 		}
 	}

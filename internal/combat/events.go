@@ -96,14 +96,44 @@ type CombatDeath struct {
 
 // CombatXPAwarded fires once per attacker that earns a share of the
 // kill XP. Subscribers (combat prompt, level-up watcher, audit log)
-// can observe per-actor awards without re-deriving the tally. Total
-// is the value added to the character's xp column; the new running
-// total is not carried.
+// can observe per-actor awards without re-deriving the tally. Amount
+// is the net value added to the character's xp column AFTER any
+// XP-debt offset (Phase D §19 player-death slice). DebtTaken is how
+// much of the gross share went to draining xp_debt instead — zero
+// when the awardee had no debt. The two add up to the gross share
+// from `allocateXP`.
 type CombatXPAwarded struct {
-	RoomID  int64
-	Awardee ActorRef
-	Amount  int64
-	Killed  ActorRef
+	RoomID    int64
+	Awardee   ActorRef
+	Amount    int64
+	DebtTaken int64
+	Killed    ActorRef
+}
+
+// CharacterDied fires when a player character's HP falls to zero or
+// below and the death handler has run. Published before the room
+// transfer so subscribers in the death room see the victim's
+// CurrentRoomID still pointing at the original room. Cmd-layer
+// subscribers broadcast the "X falls dead!" line via WriteAsync to
+// peers in DeathRoomID, then ignore the dying player's own session
+// (which gets the "You die!" line from the dispatcher path).
+type CharacterDied struct {
+	DeathRoomID int64
+	Victim      ActorRef
+	Killer      ActorRef
+	BoundRoomID int64
+	XPDebtAdded int64
+}
+
+// CharacterRespawned fires when a dead player has been moved to
+// their BoundRoomID, healed, and cleared of death-related conditions.
+// Cmd-layer subscribers broadcast "X appears, eyes hollow." to peers
+// in RoomID via WriteAsync, and write "You die!" + the bound-room
+// look to the victim's session.
+type CharacterRespawned struct {
+	PrevRoomID int64
+	RoomID     int64
+	Character  ActorRef
 }
 
 // CombatParry fires when a defender's parrying stance deflects an

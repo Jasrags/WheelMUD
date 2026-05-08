@@ -137,6 +137,14 @@ type Character struct {
 	PendingAbilityBumps int32
 	PendingWeaves       int32
 
+	// XPDebt is a passive penalty drained off the top of the next
+	// XP awards the character receives (Phase D §19 player-death
+	// slice). Zero means no debt; positive values are owed.
+	// `combat.ApplyXPAward(award, debt) → (gain, newDebt)` is the
+	// arithmetic the kill-XP loop runs before crediting the player.
+	// No tick-scheduled decay — debt clears through play.
+	XPDebt int64
+
 	// AuthLevel mirrors telnet.AuthLevel as a plain uint8 to avoid
 	// coupling the repo package to telnet. Use the AuthLevel*
 	// constants below. postauth.promoteToGame copies this onto
@@ -217,6 +225,13 @@ type CharacterRepo interface {
 	// new absolute total, not a delta. Returns ErrCharacterNotFound
 	// when no row matches id.
 	RecordXP(ctx context.Context, id int64, xp int64) error
+	// RecordXPDebt persists the character's XP-debt counter
+	// (Phase D §19 player-death slice). Mirrors RecordXP — the
+	// caller passes the new absolute value, not a delta. Set on
+	// player death (`combat.handleCharacterDeath`) and decremented
+	// by the kill-XP loop via `combat.ApplyXPAward`. Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordXPDebt(ctx context.Context, id int64, debt int64) error
 	// RecordPromptTemplate persists the per-character prompt override.
 	// Empty tmpl means "fall back to the server default". Returns
 	// ErrCharacterNotFound when no row matches id.

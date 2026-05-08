@@ -193,6 +193,22 @@ func relocate(ctx context.Context, s *telnet.Session, roomID int64, characters r
 	}
 }
 
+// LookupByCharacterID walks the registry snapshot for a session
+// whose CharacterID matches id. Returns nil if not found. Linear
+// scan; same scaling notes as lookupByCharacter below. Exported for
+// the §19 player-death subscriber in cmd/server/main.go which needs
+// to find the dying player's session by id (the event-bus payload
+// carries an ActorRef, not a name).
+func LookupByCharacterID(sessions *session.Registry, id int64) *telnet.Session {
+	for _, s := range sessions.Snapshot() {
+		charID, _, _ := s.InWorld()
+		if charID == id {
+			return s
+		}
+	}
+	return nil
+}
+
 // lookupByCharacter walks the registry snapshot for a session whose
 // CharacterName matches name (case-insensitive). Returns nil if not
 // found. Linear scan; fine while server population is small. A name

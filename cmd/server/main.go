@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -274,6 +275,21 @@ func main() {
 			}
 		}
 	}
+	// combatBroadcastExcept is the §19 player-death variant that
+	// skips one specific session — used so the dying player doesn't
+	// see "X falls dead!" alongside their "You die!" line, and the
+	// respawned player doesn't see "X appears" stacked on top of
+	// their own bound-room render.
+	combatBroadcastExcept := func(roomID int64, msg string, exclude *telnet.Session) {
+		for _, peer := range sessions.Snapshot() {
+			if peer == nil || peer == exclude || peer.CurrentRoomID != roomID {
+				continue
+			}
+			if err := peer.WriteAsync(msg); err != nil {
+				slog.Debug("combat: broadcast write failed", "error", err)
+			}
+		}
+	}
 	eventbus.Subscribe[combat.CombatStance](bus, func(ctx context.Context, ev combat.CombatStance) {
 		name := combatActorName(ctx, ev.Actor, characters, mobs)
 		switch ev.Kind {
@@ -297,6 +313,52 @@ func main() {
 		}
 		name := combatActorName(ctx, ev.Actor, characters, mobs)
 		combatBroadcast(ev.RoomID, "{{"+name+" tries to flee but is cut off!}}::yellow\r\n")
+	})
+
+	// Phase D §19 player-death subscribers. CharacterDied broadcasts
+	// the death-room line + a "You die!" private message to the
+	// dying player. CharacterRespawned then stamps the victim's
+	// session room, renders the bound room, and broadcasts to peers
+	// in the new room. The repo layer (handleCharacterDeath) already
+	// persisted the room change via RecordRoom; the subscriber just
+	// updates the live in-memory session.
+	eventbus.Subscribe[combat.CharacterDied](bus, func(ctx context.Context, ev combat.CharacterDied) {
+		victim := cmd.LookupByCharacterID(sessions, ev.Victim.ID)
+		name := combatActorName(ctx, ev.Victim, characters, mobs)
+		// Broadcast "X falls dead!" to peers — but skip the dying
+		// player so they don't see it alongside "You die!" on the
+		// next line. Their CurrentRoomID is still DeathRoomID at
+		// this point (SetCurrentRoom runs in the respawn handler).
+		combatBroadcastExcept(ev.DeathRoomID,
+			"{{"+name+" falls dead!}}::red|bold\r\n", victim)
+		if victim != nil {
+			msg := "{{You die!}}::red|bold"
+			if ev.XPDebtAdded > 0 {
+				msg += fmt.Sprintf("  {{(+%d xp debt)}}::gray", ev.XPDebtAdded)
+			}
+			if err := victim.WriteAsync(msg); err != nil {
+				slog.Debug("character died: victim notify failed",
+					"char", ev.Victim.ID, "error", err)
+			}
+		}
+	})
+	eventbus.Subscribe[combat.CharacterRespawned](bus, func(ctx context.Context, ev combat.CharacterRespawned) {
+		victim := cmd.LookupByCharacterID(sessions, ev.Character.ID)
+		name := combatActorName(ctx, ev.Character, characters, mobs)
+		if victim != nil {
+			victim.SetCurrentRoom(ev.RoomID)
+			// Detached context so the render isn't bound to whatever
+			// resolveAction's ctx was; mirrors transferToCaller.
+			if err := cmd.RenderRoom(context.Background(), victim, rooms, exits, items, mobs, clock); err != nil {
+				slog.Debug("character respawned: render failed",
+					"char", ev.Character.ID, "error", err)
+			}
+		}
+		// Skip the respawned player on the arrival broadcast — they
+		// just got their own bound-room render above; "X appears,
+		// eyes hollow." stacked on top would be noise.
+		combatBroadcastExcept(ev.RoomID,
+			"{{"+name+" appears, eyes hollow.}}::cyan\r\n", victim)
 	})
 
 	// srv is constructed before buildRegistry so the shutdown / reboot
