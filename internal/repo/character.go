@@ -233,6 +233,18 @@ type CharacterRepo interface {
 	// shape into LevelUpFields; the repo persists everything in one
 	// UPDATE. Returns ErrCharacterNotFound when no row matches id.
 	RecordLevelUp(ctx context.Context, id int64, f LevelUpFields) error
+	// RecordSkillRank atomically writes a single skill's rank entry
+	// and stamps the new pending_skill_points balance. Phase E #24
+	// (`learn` verb). The caller computes the new absolute pending
+	// value (mirrors RecordCoin / RecordXP — no read-modify-write
+	// race). The skills_json column is fully rewritten with the
+	// upserted entry; new keys add, existing keys overwrite ranks +
+	// IsClassSkill. newRanks must be ≥ 0; the verb layer enforces
+	// per-skill caps (level+3) and budget refusals before this call.
+	// Returns ErrCharacterNotFound when no row matches id.
+	RecordSkillRank(ctx context.Context, id int64,
+		skillID int32, newRanks int8, isClassSkill bool,
+		newPendingSkillPoints int32) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.

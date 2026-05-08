@@ -267,6 +267,26 @@ func (r *MemoryCharacterRepo) RecordLevelUp(_ context.Context, id int64, f Level
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordSkillRank(_ context.Context, id int64,
+	skillID int32, newRanks int8, isClassSkill bool, newPending int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if c.Skills == nil {
+				c.Skills = make(map[int32]creature.SkillRanks, 1)
+			}
+			c.Skills[skillID] = creature.SkillRanks{
+				Ranks:        newRanks,
+				IsClassSkill: isClassSkill,
+			}
+			c.PendingSkillPoints = newPending
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

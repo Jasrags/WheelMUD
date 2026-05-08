@@ -444,6 +444,51 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_skill_rank_upserts_and_decrements", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{
+			AccountID: acc.ID, Name: "Nynaeve",
+			ClassLevels:        map[creature.Class]int8{creature.ClassWilder: 1},
+			PendingSkillPoints: 5,
+			Skills:             map[int32]creature.SkillRanks{42: {Ranks: 2, IsClassSkill: true}},
+		})
+		// Bump existing skill 42 from 2 → 3 (cost 1).
+		if err := cr.RecordSkillRank(ctx, c.ID, 42, 3, true, 4); err != nil {
+			t.Fatalf("RecordSkillRank existing: %v", err)
+		}
+		got, _ := cr.FindByName(ctx, "Nynaeve")
+		if got.Skills[42].Ranks != 3 {
+			t.Errorf("skill 42 ranks = %d, want 3", got.Skills[42].Ranks)
+		}
+		if got.PendingSkillPoints != 4 {
+			t.Errorf("PendingSkillPoints = %d, want 4", got.PendingSkillPoints)
+		}
+		// Add a brand-new skill 99 with 2 ranks (cost 2).
+		if err := cr.RecordSkillRank(ctx, c.ID, 99, 2, true, 2); err != nil {
+			t.Fatalf("RecordSkillRank new: %v", err)
+		}
+		got, _ = cr.FindByName(ctx, "Nynaeve")
+		if got.Skills[99].Ranks != 2 || !got.Skills[99].IsClassSkill {
+			t.Errorf("skill 99 = %+v, want {Ranks:2, IsClassSkill:true}", got.Skills[99])
+		}
+		if got.Skills[42].Ranks != 3 {
+			t.Errorf("skill 42 clobbered: %+v", got.Skills[42])
+		}
+		if got.PendingSkillPoints != 2 {
+			t.Errorf("PendingSkillPoints = %d, want 2", got.PendingSkillPoints)
+		}
+	})
+
+	t.Run(name+"/record_skill_rank_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordSkillRank(context.Background(), 9999, 1, 1, true, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/first_character_promoted_to_admin", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

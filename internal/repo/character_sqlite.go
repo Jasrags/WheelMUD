@@ -206,6 +206,52 @@ func (r *SQLiteCharacterRepo) RecordEquipment(ctx context.Context, id int64, eq 
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordSkillRank(ctx context.Context, id int64,
+	skillID int32, newRanks int8, isClassSkill bool, newPending int32) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin skill rank tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var skillsJSON string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT skills_json FROM characters WHERE id = ?`, id,
+	).Scan(&skillsJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCharacterNotFound
+		}
+		return fmt.Errorf("read skills: %w", err)
+	}
+
+	skills := map[int32]creature.SkillRanks{}
+	if err := jsonUnmarshalString(skillsJSON, &skills); err != nil {
+		return fmt.Errorf("unmarshal skills: %w", err)
+	}
+	skills[skillID] = creature.SkillRanks{
+		Ranks:        newRanks,
+		IsClassSkill: isClassSkill,
+	}
+	js, err := jsonMarshalString(skills)
+	if err != nil {
+		return fmt.Errorf("marshal skills: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE characters
+		   SET skills_json = ?, pending_skill_points = ?
+		 WHERE id = ?`,
+		js, newPending, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record skill rank: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCharacterNotFound
+	}
+	return tx.Commit()
+}
+
 func (r *SQLiteCharacterRepo) RecordCoin(ctx context.Context, id int64, coin, bank currency.Amount, expectedVersion int64) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters

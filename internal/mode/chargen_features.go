@@ -22,7 +22,6 @@ package mode
 
 import (
 	"fmt"
-	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,20 +40,10 @@ const (
 	minFirstLevelSkillPoints = 4
 )
 
-// catalogIDInt32 stably derives an int32 key from a catalog string id
-// via FNV-32a. The Character schema keys feats and skills by int32
-// (creature.Character.Feats / .Skills) — until those tables are
-// authored as proper enums, hashing the catalog id keeps the chargen
-// output stable across runs without a manual numbering table.
-//
-// FNV-32 has tiny collision probability over our ~30-skill / ~25-feat
-// catalogs; if a collision ever shows up at boot the catalog loader
-// can grow a duplicate-id-hash check.
-func catalogIDInt32(id string) int32 {
-	h := fnv.New32a()
-	h.Write([]byte(id))
-	return int32(h.Sum32())
-}
+// catalogIDInt32 is a thin alias on chargen.HashID kept here so the
+// chargen substep call sites stay terse. The cmd-layer spend verbs
+// (`learn`, future `pick feat`) call chargen.HashID directly.
+func catalogIDInt32(id string) int32 { return chargen.HashID(id) }
 
 // firstLevelSkillBudget returns (max(1, class.SkillPoints + IntMod)) × 4.
 // The min-1-per-level rule applies *before* multiplication — a low-Int
