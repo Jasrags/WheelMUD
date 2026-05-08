@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1350 -->
+<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt + mob respawn anchors | Token estimate: ~1370 -->
 
 # Architecture
 
@@ -62,9 +62,9 @@ account is enforced via a process-level session registry.
 │                         SkillRanks shared by characters + mobs      │
 │   internal/currency/    Amount type + denomination conversions      │
 │   internal/world/       YAML loader (parse → validate → tx-sync),   │
-│                         Restocker (areaReset bucket), Clock         │
+│                         Restocker + Respawner (areaReset), Clock    │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/db/            SQLite Open + 41 embedded migrations        │
+│ internal/db/            SQLite Open + 42 embedded migrations        │
 ├────────────────────────────────────────────────────────────────────┤
 │ telnet/                 protocol + I/O + mode/registry/dispatch     │
 │   server.go             RunSession, readLoop, dispatcher            │
@@ -89,7 +89,7 @@ input to `ComputeLevelUp`); `repo` does NOT import `progression` —
 ## Boot
 
 ```
-main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-0041
+main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-0042
      ─► repo.NewSQLite{Account, Character, AccountLogin,
         Room, Exit, Item, MobTemplate, MobInstance, MobTrail,
         Zone, Channel, Channeling, Shop, Banker, Trainer,
@@ -98,7 +98,8 @@ main ─► db.Open(DB_DSN)                    runs embedded migrations 0001-004
      ─► world.LoadAndSync(ctx, conn, world.SourceFS())
                                             seeds rooms/exits/items/mobs/
                                             shops/bankers/trainers/zones
-     ─► world.NewClock(state) + world.NewRestocker(...)
+     ─► world.NewClock(state) + world.NewRestocker(...) + world.NewRespawner(...)
+        respawner wired to tick.Buckets.AreaReset
      ─► combat.NewManager(...) + group.NewManager()
         combatMgr.SetGroupResolver(groups.MembersInRoom)
      ─► session.NewRegistry()               single-session-per-account
@@ -256,7 +257,7 @@ drained by player-driven spend verbs. Level-up cycle is end-to-end functional.
 |---|---|---|
 | `Combat` | 4 s | `combat.Manager.Tick` per active room |
 | `Regen` | 6 s | (HP/subdual regen — pending) |
-| `AreaReset` | 5 min | `world.Restocker` (refill sub-max shop_stock) |
+| `AreaReset` | 5 min | `world.Restocker` (refill sub-max shop_stock); `world.Respawner` (re-spawn dead YAML mobs once `now - zones.last_reset_ts >= reset_interval_s`; only templates with `home_room_id != 0`) |
 | `Save` | 30 s | `persist.Manager` autosave (lastPlayed, ticks counter) |
 
 ## Cross-session output rule

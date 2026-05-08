@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1600 -->
+<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt + mob respawn anchors (0042) | Token estimate: ~1620 -->
 
 # Data
 
@@ -33,7 +33,7 @@ SQLite-backed repos that modes and commands consume.
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-## Migrations (0001-0041)
+## Migrations (0001-0042)
 
 | # | File | Purpose |
 |---|---|---|
@@ -78,6 +78,7 @@ SQLite-backed repos that modes and commands consume.
 | 0039 | `characters_pending_pools` | pending_feats / pending_skill_points / pending_ability_bumps / pending_weaves (Phase E #23 slice 4) |
 | 0040 | `create_shops` | (legacy: absorbed into 0030) |
 | 0041 | `characters_xp_debt` | xp_debt INT NOT NULL DEFAULT 0 — stacks on character death via `DeathDebt(curXP, curLevel) → debt` (Phase D #19) |
+| 0042 | `mob_respawn_anchors` | `mob_templates.home_room_id` (0=manual spawn, never respawned) + `zones.last_reset_ts` + index on `mob_templates.respawn_zone_reset_id` — backs `internal/world.Respawner` (Phase D #19) |
 
 Runner (`internal/db/db.go::Migrate`):
 - Ensures `schema_migrations(version, applied_at)` exists.
@@ -98,8 +99,8 @@ Pragmas on `Open`: `foreign_keys=ON`, `journal_mode=WAL`,
 | `rooms` | 0003/0006/0012/0013/0016/0020/0025/0026 | `id, external_id, zone_id, name, short_desc, long_desc, flags, sector, light_level, extra_descs_json, nomap, coords_auto, coord_x, coord_y, coord_z` |
 | `exits` | 0003/0007/0014 | `id, from_room_id, to_room_id, direction CHECK, door_flags, key_external_id, lock_difficulty, description` |
 | `items` | 0003/0006/0015/0017/0028 | `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id, type, weight, value, quality, flags, stats_json` — **location invariant:** exactly one of (`room_id`, `owner_character_id`, `parent_item_id`) is non-null |
-| `zones` | 0016 | `id, external_id, name, builder, level_range, reset_interval_s, reset_mode, climate, ambient` |
-| `mob_templates` | 0008/0022 | `id, external_id, name, name_lower, short_desc` + Core + mob fields + `wander_chance` |
+| `zones` | 0016/0042 | `id, external_id, name, builder, level_range, reset_interval_s, reset_mode, climate, ambient, last_reset_ts` |
+| `mob_templates` | 0008/0022/0040/0042 | `id, external_id, name, name_lower, short_desc` + Core + mob fields + `wander_chance, xp_value, respawn_zone_reset_id, home_room_id` |
 | `mob_instances` | 0008 | `id, template_id, room_id, created_at` (instance state) |
 | `mob_trails` | 0021 | `id, mob_id, room_id, ts` — per-mob movement history for `track` |
 | `channeling` | 0008 | polymorphic via `(owner_kind, owner_id)`; gender_source / channeler_type / affinities / weaves_known / slots / madness / stilled / bonded_* — characters now also persist via `characters.channeling_json` (0033) for chargen branch |
