@@ -933,26 +933,48 @@ will need on top of those tables.
       penalty), mob respawn via §9 zone reset (depends on Phase F),
       looting (`get from corpse` already works via existing
       container plumbing).
-- [~] PvE vs PvP rules and safe zones — `pvp` flag on character
+- [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in
-      still blocked. Newbie level cap (e.g. <10) immune.
-      **Slice 1 landed 2026-05-07** — migration 0037 added
-      `characters.pvp` (default 0); `pvp` verb (`pvp [on|off]`)
-      toggles via `CharacterRepo.RecordPvP`; `attack <player>`
-      resolves a peer in the same room from `session.Registry`
-      and runs the guard order (nopvp room → attacker newbie →
-      target newbie → attacker opt-in → target opt-in). Newbie
-      cap is `NewbiePvPLevelCap = 10`. `characterLevel(ch)`
-      sums `ClassLevels` values. Pending: PvP tag in `who`,
-      reverse-broadcast filter for the target, ordinal player
-      keywords (`2.alice`), `consider <player>`.
-- [ ] Group / party mechanics — `group <name>` invites, `follow
-      <name>` / `unfollow`, leader's moves auto-pull followers
-      (subject to AC/exit checks). XP split among in-room group
-      members within ±5 levels with a small bonus for grouping.
-      `assist <name>` joins their current target; `consider <name>`
-      hints at relative power.
+      still blocked. Newbie level cap (<10) immune. **Closed
+      2026-05-07** — Phase D #21 across 4 slices: (1) migration
+      0037 + `pvp` verb + `attack <player>` guard order (nopvp
+      room → attacker newbie → target newbie → attacker opt-in →
+      target opt-in); (2) `who` PvP tag; (3) defender-side reverse
+      broadcast on PvP attacks; (4) `MatchPlayer` in
+      `internal/cmd/keyword.go` mirroring `MatchItem`/`MatchMob`
+      for ordinal targeting (`attack 2.alice`). Newbie cap is
+      `cmd.NewbiePvPLevelCap = 10`; `characterLevel(ch)` sums
+      `ClassLevels` values. Pending follow-ups (deferred): tab-
+      completion for `attack` player targets, `consider <player>`.
+- [x] Group / party mechanics — `group <name>` invites, `follow
+      <name>` / `unfollow`, leader's moves auto-pull followers,
+      shared XP split among in-room party members. **Closed
+      2026-05-07** — Phase D #22 across 4 slices:
+      (1) `internal/group` package — `Group` aggregate (Leader +
+      Members map), `Manager` keyed by leader CharacterID with
+      reverse `byCharacter` index, in-memory state,
+      `MaxGroupSize = 6`, leader-leaves-disbands. New `group
+      <invite|accept|decline|leave|kick|disband>` verb plus bare
+      `group` roster. Logout cleanup wired through
+      `handleConnection`'s teardown defer. (2) Same-group PvP
+      refusal: `pvpRefusalReason` gains a `sameGroup bool`
+      parameter and a new gate (priority 2, between NoPVP and
+      newbie cap) — "X is a comrade — you won't strike them."
+      (3) `follow <player>` + `unfollow` verbs plus chain-on-move.
+      New `Session.followingID` (crossMu-guarded). Move verb
+      re-runs `moveDir` for every co-located peer following the
+      leader; recursion bounded by `followDepth`; on per-follower
+      failure (locked door, sector gate, missing exit) the
+      relationship clears with a "couldn't keep up" notice.
+      (4) Shared XP split. New `combat.GroupResolver` typed
+      callback + `Manager.SetGroupResolver` setter
+      (mirrors `SetDecayer`/`SetFleeMover`); `expandTallyByGroup`
+      splits each character contributor's damage equally across
+      in-room party members (remainder credits to the dealer).
+      Pending follow-ups (deferred): `gtell`, leader succession,
+      invite expiry, cross-room follow, loot share, `assist`,
+      `consider`.
 
 ## 12. Skills, spells & progression
 
@@ -967,12 +989,29 @@ will need on top of those tables.
       (eleven from §9) supplies starting gear, languages, height-mod.
       All selected during character-create after the ability-score
       roll/buy step.
-- [ ] Skill tree with ranks / training — `character_skills`
+- [~] Skill tree with ranks / training — `character_skills`
       (`character_id`, `skill_id`, `ranks`, `is_class_skill`). Class-
       skill cap = `character_level + 3`; cross-class cap = ½ that.
       Skill points per level from class table (Int mod adds, ×4 at
       1st level). Skill checks roll `d20 + ranks + ability_mod +
       misc`. Caps and skill list live in `skills` table seed.
+      **Mid-game spend landed 2026-05-07** — Phase E #24. New
+      `learn` verb spends `pending_skill_points` (deposited at
+      level-up by `train` — see "Levels & XP curve" below).
+      `chargen.HashID` hoisted from `internal/mode/chargen_features.go`
+      so cmd-layer spend verbs share int32 keys with chargen-
+      persisted ranks. `repo.RecordSkillRank(ctx, id, skillID,
+      newRanks, isClassSkill, newPending)` — atomic UPSERT in a
+      sqlite TX (read skills_json → merge → UPDATE skills_json +
+      pending_skill_points). `learn <id|#> [n]` works anywhere
+      (no trainer required); allowed list = union of class-skills
+      across `ClassLevels` ∪ background skills; cap = `level + 3`;
+      cost = 1 pending point per rank. `learn info <id>` is
+      read-only. Refusals don't mutate or audit; success writes
+      one `learn` audit row. Pending: cross-class picks at half
+      rate (deferred per chargen V1 stance), prefix-disambiguation
+      for skill tokens, skill-check rolls (`d20 + ranks + mod`)
+      against skill DCs in combat / weave paths.
 - [ ] Weave (One Power) list with slot levels — replaces the
       generic spell/mana model. `weaves` table (id, name, level
       0–9, school/affinity (Air/Earth/Fire/Water/Spirit — multiple),
@@ -987,13 +1026,38 @@ will need on top of those tables.
       check), consumes a slot of that level (or higher), accrues
       `madness` for men, then resolves via the effect script (§15).
       No mana pool — slots refresh after 8h rest.
-- [ ] Levels & XP curve — d20 geometric XP table
-      (`xp(n) = 1000 × n × (n-1) / 2` style; cap level 20 v1, raise
-      later). Level-up grants: roll new HD for HP, +1 BAB by class
-      progression, save bumps, skill points, possibly a feat (every
-      3 levels) or ability increase (every 4), new class features
-      and (for channelers) new weave slots. Stored on character;
-      `train` command at a trainer NPC commits the level-up.
+- [x] Levels & XP curve — d20 geometric XP table
+      (`xp(n) = 1000 × n × (n-1) / 2`; cap level 20 v1). Level-up
+      grants: roll new HD for HP (deterministic avg + Con mod, no
+      full-heal), +1 BAB by class progression, save bumps, skill
+      points, possibly a feat (every 3 levels) or ability increase
+      (every 4), new class features and (for channelers) new weave
+      slots. Stored on character; `train` command at a trainer NPC
+      commits the level-up. **Closed 2026-05-07** — Phase E #23
+      across 4 slices: (1) `internal/progression` package with
+      `XPForLevel` / `LevelForXP` / `XPToNext` (MaxLevel=20) +
+      read-only `xp` verb showing pending levels.
+      (2) Migration 0038 `trainers` table (1:1 mob_template →
+      class id) + `repo.TrainerRepo` + optional `trainer:` YAML
+      block + `train` verb stub (resolver, no mutation).
+      (3) Level commit. `progression.ComputeLevelUp(ch, cat,
+      classKey) → LevelGains` (pure function — recomputes
+      ClassLevels + HP/MaxHP/BAB/Saves; no full-heal; multiclass
+      at-will via separate trainers; hard catalog-miss refusal).
+      `repo.RecordLevelUp(ctx, id, LevelUpFields)` atomically
+      writes the new totals; `train` audits on success.
+      (4) Pending pools. Migration 0039 added
+      `pending_feats` / `pending_skill_points` /
+      `pending_ability_bumps` / `pending_weaves` (int32 NOT NULL
+      DEFAULT 0). `LevelGains` extended with per-pool deltas at
+      d20 cadence (feat per 3 levels, ability per 4, skill =
+      max(1, class.SkillPoints + IntMod), weave for channelers).
+      `RecordLevelUp` accumulates the four counters in the same
+      UPDATE; `train` appends a single cyan "You gained N feat
+      pick, M skill points." line on success, suppressed when no
+      pool grew. Spend side: `learn` shipped as #24 above; `pick
+      feat` / `bump <abil>` / `learn weave` are template work
+      after #24, deferred to subsequent slices.
 - [ ] Affects / buffs / debuffs with durations — `creature_affects`
       list `(source_id, name, modifiers []StatMod, duration_ticks,
       tick_effect)`. Must support the WoT condition enum from §9:

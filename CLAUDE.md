@@ -104,7 +104,20 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   on success — refusals do not), the BFS
   minimap (`map`, default depth 3, max 5), the bigger `zonemap`,
   the auto-coords admin verbs (`coords rebuild`/`show`/`issues`),
-  `track`, `time`, `news`, and the admin tools (`whereami`, `zones`,
+  `track`, `time`, `news`, the §D #18 combat verbs
+  (`attack`/`kill <target>` and `flee`/`run`/`parry`),
+  `pvp [on|off]` (§D #21 PvP opt-in toggle),
+  the §D #22 party verbs (`group`
+  with `invite`/`accept`/`decline`/`leave`/`kick`/`disband`
+  subcommands plus bare `group` roster, `follow <player>`,
+  `unfollow`), the §D #19 read-only `score` sheet, the §E #23
+  progression verbs (`xp` showing pending levels, `train` at a
+  trainer NPC committing one class level), the §E #24 spend verb
+  (`learn <skill> [n]` / `learn info <skill>` — anywhere, no
+  trainer required), the admin movement verbs (`goto <player|
+  room>`, `transfer <player> [<room>]`, `summon <player>`,
+  `wizinvis` toggle), the `shutdown` / `reboot` countdown verbs,
+  and the admin tools (`whereami`, `zones`,
   `spawn mob <ext> [count]` / `spawn item <ext> [count]`). New
   commands take their dependencies (repos, registry, sessions, bus)
   by parameter and return a `*telnet.Command`; commands with
@@ -126,7 +139,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0034. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0039. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -231,6 +244,43 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `last_news_seen` and `auth_level` in `charPlayerColumns` —
   auth_level stays last for the SQLite first-character bootstrap
   CASE expression in `Create`.
+  0038 added the `trainers` table (1:1 keyed to a mob_template via
+  UNIQUE on `mob_template_id`) backing Phase E #23 slice 2 — each
+  row maps a trainer NPC to the chargen `class_id` they teach.
+  Optional `trainer:` YAML block on a mob seeds the row; the
+  `train` verb resolves the trainer in the room via
+  `mobs.ListInRoom` + `trainers.GetByMobTemplateID`. No fees / no
+  level cap on the trainer (V1).
+  0039 added four `pending_*` int32 columns on `characters`
+  (`pending_feats`, `pending_skill_points`, `pending_ability_bumps`,
+  `pending_weaves`, all NOT NULL DEFAULT 0) backing Phase E #23
+  slice 4 — pools deposited on level-up by `train` and decremented
+  by spend verbs (`learn` shipped as #24; `pick feat` / `bump
+  <abil>` / `learn weave` deferred). `RecordLevelUp` accumulates
+  the four counters in the same UPDATE that writes ClassLevels +
+  HP/BAB/saves. The pending columns slot strictly between `pvp`
+  (0037) and `auth_level`.
+
+- **`internal/progression/`** — pure-function helpers for the d20
+  XP curve and level-up math (Phase E #23). `XPForLevel(n)`,
+  `LevelForXP(xp)`, `XPToNext(xp)` (MaxLevel=20). `ComputeLevelUp(
+  ch, cat, classKey) → LevelGains` recomputes ClassLevels + HP /
+  BAB / saves and the per-pool deltas (FeatDelta / SkillDelta /
+  AbilityDelta / WeaveDelta) the cmd-layer hands to
+  `repo.RecordLevelUp` via `repo.LevelUpFields`. No DB / no
+  session — content + math.
+
+- **`internal/group/`** — in-memory party manager (Phase D #22).
+  `Group` aggregate (Leader CharacterID + Members map);
+  `Manager` keyed by leader with reverse `byCharacter` index.
+  `MaxGroupSize = 6`; leader-leaves-disbands. Methods:
+  `Invite`/`Accept`/`Decline`/`Leave`/`Kick`/`Disband`/`Of`/
+  `SameGroup`/`MembersInRoom`/`PendingInvite`/
+  `ClearForCharacter`. Wired into combat as a
+  `combat.GroupResolver` callback so `expandTallyByGroup` can
+  split per-character damage across in-room party members at
+  XP-award time. No persistence — server restart drops party
+  state.
 
 - **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into the
   DB on startup (zones/rooms/exits/items/mob_templates/mob_instances/
@@ -359,13 +409,24 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
   (`internal/repo/character_sql.go`); ordering is load-bearing.
-  `channeling_json` (0033) is the most recent example. JSON columns
-  also need a `characterJSON` field plus marshal/unmarshal lines in
-  `character_sqlite.go::marshalCharacterJSON` /
+  The four `pending_*` int32 columns added in 0039 are the most
+  recent example (slotted between `pvp` and `auth_level`). JSON
+  columns also need a `characterJSON` field plus marshal/unmarshal
+  lines in `character_sqlite.go::marshalCharacterJSON` /
   `(characterJSON).unmarshalInto`. The `auth_level` column MUST stay
   the very last entry in all three lists — the SQLite first-character
   bootstrap CASE expression in `Create` consumes it as the trailing
   placeholder; new columns belong before it.
+- Progression spend verbs (`learn`, future `pick feat` / `bump
+  <abil>` / `learn weave`) follow the §E #24 pattern: a new repo
+  method named `RecordX` that takes the absolute new pending value
+  and the per-pool entry to upsert (mirroring `RecordCoin` /
+  `RecordXP` rather than widening `RecordLevelUp`). Cmd-layer
+  computes the cap + budget guards before the call; refusals do
+  NOT mutate or audit; success writes one `audit.Record(verb=X,
+  target=<id>, args=<n>)` row. Catalog string ids that need int32
+  keys go through `chargen.HashID(id)` so chargen-persisted entries
+  round-trip.
 - AuthLevel lives on the character row, not the account. The session
   stays at AuthGuest through login + account-create; it's stamped by
   `mode/postauth.promoteToGame` from `Character.AuthLevel` once a
@@ -407,18 +468,25 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 `go test -race ./...` covers the registry, mode dispatcher, completion
 handler, IAC parser, color helpers, word wrap, tokenizer, line editor,
 alias table, every repo (memory + sqlite, including ZoneRepo,
-MobTemplateRepo, mob_trails, news, ShopRepo, BankerRepo,
-CharacterRepo's coin_version optimistic-lock contract), the world
-loader (zone metadata, room.zone_id linkage, item taxonomy, container
-fixtures, dark-room fixtures, shop round-trip + invalid-stock-item
-rejection, banker round-trip + bad-hour rejection), the session
-registry, the eventbus, the tick scheduler, the persist manager, the
-world Restocker, and the concrete commands (look / move / say / tell /
-reply / shout / yell / channel / teleport / alias / prompt / examine /
-door verbs / inventory verbs / put / equipment verbs /
+MobTemplateRepo, mob_trails, news, ShopRepo, BankerRepo, TrainerRepo,
+CharacterRepo's coin_version optimistic-lock contract +
+RecordLevelUp pending-pool accumulation + RecordSkillRank atomic
+upsert), the world loader (zone metadata, room.zone_id linkage,
+item taxonomy, container fixtures, dark-room fixtures, shop
+round-trip + invalid-stock-item rejection, banker round-trip +
+bad-hour rejection), the session registry, the eventbus, the tick
+scheduler, the persist manager, the world Restocker, the
+`internal/combat` package (initiative, attack/damage resolution,
+threat tables, group XP split), the `internal/group` party manager,
+the `internal/progression` curve + level-up math, and the concrete
+commands (look / move / say / tell / reply / shout / yell / channel
+/ teleport / alias / prompt / examine / door verbs / inventory
+verbs / put / equipment verbs /
 shop verbs (list/buy/sell/value) /
 banker verbs (balance/deposit/withdraw) /
-spawn / map / zonemap / coords / track / time / news / whereami / zones).
+attack / pvp / group / follow / unfollow / score / xp / train /
+learn / spawn / map / zonemap / coords / track / time / news /
+whereami / zones).
 Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.
