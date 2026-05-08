@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Files scanned: internal/db/*, internal/repo/*, internal/auth/*, internal/world/*, internal/creature/*, migrations 0001-0039 | Token estimate: ~1500 -->
+<!-- Generated: 2026-05-07 | Updated for Phase E #25: RecordFeatPick/RecordAbilityBump/RecordWeavePick | Token estimate: ~1600 -->
 
 # Data
 
@@ -92,7 +92,7 @@ Pragmas on `Open`: `foreign_keys=ON`, `journal_mode=WAL`,
 | `schema_migrations` | bootstrap | `version PK, applied_at` |
 | `accounts` | 0001/0035 | `id, username, username_lower (unique), password_hash, created_at, last_login_at, failed_login_count, locked_until, settings_json` |
 | `account_logins` | 0036 | `id, account_id, ts, remote_address, outcome, info` + index on `(account_id, ts)` |
-| `characters` | 0002/0005/0009/0017/0019/0023/0027/0032/0033/0037/0039 | `id, account_id, name, name_lower (unique), created_at, last_played_at, current_room_id` + Core block + race/background/class_levels_json/xp/coin/coin_version/bank/feats_json/skills_json/equipment_json/inventory_json/channel_settings_json/channeling_json/prompt_template/last_news_seen/pvp/pending_feats/pending_skill_points/pending_ability_bumps/pending_weaves/auth_level. **Lock-step:** `charPlayerColumns`/`charPlayerValues`/`charPlayerScanDest` in `internal/repo/character_sql.go` must move together; `auth_level` is the trailing column for the SQLite first-character bootstrap CASE. |
+| `characters` | 0002–0039 | `id, account_id, name, name_lower (unique), created_at, last_played_at, current_room_id` + Core block (str/dex/con/int/wis/cha + str_cur/dex_cur/con_cur/int_cur/wis_cur/cha_cur + hp/hp_max/etc.) + race/background/class_levels_json/xp/coin/coin_version/bank/feats_json/skills_json/equipment_json/inventory_json/channel_settings_json/channeling_json/prompt_template/last_news_seen/pvp/pending_feats/pending_skill_points/pending_ability_bumps/pending_weaves/auth_level. **Write sites:** chargen (abilities/feats/skills/equipment), `RecordLevelUp` (class_levels + hp/bab/saves + pending deltas), `RecordAbilityBump` (*_cur columns), `RecordFeatPick` (feats_json + pending_feats), `RecordSkillRank` (skills_json + pending_skill_points), `RecordWeavePick` (channeling_json + pending_weaves). **Lock-step:** `charPlayerColumns`/`charPlayerValues`/`charPlayerScanDest` in `internal/repo/character_sql.go` must move together; `auth_level` is the trailing column for the SQLite first-character bootstrap CASE. |
 | `rooms` | 0003/0006/0012/0013/0016/0020/0025/0026 | `id, external_id, zone_id, name, short_desc, long_desc, flags, sector, light_level, extra_descs_json, nomap, coords_auto, coord_x, coord_y, coord_z` |
 | `exits` | 0003/0007/0014 | `id, from_room_id, to_room_id, direction CHECK, door_flags, key_external_id, lock_difficulty, description` |
 | `items` | 0003/0006/0015/0017/0028 | `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id, type, weight, value, quality, flags, stats_json` — **location invariant:** exactly one of (`room_id`, `owner_character_id`, `parent_item_id`) is non-null |
@@ -127,6 +127,9 @@ CharacterRepo          Create / FindByName / GetByID / ListByAccount /
                        RecordLevelUp(LevelUpFields) /
                        RecordSkillRank(skillID, ranks, isClassSkill,
                                        newPending) /
+                       RecordFeatPick(featID, newPending) /
+                       RecordAbilityBump(abilityKey, newPending) /
+                       RecordWeavePick(weaveID, newPending) /
                        MarkNewsSeen / Delete
 RoomRepo               Find/Create + flag/sector/coords accessors
 ExitRepo               ListFrom / FindByDirection / door state writes
@@ -147,6 +150,12 @@ TrainerRepo            Create / GetByMobTemplateID / List
 AdminAuditRepo         Record / RecordAccount / List(filter)
 WorldStateRepo         Get / Set (key/value store)
 ```
+
+**New repo errors (Phase E #25):**
+- `ErrNotChanneler` — returned by `RecordWeavePick` on non-channeler characters.
+
+**New repo type (Phase E #25):**
+- `AbilityKey` enum (Str/Dex/Con/Int/Wis/Cha) with `String()` method.
 
 ### Optimistic-lock contract
 

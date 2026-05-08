@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Files scanned: internal/cmd/*.go (44 source files) | Token estimate: ~1500 -->
+<!-- Generated: 2026-05-07 | Updated for Phase E #25: feat, bump, learn weave | Token estimate: ~1500 -->
 
 # Command Catalog
 
@@ -100,13 +100,16 @@ alias-introduces-`;` bounded at depth 3.
 | `group` | Player | `group.go` | Bare = roster. Subverbs: `invite`/`accept`/`decline`/`leave`/`kick`/`disband` |
 | `follow <player>` / `unfollow` | Player | `follow.go` | Same-party + same-room + non-cycling. Move chain; on follower failure clears with "couldn't keep up" |
 
-### Progression (§E #23-24)
+### Progression (§E #23-25)
 
 | Verb | Auth | File | Purpose |
 |---|---|---|---|
 | `xp` | Player | `xp.go` | Read-only — pending level via `progression.XPToNext` |
 | `train` | Player | `train.go` | Trainer-NPC commit one class level (HP/BAB/saves + 4 pending pool deltas via `RecordLevelUp(LevelUpFields)`); audit on success |
-| `learn` | Player | `learn.go` | Spend `pending_skill_points` anywhere. `learn` (menu), `learn <id\|#> [n]`, `learn info <id>`. Cap = level+3; class∪bg skills only V1 |
+| `learn` | Player | `learn.go` | Spend `pending_skill_points` anywhere. `learn` (menu), `learn <id\|#> [n]`, `learn info <id>`. Cap = level+3; class∪bg skills only V1. Routes to `learn weave` if first arg == "weave" |
+| `learn weave` | Player | `learn_weave.go` | Channeler-only weave-pick. `learn weave` (menu), `learn weave <id>`. Affinity-gated; drains `pending_weaves`; audit on success |
+| `feat` | Player | `feat.go` | Spend `pending_feats` anywhere. `feat` (menu), `feat <id>`, `feat info <id>`. Background-aware allowed-list; no prereq enforcement V1; audit on success |
+| `bump` | Player | `bump.go` | Spend `pending_ability_bumps` to raise an ability by +1 (hard cap 20). `bump <ability>` accepts str/dex/con/int/wis/cha or full names; audit on success |
 
 ### Help & UX
 
@@ -153,9 +156,9 @@ controller error, unknown template, cap/budget refusal, repo error) MUST
 NOT audit — the row represents "this side effect actually happened."
 
 Verbs that audit on success: `spawn`, `teleport`, `goto`, `transfer`,
-`summon`, `wizinvis`, `shutdown`, `reboot`, `train`, `learn`, banker
-`deposit`/`withdraw`. Synchronous by design so a `shutdown` row commits
-before drain begins.
+`summon`, `wizinvis`, `shutdown`, `reboot`, `train`, `learn`/`learn weave`,
+`feat`, `bump`, banker `deposit`/`withdraw`. Synchronous by design so a
+`shutdown` row commits before drain begins.
 
 ## Adding a command
 
@@ -194,8 +197,8 @@ own session uses `WriteString`.
   completion landed; arg side pending).
 - Cross-class skill picks at half rate (`learn` cross-class, deferred
   per chargen V1 stance).
-- `pick feat` / `bump <abil>` / `learn weave` (template work after
-  `learn`; spend siblings for the other three pending pools).
+- Feat prereq enforcement, ability bump keying off con modifier,
+  weave rank caps — template work deferred.
 - `consider <player>`, `assist`, `gtell`, leader succession, invite
   expiry — see `combat_*_followups.md` and `progression_*_followups.md`
   in the auto-memory tree.

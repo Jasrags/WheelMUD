@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-07 | Files scanned: ~120 (.go) | Token estimate: ~1300 -->
+<!-- Generated: 2026-05-07 | Updated for Phase E #25: feat, bump, learn weave | Token estimate: ~1350 -->
 
 # Architecture
 
@@ -198,7 +198,7 @@ attacker opt-in → target opt-in → same-group refusal. Same-group + party
 follow chain bound by `followDepth = 16`. Ordinal targeting via
 `MatchPlayer(target, sessions, self)` mirrors `MatchItem`/`MatchMob`.
 
-## Progression flow (§E #23-24)
+## Progression flow (§E #23-25)
 
 ```
 mob death ─► Fight.DamageTally → expandTallyByGroup(GroupResolver)
@@ -214,7 +214,23 @@ learn     ─► spend pending_skill_points anywhere; allowed list = class∪bg
              repo.RecordSkillRank atomic upsert (TX: select skills_json →
              merge → UPDATE skills_json + pending_skill_points). Audit on
              success only.
+learn weave ─► spend pending_weaves (channeler-only); affinity-gated;
+               allowed list = level-0 weaves matching Channeling.Affinities.
+               repo.RecordWeavePick TX-upsert (select channeling_json →
+               merge → UPDATE channeling_json + pending_weaves). Audit only.
+feat      ─► spend pending_feats anywhere; allowed list = bg.BonusFeats
+             ∪ class.BonusFeats (background-aware); no prereq enforcement V1.
+             repo.RecordFeatPick TX-upsert (select feats_json → merge →
+             UPDATE feats_json + pending_feats). Audit only.
+bump      ─► spend pending_ability_bumps to raise one ability by +1
+             (hard cap 20 per ability). Format: `bump str` or `bump strength`.
+             repo.RecordAbilityBump atomically UPDATEs the *_cur column via
+             injected column name (str_cur/dex_cur/con_cur/int_cur/wis_cur/cha_cur).
+             Audit only.
 ```
+
+All four pending_* pools (feats/skill_points/ability_bumps/weaves) are now
+drained by player-driven spend verbs. Level-up cycle is end-to-end functional.
 
 ## Tick buckets
 

@@ -1,75 +1,44 @@
-Codemap refresh — 2026-05-07
-=============================
+Phase E #25 Codemap Updates
+===========================
 
-Previous full re-derive: 2026-05-02 (architecture surgically
-updated 2026-05-05). This pass re-derives all five codemaps from
-the current state.
+Files Modified
+--------------
+1. docs/CODEMAPS/commands.md (201 → 204 lines, +1.5%)
+2. docs/CODEMAPS/architecture.md (248 → 264 lines, +6.5%)
+3. docs/CODEMAPS/data.md (237 → 246 lines, +3.8%)
 
-Files refreshed
+Files Unchanged
 ---------------
-- docs/CODEMAPS/architecture.md   (~1300 tok)
-- docs/CODEMAPS/commands.md       (~1500 tok, ~50 verbs catalogued)
-- docs/CODEMAPS/data.md           (~1500 tok, all 39 migrations)
-- docs/CODEMAPS/dependencies.md   (~350 tok)
-- docs/CODEMAPS/telnet.md         (~1100 tok)
+- docs/CODEMAPS/dependencies.md (no new third-party deps)
+- docs/CODEMAPS/telnet.md (no new session fields, no new write paths)
 
-New packages since last codemap pass
-------------------------------------
-- internal/audit/         admin_audit recorder for privileged verbs
-- internal/combat/        per-room Fight + initiative + resolution
-- internal/group/         in-memory party manager (4 slices closed)
-- internal/progression/   XP curve + ComputeLevelUp pure helpers
-- internal/news/          MOTD/news catalog
-- internal/help/          help-topic catalog
-- internal/mob/           wander tick + trail recorder
-- internal/prompt/        per-character prompt template renderer
-- internal/display/       SectionHeader/Subsection/FieldRow/Defang shared cfmt helpers
-- internal/chargen/       backgrounds/classes/feats/skills/weaves/items YAML catalogs
-
-New migrations (0012-0039)
---------------------------
-0012 room_flags+sector       0013 room_extra_descs        0014 exit_door_flags
-0015 item_taxonomy           0016 create_zones            0017 item_owner
-0018 account_auth_level      0019 character_auth_level    0020 room_nomap
-0021 create_mob_trails       0022 mob_template_wander     0023 prompt_template
-0024 world_state             0025 sector_extension        0026 coords_auto
-0027 last_news_seen          0028 item_parent             0029 admin_audit
-0030 create_shops            0031 create_bankers          0032 coin_version
-0033 channeling_json         0034 admin_audit_account     0035 settings_json
-0036 account_logins          0037 characters_pvp          0038 create_trainers
-0039 pending_pools
-
-New verbs since last commands.md
---------------------------------
-attack/kill, flee/run, parry, pvp, score, group (+invite/accept/decline/
-leave/kick/disband), follow, unfollow, xp, train, learn, goto, transfer,
-summon, wizinvis, shutdown, reboot, examine, map, zonemap, coords, track,
-time, news, prompt, whereami, zones, spawn, list/buy/sell/value (shop),
-balance/deposit/withdraw (banker), wear/wield/remove/equipment,
-inventory/get/drop/give/put, open/close/lock/unlock/pick (door),
-shout/yell, every dynamic channel verb.
-
-Architecture changes worth flagging
------------------------------------
-- Combat pipeline (D #18-22): per-room Fight, initiative roll, attack/
-  damage resolution, threat tables, group XP split via GroupResolver
-  callback.
-- Progression spend pattern (E #24): chargen.HashID hoist; spend verbs
-  call new repo methods (RecordSkillRank shape) rather than widening
-  RecordLevelUp.
-- Cross-session output rule formalised: WriteAsync replays cached
-  prompt + Input. Read-goroutine echoes wrapped in EditAndWrite for
-  serialisation.
-- Single-session-per-account session.Registry with kick-on-rebind.
-- Audit policy: refusals MUST NOT audit; success writes one row.
-
-Staleness check
+What Was Added
 ---------------
-None — all five codemaps regenerated this pass.
 
-Pending integrations not yet documented
----------------------------------------
-- Affects/buffs/debuffs (§12) — no schema yet
-- Cooldowns + global lag (§12) — no impl yet
-- OLC editors (§16) — blocked behind §15 quest engine
-- Lua sandbox (§F) — biggest deferred lift; design pending
+New Player Verbs (§E #25):
+  - `feat`: spend pending_feats on background-aware allowed list; drains pending_feats; audits
+  - `bump <ability>`: spend pending_ability_bumps to raise ability +1 (hard cap 20); audits
+  - `learn weave`: channeler-only weave-pick; affinity-gated; drains pending_weaves; audits
+
+New Repo Methods:
+  - CharacterRepo.RecordFeatPick(featID, newPending) — TX-upsert feats_json + pending_feats
+  - CharacterRepo.RecordAbilityBump(abilityKey, newPending) — atomic UPDATE *_cur column
+  - CharacterRepo.RecordWeavePick(weaveID, newPending) — TX-upsert channeling_json + pending_weaves
+
+New Types:
+  - repo.AbilityKey enum (Str/Dex/Con/Int/Wis/Cha) with String() method
+
+New Errors:
+  - repo.ErrNotChanneler — returned by RecordWeavePick on non-channeler characters
+
+Architecture Notes:
+  - All four pending_* pools (feats/skill_points/ability_bumps/weaves) now have drain paths
+  - Level-up cycle is end-to-end functional per the progression flow diagram
+  - Spend verbs follow the §E #24 audit pattern: no audit on refusal, success audit only
+
+Diff Summary:
+  - commands.md: added 3 new verbs to progression table, updated deferred section
+  - architecture.md: expanded progression flow with learn weave / feat / bump details
+  - data.md: documented new repo methods, new error type, new AbilityKey enum, added write-site table for characters table
+
+All changes under 30% threshold; no approval gate hit.
