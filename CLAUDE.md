@@ -157,7 +157,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0045. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0046. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -368,6 +368,24 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `cmd/server/main.go` after the channeling ticker; shutdown
   drain calls `srv.triggers.Stop()` before `bus.Stop()` so
   in-flight subscriptions cancel cleanly.
+  0046 added `triggers.consecutive_faults` and `triggers.disabled`
+  (both INTEGER NOT NULL DEFAULT 0) backing §15 / Phase F #32
+  slice 1 — per-trigger fault budget. Lua action handlers wrap
+  their classified errors with `trigger.ErrActionFaulted`; the
+  `trigger.Runner` increments the counter on each fault and
+  auto-disables at `FaultThreshold = 5`. Successful invocations
+  reset the counter to 0. Disabled triggers are skipped silently
+  in `Runner.Fire`; recovery is operator-managed (direct SQL or
+  re-deploy). World loader resets both columns to 0 at boot via
+  `TriggerRepo.ResetAllFaults` so a re-deploy never preserves
+  stale fault state. The new `lua` action kind is registered by
+  `cmd/server/main.go` against `triggerActions` BEFORE the
+  Dispatcher starts; payload is `{"script": "<name>"}` and the
+  handler resolves the catalog entry, runs it through
+  `internal/lua.Runner`, and wraps any classified Lua error in
+  `ErrActionFaulted`. Action handlers gain optional access to
+  `repo.TriggerRepo` via `ActionDeps.Triggers` — only the
+  fault-budget plumbing uses it today.
   0045 added `mob_templates.dialogue_json` (nullable TEXT)
   backing §15 / Phase F #30 — NPC dialogue trees authored inline
   on the mob YAML entry (sibling to `shop:` / `trainer:` /
@@ -399,6 +417,35 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   risk); the `talk` verb takes a `cmd.PushDialogueFn` closure
   that `cmd/server/main.go` constructs after both packages
   resolve.
+
+- **`internal/scripts/`** — Phase F #32 slice 1 script catalog:
+  one `*.lua` file per script under `internal/scripts/default/`,
+  embedded via `//go:embed all:default` with `SCRIPT_DIR` env
+  override (mirrors chargen / news / quest catalog pattern). The
+  loader compiles every script at boot via gopher-lua's
+  `LoadString` so a syntax error fails the boot loudly with the
+  file path. Empty catalog is valid: deploys may ship without
+  scripts authored, and the runtime falls through to the
+  fault-budget path (unknown script names auto-disable the
+  referencing trigger after 5 misses).
+
+- **`internal/lua/`** — Phase F #32 slice 1 gopher-lua sandbox +
+  runner. `NewSandboxedState()` strips dangerous globals (`os`,
+  `io`, `debug`, `package`, `dofile`, `loadfile`, `loadstring`,
+  `load`); `Runner` keeps a pre-allocated pool of 8 LStates served
+  via a buffered channel (no sync.Pool — that path can synthesize
+  states at Stop and we can't deterministically close them).
+  `Runner.Run(ctx, scriptName, bind)` wraps the parent ctx with
+  `CallTimeout = 50ms` and propagates via gopher-lua's
+  `SetContext` so a runaway loop aborts within the timeout. We do
+  NOT use `SetMx` — it's a millisecond deadline (not an
+  instruction-count cap) that leaks a watchdog goroutine per call.
+  `APIBindings.Bind(L)` registers the Slice 1 globals: `say`,
+  `emote`, `log`, plus a read-only `ctx` table populated from the
+  consumer's `CtxView` (event/room/actor/target/text/bucket).
+  `Runner.Stop()` closes every LState — must run BEFORE
+  `bus.Stop()` in shutdown drain so any in-flight script
+  observes ctx cancellation cleanly.
 
 - **`internal/quest/`** — Phase F #31 quest engine: catalog
   (`Tree`, `Step`, `Reward`), validator (cross-refs against

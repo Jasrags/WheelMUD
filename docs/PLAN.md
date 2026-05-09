@@ -587,9 +587,30 @@ Content multiplier. Without this the world is static.
     item events for fetch/deliver, item rewards on completion,
     qedit OLC, group quest sharing, XP-debt drain on quest XP.
 32. **Embedded scripting (gopher-lua) + sandbox** (§15). Biggest lift
-    in the whole roadmap. Defer until 29–31 prove the trigger surface
-    is what you actually want — otherwise the Lua API gets redesigned
-    twice.
+    in the whole roadmap. Sliced.
+    - **Slice 1 — landed 2026-05-09**: foundation. Migration 0046
+      added `triggers.consecutive_faults` + `triggers.disabled`.
+      `internal/scripts/` is the catalog (one `*.lua` per file
+      under `internal/scripts/default/`, `SCRIPT_DIR` env
+      override, syntax-validate at boot). `internal/lua/` is the
+      sandbox + runner: LState pool of 8 (pre-allocated; bounded
+      via buffered channel — no overflow allocation), all
+      dangerous globals stripped (`os`/`io`/`debug`/`package`/
+      `dofile`/`loadfile`/`loadstring`/`load`), 50ms ctx timeout
+      per call via gopher-lua SetContext. New trigger action
+      kind `lua` resolves a script name from the payload
+      (`{"script":"warden_alert"}`) and runs it with the V1 API:
+      `say(text)` / `emote(text)` / `log(level, msg)` / read-only
+      `ctx` table. Faults wrap `trigger.ErrActionFaulted`; the
+      Runner auto-disables at `FaultThreshold = 5` and resets on
+      success. World re-deploys reset both columns via
+      `TriggerRepo.ResetAllFaults`.
+    - Slice 2 (sketch): dialogue `script` effect + quest `script`
+      step + `quest.advance` / `push_mode` API.
+    - Slice 3 (sketch): `wait(seconds, fn)` async scripts + richer
+      mutation API (`player.give`, `mob.damage`, `on_login` /
+      `on_logout` events).
+    - Slice 4: OLC `tedit` (depends on Phase G).
 
 ---
 

@@ -267,6 +267,37 @@ Teacher rules:
   simultaneously by carrying both `trainer:` and `weave_teacher:`
   blocks.
 
+### Lua trigger actions
+
+Phase F #32 slice 1 ships the `lua` trigger action kind. Triggers
+reference a script by name (the script body lives under
+`internal/scripts/default/<name>.lua`):
+
+```yaml
+- id: tr.warden
+  room: tr.tower.gate
+  name: the Tower Warden
+  triggers:
+    - event: on_enter
+      action: lua
+      payload:
+        script: warden_alert
+```
+
+The script's V1 API surface is documented in
+`internal/scripts/default/README.md`. Available globals: `say(text)`,
+`emote(text)`, `log(level, msg)`, plus a read-only `ctx` table.
+
+A script that errors (syntax / runtime / timeout) increments the
+trigger's `consecutive_faults` counter; at 5 the trigger
+auto-disables and stops firing. Recovery is operator-managed:
+
+```sql
+UPDATE triggers SET consecutive_faults = 0, disabled = 0 WHERE id = ?;
+```
+
+Re-deploys reset both columns automatically.
+
 ### Dialogue trees
 
 A mob entry may also carry an optional `dialogue:` block to attach a

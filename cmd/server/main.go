@@ -30,15 +30,19 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/news"
+	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/quest"
 	"github.com/Jasrags/WheelMUD/internal/repo"
+	"github.com/Jasrags/WheelMUD/internal/scripts"
 	"github.com/Jasrags/WheelMUD/internal/safego"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/tick"
 	"github.com/Jasrags/WheelMUD/internal/trigger"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
+
+	luastd "github.com/yuin/gopher-lua"
 )
 
 const (
@@ -75,6 +79,7 @@ type server struct {
 	groups     *group.Manager
 	triggers   *trigger.Dispatcher
 	quest      *quest.Engine
+	luaRunner  *luaeng.Runner
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -480,12 +485,43 @@ func main() {
 	} else {
 		slog.Info("Triggers loaded", "count", n)
 	}
+	// Phase F #32 slice 1: re-zero every trigger's fault counter
+	// + disabled flag at boot. Operator-managed recovery is the
+	// only path back to enabled, so a re-deploy intentionally
+	// resets the world. The reset runs after Reload (above) so the
+	// in-memory copy already reflects DEFAULT 0 / 0.
+	if err := triggerRepo.ResetAllFaults(context.Background()); err != nil {
+		slog.Error("Failed to reset trigger fault counters", "error", err)
+		os.Exit(1)
+	}
+
+	// Phase F #32 slice 1: load the Lua script catalog and stand up
+	// the runner. The runner's pool is pre-allocated (poolSize=8)
+	// so no LStates spin up on the bus goroutine. Script syntax
+	// errors fail Load loudly here.
+	scriptFS, err := scripts.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve script source", "error", err)
+		os.Exit(1)
+	}
+	parser := luastd.NewState()
+	scriptCatalog, err := scripts.Load(scriptFS, parser)
+	parser.Close()
+	if err != nil {
+		slog.Error("Failed to load script catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Script catalog loaded", "scripts", len(scriptCatalog.ByName))
+	luaRunner := luaeng.NewRunner(scriptCatalog, slog.Default())
+
 	triggerActions := trigger.DefaultActions()
+	trigger.RegisterLuaAction(triggerActions, luaRunner, scriptCatalog)
 	triggerRunner := trigger.NewRunner(triggerRegistry, triggerActions, trigger.ActionDeps{
 		Rooms:    rooms,
 		Mobs:     mobs,
 		Sessions: sessions,
 		Logger:   slog.Default(),
+		Triggers: triggerRepo,
 	})
 	triggerDispatcher := trigger.NewDispatcher(bus, buckets.Phase, triggerRunner, mobs)
 	triggerDispatcher.Start(context.Background())
@@ -545,6 +581,7 @@ func main() {
 		groups:     groups,
 		triggers:   triggerDispatcher,
 		quest:      questEngine,
+		luaRunner:  luaRunner,
 		closed:     make(chan struct{}),
 	}
 
@@ -690,6 +727,13 @@ func (srv *server) shutdown() {
 	}
 	if srv.quest != nil {
 		srv.quest.Stop()
+	}
+	// Phase F #32 slice 1: stop the Lua runner BEFORE bus.Stop so
+	// any in-flight script invocation observes ctx cancellation
+	// and exits cleanly. Closing the LStates terminates any
+	// gopher-lua goroutines waiting on the per-call ctx.
+	if srv.luaRunner != nil {
+		srv.luaRunner.Stop()
 	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()

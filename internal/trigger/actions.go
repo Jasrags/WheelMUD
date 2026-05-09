@@ -24,6 +24,12 @@ type ActionDeps struct {
 	Mobs     repo.MobInstanceRepo
 	Sessions *session.Registry
 	Logger   *slog.Logger
+	// Triggers is the repo handle the runner uses to persist
+	// fault-budget mutations (Phase F #32 slice 1). nil disables
+	// fault-budget persistence — tests that don't care about the
+	// budget pass nil here and the runner falls back to in-memory
+	// counter mutation only.
+	Triggers repo.TriggerRepo
 }
 
 // ActionRegistry maps an ActionKind name (e.g. "say") to its handler.

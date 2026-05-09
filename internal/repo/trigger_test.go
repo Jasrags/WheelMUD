@@ -187,6 +187,51 @@ func runTriggerRepoTests(t *testing.T, name string, newRepo func(t *testing.T) T
 			t.Fatalf("delete leaked: %+v", other)
 		}
 	})
+
+	t.Run(name+"/record_trigger_fault", func(t *testing.T) {
+		r := newRepo(t)
+		ctx := context.Background()
+		created, err := r.Create(ctx, Trigger{
+			OwnerKind: TriggerOwnerRoom, OwnerID: 30,
+			Event: TriggerEventOnEnter, Action: "noop", Payload: "{}",
+		})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		// Defaults round-trip as zero / false.
+		got, _ := r.ListByOwner(ctx, TriggerOwnerRoom, 30)
+		if got[0].ConsecutiveFaults != 0 || got[0].Disabled {
+			t.Fatalf("default state wrong: %+v", got[0])
+		}
+		// Bump to 3, not yet disabled.
+		if err := r.RecordTriggerFault(ctx, created.ID, 3, false); err != nil {
+			t.Fatalf("record fault: %v", err)
+		}
+		got, _ = r.ListByOwner(ctx, TriggerOwnerRoom, 30)
+		if got[0].ConsecutiveFaults != 3 || got[0].Disabled {
+			t.Fatalf("after bump: %+v", got[0])
+		}
+		// Bump to threshold + disabled.
+		if err := r.RecordTriggerFault(ctx, created.ID, 5, true); err != nil {
+			t.Fatalf("record disable: %v", err)
+		}
+		got, _ = r.ListByOwner(ctx, TriggerOwnerRoom, 30)
+		if got[0].ConsecutiveFaults != 5 || !got[0].Disabled {
+			t.Fatalf("after threshold: %+v", got[0])
+		}
+		// Reset wipes both.
+		if err := r.ResetAllFaults(ctx); err != nil {
+			t.Fatalf("reset: %v", err)
+		}
+		got, _ = r.ListByOwner(ctx, TriggerOwnerRoom, 30)
+		if got[0].ConsecutiveFaults != 0 || got[0].Disabled {
+			t.Fatalf("after reset: %+v", got[0])
+		}
+		// Missing id returns ErrTriggerNotFound.
+		if err := r.RecordTriggerFault(ctx, created.ID+999, 1, false); err == nil {
+			t.Fatal("expected ErrTriggerNotFound for missing id")
+		}
+	})
 }
 
 func TestMemoryTriggerRepo(t *testing.T) {

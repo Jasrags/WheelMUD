@@ -91,6 +91,39 @@ func (g *Registry) Replace(triggers []repo.Trigger) {
 	g.mu.Unlock()
 }
 
+// UpdateFault patches the in-memory index entries for the given
+// trigger ID. Phase F #32 slice 1 — runner.recordFault calls this
+// after each Lua fault so the next dispatch sees the new
+// consecutive_faults / disabled state without round-tripping the
+// repo. The repo write is the source of truth across restarts;
+// this index update is the same-process fast path.
+func (g *Registry) UpdateFault(triggerID int64, faults int, disabled bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, owners := range g.byOwner {
+		for _, events := range owners {
+			for ev, list := range events {
+				for i := range list {
+					if list[i].ID == triggerID {
+						list[i].ConsecutiveFaults = faults
+						list[i].Disabled = disabled
+					}
+				}
+				events[ev] = list
+			}
+		}
+	}
+	for ev, list := range g.byEvent {
+		for i := range list {
+			if list[i].ID == triggerID {
+				list[i].ConsecutiveFaults = faults
+				list[i].Disabled = disabled
+			}
+		}
+		g.byEvent[ev] = list
+	}
+}
+
 // ForOwnerEvent returns triggers attached to (kind, ownerID) for
 // the given event, priority-DESC. Returns a copy so callers can
 // iterate without holding the lock.

@@ -3,6 +3,7 @@ package trigger
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -88,6 +89,99 @@ func TestRunner_HandlerErrorDoesNotAbort(t *testing.T) {
 
 	if calls.Load() != 2 {
 		t.Fatalf("calls = %d, want 2 (handler error should not abort)", calls.Load())
+	}
+}
+
+func TestRunner_FaultBudgetAutoDisables(t *testing.T) {
+	// A handler that consistently faults must trip the per-trigger
+	// fault budget exactly at FaultThreshold. The 6th invocation
+	// should be a no-op because the trigger flipped Disabled on
+	// fire #5.
+	var calls atomic.Int32
+	actions := NewActionRegistry()
+	actions.Register("flaky", func(_ context.Context, _ ActionDeps, _ OwnerRef, _ EventCtx, _ json.RawMessage) error {
+		calls.Add(1)
+		return fmt.Errorf("%w: synthetic", ErrActionFaulted)
+	})
+
+	repoBacking := repo.NewMemoryTriggerRepo()
+	created, err := repoBacking.Create(context.Background(), repo.Trigger{
+		OwnerKind: repo.TriggerOwnerRoom, OwnerID: 1,
+		Event: repo.TriggerEventOnEnter, Action: "flaky", Payload: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	reg := NewRegistry()
+	reg.Replace([]repo.Trigger{created})
+	r := NewRunner(reg, actions, ActionDeps{Triggers: repoBacking})
+
+	owner := OwnerRef{Kind: OwnerRoom, ID: 1, RoomID: 1}
+	ev := EventCtx{Event: EventOnEnter, RoomID: 1}
+
+	for i := 0; i < FaultThreshold+1; i++ {
+		r.FireForOwner(context.Background(), owner, ev)
+	}
+
+	if calls.Load() != int32(FaultThreshold) {
+		t.Fatalf("handler called %d times, want %d (post-disable fires must be no-ops)",
+			calls.Load(), FaultThreshold)
+	}
+	rows, _ := repoBacking.ListByOwner(context.Background(), repo.TriggerOwnerRoom, 1)
+	if rows[0].ConsecutiveFaults != FaultThreshold {
+		t.Fatalf("consecutive_faults = %d, want %d", rows[0].ConsecutiveFaults, FaultThreshold)
+	}
+	if !rows[0].Disabled {
+		t.Fatalf("expected Disabled=true after threshold")
+	}
+}
+
+func TestRunner_SuccessResetsFaultCounter(t *testing.T) {
+	// A successful invocation after a partial fault streak should
+	// reset consecutive_faults back to zero.
+	calls := 0
+	wantFault := true
+	actions := NewActionRegistry()
+	actions.Register("flap", func(_ context.Context, _ ActionDeps, _ OwnerRef, _ EventCtx, _ json.RawMessage) error {
+		calls++
+		if wantFault {
+			return fmt.Errorf("%w: synthetic", ErrActionFaulted)
+		}
+		return nil
+	})
+
+	repoBacking := repo.NewMemoryTriggerRepo()
+	created, err := repoBacking.Create(context.Background(), repo.Trigger{
+		OwnerKind: repo.TriggerOwnerRoom, OwnerID: 2,
+		Event: repo.TriggerEventOnEnter, Action: "flap", Payload: "{}",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	reg := NewRegistry()
+	reg.Replace([]repo.Trigger{created})
+	r := NewRunner(reg, actions, ActionDeps{Triggers: repoBacking})
+
+	owner := OwnerRef{Kind: OwnerRoom, ID: 2, RoomID: 2}
+	ev := EventCtx{Event: EventOnEnter, RoomID: 2}
+
+	// Three faults — counter at 3, not yet disabled.
+	for i := 0; i < 3; i++ {
+		r.FireForOwner(context.Background(), owner, ev)
+	}
+	rows, _ := repoBacking.ListByOwner(context.Background(), repo.TriggerOwnerRoom, 2)
+	if rows[0].ConsecutiveFaults != 3 {
+		t.Fatalf("after 3 faults: %d", rows[0].ConsecutiveFaults)
+	}
+
+	// One success — counter resets.
+	wantFault = false
+	r.FireForOwner(context.Background(), owner, ev)
+	rows, _ = repoBacking.ListByOwner(context.Background(), repo.TriggerOwnerRoom, 2)
+	if rows[0].ConsecutiveFaults != 0 {
+		t.Fatalf("success did not reset counter: %d", rows[0].ConsecutiveFaults)
 	}
 }
 

@@ -16,18 +16,20 @@ func NewSQLiteTriggerRepo(db DBTX) *SQLiteTriggerRepo {
 	return &SQLiteTriggerRepo{db: db}
 }
 
-const triggerSelectCols = `id, owner_kind, owner_id, event, match, action, payload, priority`
+const triggerSelectCols = `id, owner_kind, owner_id, event, match, action, payload, priority, consecutive_faults, disabled`
 
 func scanTrigger(scanner interface {
 	Scan(dest ...interface{}) error
 }) (Trigger, error) {
 	var t Trigger
 	var kind, event string
-	if err := scanner.Scan(&t.ID, &kind, &t.OwnerID, &event, &t.Match, &t.Action, &t.Payload, &t.Priority); err != nil {
+	var disabled int
+	if err := scanner.Scan(&t.ID, &kind, &t.OwnerID, &event, &t.Match, &t.Action, &t.Payload, &t.Priority, &t.ConsecutiveFaults, &disabled); err != nil {
 		return Trigger{}, err
 	}
 	t.OwnerKind = TriggerOwnerKind(kind)
 	t.Event = TriggerEvent(event)
+	t.Disabled = disabled != 0
 	return t, nil
 }
 
@@ -112,6 +114,35 @@ func (r *SQLiteTriggerRepo) ListAll(ctx context.Context) ([]Trigger, error) {
 		return nil, fmt.Errorf("iterate triggers: %w", err)
 	}
 	return out, nil
+}
+
+func (r *SQLiteTriggerRepo) RecordTriggerFault(ctx context.Context, id int64, faults int, disabled bool) error {
+	d := 0
+	if disabled {
+		d = 1
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE triggers SET consecutive_faults = ?, disabled = ? WHERE id = ?`,
+		faults, d, id)
+	if err != nil {
+		return fmt.Errorf("record trigger fault: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrTriggerNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteTriggerRepo) ResetAllFaults(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE triggers SET consecutive_faults = 0, disabled = 0`); err != nil {
+		return fmt.Errorf("reset trigger faults: %w", err)
+	}
+	return nil
 }
 
 func (r *SQLiteTriggerRepo) DeleteByOwner(ctx context.Context, kind TriggerOwnerKind, ownerID int64) error {

@@ -62,6 +62,30 @@ func (r *MemoryTriggerRepo) ListAll(_ context.Context) ([]Trigger, error) {
 	return out, nil
 }
 
+func (r *MemoryTriggerRepo) RecordTriggerFault(_ context.Context, id int64, faults int, disabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.triggers[id]
+	if !ok {
+		return ErrTriggerNotFound
+	}
+	t.ConsecutiveFaults = faults
+	t.Disabled = disabled
+	r.triggers[id] = t
+	return nil
+}
+
+func (r *MemoryTriggerRepo) ResetAllFaults(_ context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, t := range r.triggers {
+		t.ConsecutiveFaults = 0
+		t.Disabled = false
+		r.triggers[id] = t
+	}
+	return nil
+}
+
 func (r *MemoryTriggerRepo) DeleteByOwner(_ context.Context, kind TriggerOwnerKind, ownerID int64) error {
 	if !ValidTriggerOwnerKind(kind) {
 		return ErrInvalidTrigger
