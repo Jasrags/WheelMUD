@@ -208,6 +208,76 @@ func TestEngine_TalkTo_WrongNPC_NoAdvance(t *testing.T) {
 	}
 }
 
+// TestEngine_Advance_ScriptStep covers the Phase F #32 slice 2
+// `quest.advance` Lua entry point against a script-kind step. The
+// engine treats StepScript identically to StepTalkTo for advance
+// purposes: external code (a Lua catalog script) decides when the
+// goal is met and calls Advance to transition.
+func TestEngine_Advance_ScriptStep(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	rooms := repo.NewMemoryRoomRepo()
+	cat := &Catalog{ByID: map[string]*Quest{
+		"q": {
+			ID: "q", Name: "Q",
+			Steps: []Step{
+				{Kind: StepScript, Prompt: "wait for hint", Script: "advance_q"},
+				{Kind: StepReachRoom, Prompt: "go home", Room: "tr.start"},
+			},
+		},
+	}}
+	e := NewEngine(cat, chars, rooms, nil, nil, nil)
+	accounts := repo.NewMemoryAccountRepo()
+	c := makeChar(t, chars, accounts, "Mat")
+	ctx := context.Background()
+
+	if err := e.AcceptQuest(ctx, c.ID, "q"); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if err := e.Advance(ctx, c.ID, "q"); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	got, _ := chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].StepIndex != 1 {
+		t.Fatalf("StepIndex = %d, want 1 after Advance on script step", got.QuestLog[0].StepIndex)
+	}
+}
+
+// Advance on a counter-driven step kind (kill_n / reach_room) is a
+// no-op — calling code is buggy, but we don't punish the player by
+// auto-advancing past their kill quota. Engine logs and returns nil.
+func TestEngine_Advance_OnKillNStep_NoOp(t *testing.T) {
+	e, chars, accounts, _ := fixtureEngine(t)
+	c := makeChar(t, chars, accounts, "Egwene")
+	ctx := context.Background()
+
+	_ = e.AcceptQuest(ctx, c.ID, "lost_lamb")
+	// Advance past reach_room so step 1 (kill_n) is active.
+	e.onPlayerEntered(ctx, world.PlayerEntered{CharacterID: c.ID, ToRoomID: 100})
+	got, _ := chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].StepIndex != 1 {
+		t.Fatalf("setup precondition failed: %d", got.QuestLog[0].StepIndex)
+	}
+
+	if err := e.Advance(ctx, c.ID, "lost_lamb"); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	got, _ = chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].StepIndex != 1 {
+		t.Fatalf("StepIndex = %d after no-op Advance, want 1 (unchanged)", got.QuestLog[0].StepIndex)
+	}
+}
+
+// Advance on a quest the character isn't on is a silent no-op, not
+// an error — Lua scripts may be invoked in contexts where the
+// character has dropped the quest already.
+func TestEngine_Advance_NotOnQuest_NoOp(t *testing.T) {
+	e, chars, accounts, _ := fixtureEngine(t)
+	c := makeChar(t, chars, accounts, "Perrin")
+	if err := e.Advance(context.Background(), c.ID, "lost_lamb"); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+}
+
 func TestEngine_AbandonQuest(t *testing.T) {
 	e, chars, accounts, _ := fixtureEngine(t)
 	c := makeChar(t, chars, accounts, "Rand")

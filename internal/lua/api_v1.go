@@ -28,22 +28,36 @@ type CtxView struct {
 
 // APIBindings is the per-call bag the runner consumer fills before
 // invoking Runner.Run. The Bind method registers each non-nil field
-// as a Lua global. nil fields are skipped (the script that calls
-// the missing function gets a Lua "attempt to call nil" error,
-// which surfaces as ErrLuaError + a fault — by design, since a
-// missing API in a context that doesn't support it is a content
-// authoring bug).
+// as a Lua global (or table entry for namespaced APIs). nil function
+// fields register a stub that raises a classified Lua error so the
+// fault budget increments — that is, every API the script *might*
+// call is always callable; the binding decides whether the call is
+// honored or refused with a meaningful message.
 //
 // Broadcast / EmoteBroadcast take the script-supplied text string.
 // The caller's closure decides how to format and route — the trigger
 // handler routes through broadcastToRoom + resolveSpeaker, so the
 // cross-package import graph stays clean (internal/lua has no
 // dependency on internal/trigger or internal/repo).
+//
+// V2 mutation surface (Slice 2 of Phase F #32):
+//
+//   - QuestAccept / QuestAdvance enroll-or-advance the calling
+//     character in a quest by id. Closures resolve the character id
+//     from the surrounding context (dialogue session, trigger event
+//     actor) so internal/lua stays oblivious to repo / engine types.
+//   - PushMode hands off to a sibling telnet mode by name. nil
+//     means "this context cannot push modes" and the bound stub
+//     errors loudly.
 type APIBindings struct {
 	Broadcast      func(text string)
 	EmoteBroadcast func(text string)
 	Logger         *slog.Logger
 	Ctx            CtxView
+
+	QuestAccept  func(questID string) error
+	QuestAdvance func(questID string) error
+	PushMode     func(mode string) error
 }
 
 // Bind registers the V1 API globals on l. Call this from the bind
@@ -85,6 +99,48 @@ func (b APIBindings) Bind(l *gluua.LState) {
 		return 0
 	}))
 	l.SetGlobal("ctx", buildCtxTable(l, b.Ctx))
+
+	// V2 mutation surface. We always register the surface even when
+	// hooks are nil — the stub errors with a classified message so
+	// the trigger fault budget catches misuse. This is friendlier
+	// than "attempt to call nil" and makes nil-bound contexts (e.g.
+	// dialogue scripts that lack PushMode) self-describing in logs.
+	questTbl := l.NewTable()
+	questTbl.RawSetString("accept", l.NewFunction(makeQuestFn("quest.accept", b.QuestAccept)))
+	questTbl.RawSetString("advance", l.NewFunction(makeQuestFn("quest.advance", b.QuestAdvance)))
+	l.SetGlobal("quest", questTbl)
+
+	l.SetGlobal("push_mode", l.NewFunction(func(L *gluua.LState) int {
+		mode := L.CheckString(1)
+		if b.PushMode == nil {
+			L.RaiseError("push_mode not bound in this context")
+			return 0
+		}
+		if err := b.PushMode(mode); err != nil {
+			L.RaiseError("push_mode %q failed: %s", mode, err.Error())
+			return 0
+		}
+		return 0
+	}))
+}
+
+// makeQuestFn produces the Lua-callable closure for quest.accept /
+// quest.advance. nil hook → registered stub that raises a
+// classified error so the fault budget logs *which* API was missing
+// instead of a generic "attempt to call nil".
+func makeQuestFn(name string, hook func(string) error) gluua.LGFunction {
+	return func(L *gluua.LState) int {
+		questID := L.CheckString(1)
+		if hook == nil {
+			L.RaiseError("%s not bound in this context", name)
+			return 0
+		}
+		if err := hook(questID); err != nil {
+			L.RaiseError("%s(%q) failed: %s", name, questID, err.Error())
+			return 0
+		}
+		return 0
+	}
 }
 
 // buildCtxTable materializes the read-only ctx table. We don't use

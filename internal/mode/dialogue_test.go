@@ -264,3 +264,85 @@ func TestDialogue_PushModeInvokesHook(t *testing.T) {
 		t.Fatalf("push hook = %+v", pushed)
 	}
 }
+
+// Phase F #32 slice 2: dialogue `script` effect should dispatch
+// through DialogueHooks.RunScript with the script name from
+// effect.Args["script"]. The hook is non-fatal — a returned error
+// logs but does not abort the response chain.
+func TestDialogue_ScriptEffectInvokesHook(t *testing.T) {
+	tree := &dialogue.Tree{
+		Root: "root",
+		Nodes: map[dialogue.NodeID]dialogue.Node{
+			"root": {
+				ID:     "root",
+				Prompt: "Greetings.",
+				Responses: []dialogue.Response{
+					{Match: []string{"hint"}, Reply: "Listen well.", Effects: []dialogue.Effect{
+						{Kind: dialogue.EffectScript, Args: map[string]string{"script": "warden_alert"}},
+					}, Next: "root"},
+				},
+			},
+		},
+	}
+	server, client := net.Pipe()
+	t.Cleanup(func() { server.Close(); client.Close() })
+	captured := &safeBuf{}
+	drainPeer(t, client, captured)
+	s := telnet.NewSession(server)
+
+	var seen string
+	hook := func(_ context.Context, _ *telnet.Session, name string) error {
+		seen = name
+		return nil
+	}
+	m, err := NewDialogue("warden", "tr.warden", tree, DialogueHooks{RunScript: hook})
+	if err != nil {
+		t.Fatalf("NewDialogue: %v", err)
+	}
+	if err := s.PushMode(m); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	_ = m.Prompt(context.Background(), s)
+	if err := m.Handle(context.Background(), s, "hint"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if seen != "warden_alert" {
+		t.Fatalf("hook captured %q, want warden_alert", seen)
+	}
+}
+
+// Unbound RunScript hook is non-fatal: applyEffects logs a warning
+// and continues, so the dialogue stays usable.
+func TestDialogue_ScriptEffectUnboundHook_NoFault(t *testing.T) {
+	tree := &dialogue.Tree{
+		Root: "root",
+		Nodes: map[dialogue.NodeID]dialogue.Node{
+			"root": {
+				ID:     "root",
+				Prompt: "Greetings.",
+				Responses: []dialogue.Response{
+					{Match: []string{"hint"}, Reply: "Listen well.", Effects: []dialogue.Effect{
+						{Kind: dialogue.EffectScript, Args: map[string]string{"script": "warden_alert"}},
+					}, Next: "root"},
+				},
+			},
+		},
+	}
+	server, client := net.Pipe()
+	t.Cleanup(func() { server.Close(); client.Close() })
+	captured := &safeBuf{}
+	drainPeer(t, client, captured)
+	s := telnet.NewSession(server)
+
+	m, err := NewDialogue("warden", "tr.warden", tree, DialogueHooks{})
+	if err != nil {
+		t.Fatalf("NewDialogue: %v", err)
+	}
+	if err := s.PushMode(m); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	_ = m.Prompt(context.Background(), s)
+	if err := m.Handle(context.Background(), s, "hint"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+}

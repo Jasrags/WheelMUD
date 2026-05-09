@@ -123,6 +123,47 @@ func TestValidate_RejectCases(t *testing.T) {
 	}
 }
 
+func TestValidate_ScriptStep_OK(t *testing.T) {
+	c := &Catalog{ByID: map[string]*Quest{
+		"q": {
+			ID:    "q",
+			Name:  "Q",
+			Steps: []Step{{Kind: StepScript, Prompt: "wait", Script: "advance_q"}},
+		},
+	}}
+	refs := &RefSets{Scripts: map[string]bool{"advance_q": true}}
+	if err := Validate(c, refs); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidate_ScriptStep_RejectsMissingScriptField(t *testing.T) {
+	c := &Catalog{ByID: map[string]*Quest{
+		"q": {
+			ID:    "q",
+			Name:  "Q",
+			Steps: []Step{{Kind: StepScript, Prompt: "wait"}},
+		},
+	}}
+	if err := Validate(c, nil); err == nil {
+		t.Fatal("expected error for missing script field")
+	}
+}
+
+func TestValidate_ScriptStep_RejectsUnknownScriptName(t *testing.T) {
+	c := &Catalog{ByID: map[string]*Quest{
+		"q": {
+			ID:    "q",
+			Name:  "Q",
+			Steps: []Step{{Kind: StepScript, Prompt: "wait", Script: "ghost"}},
+		},
+	}}
+	refs := &RefSets{Scripts: map[string]bool{"other": true}}
+	if err := Validate(c, refs); err == nil {
+		t.Fatal("expected error for unknown script name")
+	}
+}
+
 func TestCatalog_Get(t *testing.T) {
 	c := goodCatalog()
 	if q, ok := c.Get("lost_lamb"); !ok || q == nil {

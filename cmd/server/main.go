@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -514,8 +515,42 @@ func main() {
 	slog.Info("Script catalog loaded", "scripts", len(scriptCatalog.ByName))
 	luaRunner := luaeng.NewRunner(scriptCatalog, slog.Default())
 
+	// Phase F #31: cross-validate the loaded quest catalog against
+	// world content (rooms + mob templates) so a typo in a quest
+	// YAML fails the boot. Then stand up the engine and subscribe
+	// it to combat / movement events.
+	//
+	// Ordering note (Phase F #32 slice 2): questEngine is constructed
+	// here, before trigger.RegisterLuaAction below, so the trigger
+	// Lua action can route quest.accept / quest.advance through the
+	// engine. The engine.Start subscription happens after the trigger
+	// dispatcher starts so both have wired their event subscribers
+	// before any traffic flows.
+	questRefs, err := buildQuestRefSets(context.Background(), rooms, mobTemplates, scriptCatalog)
+	if err != nil {
+		slog.Error("Failed to build quest ref sets", "error", err)
+		os.Exit(1)
+	}
+	if err := quest.Validate(questCatalog, questRefs); err != nil {
+		slog.Error("Quest catalog validation failed", "error", err)
+		os.Exit(1)
+	}
+	// Phase F #32 slice 2: cross-ref dialogue `script` effects on
+	// every loaded mob_template against the script catalog so a typo
+	// fails the boot loudly rather than no-opping at runtime.
+	if err := validateDialogueScriptRefs(context.Background(), mobTemplates, scriptCatalog); err != nil {
+		slog.Error("Dialogue script refs validation failed", "error", err)
+		os.Exit(1)
+	}
+	questEngine := quest.NewEngine(questCatalog, characters, rooms, audits, bus, sessions)
+
 	triggerActions := trigger.DefaultActions()
-	trigger.RegisterLuaAction(triggerActions, luaRunner, scriptCatalog)
+	luaQuestHooks := trigger.LuaQuestHooks{}
+	if questEngine != nil {
+		luaQuestHooks.Accept = questEngine.AcceptQuest
+		luaQuestHooks.Advance = questEngine.Advance
+	}
+	trigger.RegisterLuaAction(triggerActions, luaRunner, scriptCatalog, luaQuestHooks)
 	triggerRunner := trigger.NewRunner(triggerRegistry, triggerActions, trigger.ActionDeps{
 		Rooms:    rooms,
 		Mobs:     mobs,
@@ -525,21 +560,6 @@ func main() {
 	})
 	triggerDispatcher := trigger.NewDispatcher(bus, buckets.Phase, triggerRunner, mobs)
 	triggerDispatcher.Start(context.Background())
-
-	// Phase F #31: cross-validate the loaded quest catalog against
-	// world content (rooms + mob templates) so a typo in a quest
-	// YAML fails the boot. Then stand up the engine and subscribe
-	// it to combat / movement events.
-	questRefs, err := buildQuestRefSets(context.Background(), rooms, mobTemplates)
-	if err != nil {
-		slog.Error("Failed to build quest ref sets", "error", err)
-		os.Exit(1)
-	}
-	if err := quest.Validate(questCatalog, questRefs); err != nil {
-		slog.Error("Quest catalog validation failed", "error", err)
-		os.Exit(1)
-	}
-	questEngine := quest.NewEngine(questCatalog, characters, rooms, audits, bus, sessions)
 	questEngine.Start(context.Background())
 
 	// affects.Expired subscriber: emits one cfmt line per name to the
@@ -589,7 +609,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, questCatalog, questEngine, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -775,7 +795,7 @@ func savePlayTimes(ctx context.Context, sessions *session.Registry, characters r
 // at boot after the world loader has populated both repos. A typo'd
 // reference in a quest YAML fails the boot loudly before the engine
 // subscribes to any events.
-func buildQuestRefSets(ctx context.Context, rooms repo.RoomRepo, templates repo.MobTemplateRepo) (*quest.RefSets, error) {
+func buildQuestRefSets(ctx context.Context, rooms repo.RoomRepo, templates repo.MobTemplateRepo, scriptCat *scripts.Catalog) (*quest.RefSets, error) {
 	allRooms, err := rooms.ListAll(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list rooms: %w", err)
@@ -796,7 +816,65 @@ func buildQuestRefSets(ctx context.Context, rooms repo.RoomRepo, templates repo.
 			refs.Rooms[r.ExternalID] = true
 		}
 	}
+	// Phase F #32 slice 2: cross-ref StepScript against the loaded
+	// Lua catalog. nil scriptCat (e.g. boots that disable scripting)
+	// disables the check.
+	if scriptCat != nil {
+		refs.Scripts = make(map[string]bool, len(scriptCat.ByName))
+		for name := range scriptCat.ByName {
+			refs.Scripts[name] = true
+		}
+	}
 	return refs, nil
+}
+
+// validateDialogueScriptRefs walks every mob_template's stored
+// dialogue_json and asserts that every `effects: kind: script`
+// references a script the catalog knows. A missing script at
+// runtime degrades gracefully (the dialogue effect logs + no-ops),
+// but boot-time fail-fast keeps authoring mistakes from sitting
+// silently in the world. Phase F #32 slice 2.
+//
+// nil scriptCat disables the check (mirrors quest.RefSets.Scripts
+// nil-disables): boots that ship without scripting authored skip
+// the cross-ref entirely. An empty catalog is *not* the same as nil
+// — we still validate and reject any script reference.
+func validateDialogueScriptRefs(ctx context.Context, templates repo.MobTemplateRepo, scriptCat *scripts.Catalog) error {
+	if scriptCat == nil {
+		return nil
+	}
+	ids, err := templates.ListExternalIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("list mob templates: %w", err)
+	}
+	for _, ext := range ids {
+		t, err := templates.GetByExternalID(ctx, ext)
+		if err != nil {
+			return fmt.Errorf("get mob template %q: %w", ext, err)
+		}
+		if len(t.DialogueJSON) == 0 || string(t.DialogueJSON) == "null" {
+			continue
+		}
+		var tree dialogue.Tree
+		if err := json.Unmarshal(t.DialogueJSON, &tree); err != nil {
+			return fmt.Errorf("decode dialogue for mob %q: %w", ext, err)
+		}
+		for nodeID, node := range tree.Nodes {
+			for ri, resp := range node.Responses {
+				for ei, eff := range resp.Effects {
+					if eff.Kind != dialogue.EffectScript {
+						continue
+					}
+					name := eff.Args["script"]
+					if _, ok := scriptCat.Get(name); !ok {
+						return fmt.Errorf("mob %q dialogue node %q response[%d] effect[%d]: unknown script %q",
+							ext, nodeID, ri, ei, name)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {
@@ -855,7 +933,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -1033,6 +1111,38 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		}
 		hooks.AdvanceQuest = func(ctx context.Context, s *telnet.Session, questID, npcExternalID string) error {
 			return questEngine.AdvanceTalkTo(ctx, s.CharacterID, questID, npcExternalID)
+		}
+	}
+	// Phase F #32 slice 2: dialogue `script` effect runs a Lua
+	// catalog script with the V2 mutation surface. Hook is unbound
+	// when no Lua runner is wired (test harness, malformed boot) —
+	// applyEffects logs and continues so a misconfigured boot
+	// doesn't lock players inside the dialogue.
+	if luaRunner != nil {
+		hooks.RunScript = func(ctx context.Context, s *telnet.Session, name string) error {
+			bindings := luaeng.APIBindings{
+				Logger: slog.Default(),
+				Ctx: luaeng.CtxView{
+					Event:      "dialogue.script",
+					ActorID:    s.CharacterID,
+					ActorKind:  "character",
+					RoomID:     s.CurrentRoomID,
+					Text:       name,
+				},
+			}
+			if questEngine != nil {
+				bindings.QuestAccept = func(id string) error {
+					return questEngine.AcceptQuest(ctx, s.CharacterID, id)
+				}
+				bindings.QuestAdvance = func(id string) error {
+					return questEngine.Advance(ctx, s.CharacterID, id)
+				}
+			}
+			// PushMode is intentionally nil for dialogue scripts: V2
+			// has no concrete cross-mode push targets and the
+			// classified Lua error makes the unbound state visible
+			// to authors.
+			return luaRunner.Run(ctx, name, func(l *luastd.LState) { bindings.Bind(l) })
 		}
 	}
 	pushDialogue := func(s *telnet.Session, npcName, npcExternalID string, tree *dialogue.Tree) error {

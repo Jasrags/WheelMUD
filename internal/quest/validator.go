@@ -16,6 +16,10 @@ var ErrInvalidCatalog = errors.New("invalid quest catalog")
 type RefSets struct {
 	Mobs  map[string]bool
 	Rooms map[string]bool
+	// Scripts is the set of Lua catalog script names; nil disables
+	// StepScript cross-ref (so unit tests that don't construct a
+	// script catalog still pass). Phase F #32 slice 2.
+	Scripts map[string]bool
 }
 
 // Validate enforces V1 invariants on a parsed Catalog:
@@ -103,6 +107,13 @@ func validateStep(s Step, refs *RefSets) error {
 		}
 		if refs != nil && !refs.Rooms[s.Room] {
 			return fmt.Errorf("reach_room room %q is not a known room", s.Room)
+		}
+	case StepScript:
+		if s.Script == "" {
+			return fmt.Errorf("script requires script")
+		}
+		if refs != nil && refs.Scripts != nil && !refs.Scripts[s.Script] {
+			return fmt.Errorf("script %q is not a known catalog entry", s.Script)
 		}
 	default:
 		return fmt.Errorf("unknown step kind %q", s.Kind)

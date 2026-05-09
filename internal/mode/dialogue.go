@@ -45,6 +45,17 @@ type DialogueHooks struct {
 	PushMode     func(ctx context.Context, s *telnet.Session, modeName string, args map[string]string) error
 	AcceptQuest  func(ctx context.Context, s *telnet.Session, questID string) error
 	AdvanceQuest func(ctx context.Context, s *telnet.Session, questID, npcExternalID string) error
+
+	// RunScript fires a `effects: kind: script` Lua catalog
+	// invocation on behalf of the acting character. Phase F #32
+	// slice 2. Wired by main.go to a closure around lua.Runner.Run
+	// that supplies the V2 quest API + push_mode hooks. nil here
+	// means "no Lua runner wired" — applyEffects logs a warning
+	// and continues so a misconfigured boot doesn't lock the
+	// player into a stuck dialogue. Errors returned by RunScript
+	// are non-fatal: we log + continue (mirrors AcceptQuest /
+	// AdvanceQuest's repo-error policy).
+	RunScript func(ctx context.Context, s *telnet.Session, scriptName string) error
 }
 
 type Dialogue struct {
@@ -210,6 +221,15 @@ func (m *Dialogue) Handle(ctx context.Context, s *telnet.Session, line string) e
 			if err := m.hooks.AdvanceQuest(ctx, s, eff.Args["quest_id"], m.npcExternalID); err != nil {
 				slog.Warn("dialogue advance_quest failed",
 					"quest", eff.Args["quest_id"], "npc", m.npcName, "error", err)
+			}
+		case dialogue.EffectScript:
+			if m.hooks.RunScript == nil {
+				slog.Warn("dialogue script unbound", "script", eff.Args["script"], "npc", m.npcName)
+				continue
+			}
+			if err := m.hooks.RunScript(ctx, s, eff.Args["script"]); err != nil {
+				slog.Warn("dialogue script failed",
+					"script", eff.Args["script"], "npc", m.npcName, "error", err)
 			}
 		case dialogue.EffectEnd:
 			popped = true

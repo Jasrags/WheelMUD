@@ -443,9 +443,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `APIBindings.Bind(L)` registers the Slice 1 globals: `say`,
   `emote`, `log`, plus a read-only `ctx` table populated from the
   consumer's `CtxView` (event/room/actor/target/text/bucket).
+  Slice 2 (Phase F #32) extends Bind with the V2 mutation surface:
+  a `quest` table (`quest.accept(id)` / `quest.advance(id)`) and
+  a top-level `push_mode(name)` global. nil-bound hooks register
+  classified-error stubs that raise `<api> not bound in this
+  context` so misuse trips the trigger fault budget instead of
+  surfacing as a generic "attempt to call nil". The trigger Lua
+  action wires the V2 hooks via `trigger.LuaQuestHooks`; the
+  dialogue `script` effect wires them via `mode.DialogueHooks
+  .RunScript` (closure-injected from `cmd/server/main.go`).
   `Runner.Stop()` closes every LState — must run BEFORE
   `bus.Stop()` in shutdown drain so any in-flight script
-  observes ctx cancellation cleanly.
+  observes ctx cancellation cleanly. The release path now wipes
+  the V2 globals (`quest`, `push_mode`) alongside the V1 set so a
+  pooled LState never observes a leaked closure from the previous
+  borrow.
 
 - **`internal/quest/`** — Phase F #31 quest engine: catalog
   (`Tree`, `Step`, `Reward`), validator (cross-refs against
@@ -454,9 +466,13 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `world.PlayerEntered` for reach_room; talk_to advances via
   the dialogue `advance_quest` effect). Authoring is one YAML
   file per quest under `internal/quest/default/<id>.yaml` with
-  `QUEST_DIR` env-override (mirrors chargen / news). V1 step
-  kinds: `talk_to`, `kill_n`, `reach_room` — `fetch` / `deliver`
-  / `script` deferred. Per-character state lives on the
+  `QUEST_DIR` env-override (mirrors chargen / news). Step kinds:
+  `talk_to`, `kill_n`, `reach_room`, and `script` (Phase F #32
+  slice 2 — Step.Script names a `internal/scripts/default/<n>.lua`
+  catalog entry; the engine has no event subscription for script
+  steps and waits for an external `quest.advance(id)` Lua call,
+  validated against the script catalog at boot via
+  `quest.RefSets.Scripts`). `fetch` / `deliver` deferred. Per-character state lives on the
   existing `characters.quest_log_json` column (migration 0009)
   via `RecordQuestProgress`; engine reloads the log before each
   transition (correctness > throughput on the eventbus
@@ -475,7 +491,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `AcceptQuest` / `AdvanceTalkTo` methods so `internal/cmd`
   and `internal/dialogue` stay free of `internal/quest`
   imports. Verb: `quest` / `quests` (`internal/cmd/quest.go`)
-  with `info <id>` and `abandon <id>` subcommands.
+  with `info <id>` and `abandon <id>` subcommands. The kind-
+  agnostic `Engine.Advance(charID, questID)` (Phase F #32 slice
+  2) is the entry point for the V2 Lua `quest.advance` API: it
+  advances `talk_to` and `script` steps and logs + no-ops on
+  counter-driven kinds (`kill_n` / `reach_room`) so a buggy
+  script can't skip a kill quota. The dialogue `script` effect
+  (Phase F #32 slice 2) routes through
+  `mode.DialogueHooks.RunScript` — `cmd/server/main.go` builds a
+  closure that runs a catalog script through `lua.Runner.Run`
+  with `bindings.QuestAccept` / `bindings.QuestAdvance` wired to
+  `Engine.AcceptQuest` / `Engine.Advance`. PushMode stays nil on
+  the dialogue path (no concrete cross-mode push targets in V2).
+  Boot-time `validateDialogueScriptRefs` walks every
+  mob_template's `dialogue_json` and rejects unknown script
+  references so a typo fails the boot loudly.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

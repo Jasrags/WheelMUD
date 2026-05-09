@@ -9,9 +9,12 @@
 // (`accept_quest` / `advance_quest`) injected by the cmd-layer.
 //
 // `fetch` / `deliver` defer to a follow-up slice once we publish
-// `world.ItemPickedUp` / `world.ItemGivenToMob`; `script` defers to
-// the Lua work in #32. Both are intentionally absent from the
-// StepKind allow-list so a YAML typo fails the boot.
+// `world.ItemPickedUp` / `world.ItemGivenToMob`. `script` lands in
+// Phase F #32 slice 2: an active script step waits for an external
+// `quest.advance(id)` call (from a dialogue script effect, a
+// trigger Lua action, or any future Lua surface). The engine has no
+// event subscription for script steps — the script decides when
+// the goal is met.
 package quest
 
 // StepKind enumerates the V1 step vocabulary. Adding a new kind
@@ -36,6 +39,16 @@ const (
 	// StepReachRoom advances when the player enters a room whose
 	// ExternalID matches RoomExternalID. One-shot.
 	StepReachRoom StepKind = "reach_room"
+
+	// StepScript advances when external Lua code calls
+	// `quest.advance(<id>)` for the owning character. The catalog
+	// names a script via Step.Script so the boot loader can
+	// cross-reference the script catalog and reject typos. The
+	// script itself is *not* invoked by the engine — quest scripts
+	// run from dialogue effects or trigger actions, observe state,
+	// and call quest.advance when a condition is met. Phase F #32
+	// slice 2.
+	StepScript StepKind = "script"
 )
 
 // Step is one entry in a Quest's ordered step list. Fields are
@@ -55,6 +68,14 @@ type Step struct {
 	// Count is the number of kills required for StepKillN. Must be
 	// > 0; the validator rejects zero or negative counts.
 	Count int `yaml:"count,omitempty"`
+
+	// Script names the Lua catalog entry associated with a
+	// StepScript. The engine doesn't invoke it directly — it's
+	// declared in the YAML so the world loader can cross-reference
+	// the script catalog at boot, and so future tooling (qedit,
+	// admin inspectors) can show authors which script drives a
+	// step. Required for StepScript; ignored for other kinds.
+	Script string `yaml:"script,omitempty"`
 }
 
 // Reward is the bundle granted on quest completion (final step's

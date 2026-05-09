@@ -187,8 +187,10 @@ func (r *Runner) release(l *gluua.LState) {
 		return
 	}
 	// Wipe per-call globals so the next borrower starts clean.
-	// Slice 1 only sets say/emote/log/ctx; reset is cheap.
-	for _, name := range []string{"say", "emote", "log", "ctx"} {
+	// V1 surface: say / emote / log / ctx. V2 (Phase F #32 slice 2)
+	// adds the quest table + push_mode. Reset is cheap; keep the
+	// list in lock-step with APIBindings.Bind.
+	for _, name := range []string{"say", "emote", "log", "ctx", "quest", "push_mode"} {
 		l.SetGlobal(name, gluua.LNil)
 	}
 	// Best-effort return; if the runner has been stopped the

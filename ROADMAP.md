@@ -1326,20 +1326,28 @@ will need on top of those tables.
       consecutive-fault auto-disable deferred until §32 ships
       the Lua action surface (deterministic V1 builtins don't
       need fault budgets).
-- [~] Embedded scripting language — Phase F #32 slice 1 landed
-      2026-05-09. `gopher-lua` is the chosen runtime. Slice 1 ships
-      the foundation: an embedded `internal/scripts/default/<name>.lua`
-      catalog (with `SCRIPT_DIR` env override), a sandboxed
+- [~] Embedded scripting language — Phase F #32 slice 2 landed
+      2026-05-09. `gopher-lua` is the chosen runtime. Slice 1
+      shipped the foundation: an embedded
+      `internal/scripts/default/<name>.lua` catalog (with
+      `SCRIPT_DIR` env override), a sandboxed
       `internal/lua.Runner` (LState pool of 8, dangerous globals
-      stripped, 50ms ctx timeout per call), and a new `lua` trigger
-      action kind that resolves a script by name and runs it with
-      a minimal V1 API: `say(text)`, `emote(text)`, `log(level,
-      msg)`, plus a read-only `ctx` table exposing the EventCtx.
-      Slice 2+ wires the Lua runner into dialogue effects + quest
-      step kinds and adds richer mutation primitives
-      (`quest.advance`, `push_mode`, `player.give`); `wait()` async
-      scripts defer to slice 3; `tedit` OLC defers to slice 4 /
-      Phase G.
+      stripped, 50ms ctx timeout per call), and a new `lua`
+      trigger action kind that resolves a script by name and
+      runs it with a minimal V1 API: `say(text)`, `emote(text)`,
+      `log(level, msg)`, plus a read-only `ctx` table exposing
+      the EventCtx. Slice 2 wires the Lua runner into dialogue
+      effects (`effects: kind: script`) and quest steps
+      (`kind: script`), and adds the V2 API: `quest.accept(id)`
+      / `quest.advance(id)` / `push_mode(name)` globals (nil-
+      bound contexts register classified-error stubs so misuse
+      trips the fault budget). Engine got a kind-agnostic
+      `Advance(charID, questID)` covering both `talk_to` and
+      `script` step kinds. Boot-time cross-refs reject typos
+      against the script catalog for both surfaces. Slice 3
+      defers `wait()` async scripts and richer mutation primitives
+      (`player.give`, `mob.damage`, `on_login` / `on_logout`);
+      `tedit` OLC defers to slice 4 / Phase G.
 - [x] Sandboxing & resource caps for scripts — Phase F #32 slice 1
       landed 2026-05-09. The sandbox strips `os` / `io` / `debug`
       / `package` / `dofile` / `loadfile` / `loadstring` / `load`.

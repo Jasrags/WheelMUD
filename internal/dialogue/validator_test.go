@@ -31,6 +31,16 @@ func TestValidate_OK(t *testing.T) {
 	}
 }
 
+func TestValidate_ScriptEffectArgs(t *testing.T) {
+	tree := goodTree()
+	n := tree.Nodes["root"]
+	n.Responses[0].Effects = []Effect{{Kind: EffectScript, Args: map[string]string{"script": "warden_alert"}}}
+	tree.Nodes["root"] = n
+	if err := Validate(tree); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
 func TestValidate_RejectCases(t *testing.T) {
 	cases := []struct {
 		name string
@@ -73,6 +83,11 @@ func TestValidate_RejectCases(t *testing.T) {
 		{"push_mode missing mode arg", func(t *Tree) {
 			n := t.Nodes["root"]
 			n.Responses[0].Effects = []Effect{{Kind: EffectPushMode}}
+			t.Nodes["root"] = n
+		}},
+		{"script missing script arg", func(t *Tree) {
+			n := t.Nodes["root"]
+			n.Responses[0].Effects = []Effect{{Kind: EffectScript, Args: map[string]string{}}}
 			t.Nodes["root"] = n
 		}},
 		{"show same flag in require and forbid", func(t *Tree) {

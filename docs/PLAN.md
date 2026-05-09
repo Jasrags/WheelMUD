@@ -605,8 +605,25 @@ Content multiplier. Without this the world is static.
       Runner auto-disables at `FaultThreshold = 5` and resets on
       success. World re-deploys reset both columns via
       `TriggerRepo.ResetAllFaults`.
-    - Slice 2 (sketch): dialogue `script` effect + quest `script`
-      step + `quest.advance` / `push_mode` API.
+    - **Slice 2 — landed 2026-05-09**: state-machine APIs.
+      Dialogue gains `effects: kind: script` (Args["script"]
+      names a catalog entry); quest gains `kind: script` step
+      kind (catalog name in `Step.Script`). Lua API V2 adds the
+      `quest` table (`quest.accept(id)` / `quest.advance(id)`)
+      and a top-level `push_mode(name)` global; nil-bound hooks
+      register classified-error stubs so misuse trips the fault
+      budget instead of "attempt to call nil". Engine gets a
+      kind-agnostic `Advance(charID, questID)` covering both
+      `talk_to` and `script` step kinds; counter-driven kinds
+      (`kill_n` / `reach_room`) log + no-op so a stale Lua call
+      can't skip a kill quota. Trigger Lua actions thread the
+      same V2 hooks via `LuaQuestHooks`; events without a
+      character actor (`on_tick`) refuse the quest API at
+      EventCtx-resolve time and surface as `ErrActionFaulted`.
+      Boot-time cross-ref: dialogue `script` effects validate
+      against the script catalog (in main.go's
+      `validateDialogueScriptRefs`); quest `StepScript` cross-
+      refs via the new `quest.RefSets.Scripts` set.
     - Slice 3 (sketch): `wait(seconds, fn)` async scripts + richer
       mutation API (`player.give`, `mob.damage`, `on_login` /
       `on_logout` events).

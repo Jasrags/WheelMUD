@@ -21,6 +21,22 @@ type LuaPayload struct {
 	Script string `json:"script"`
 }
 
+// LuaQuestHooks bundles the optional V2 mutation closures the cmd-
+// layer wires when a trigger script needs to drive quest state. nil
+// hooks register the corresponding Lua-side stub that raises a
+// classified error — the trigger fault budget catches misuse and
+// auto-disables the offending row after FaultThreshold strikes.
+//
+// The closures resolve the calling character from the EventCtx
+// passed to each invocation; that's why they take a CharacterID
+// rather than capturing one. The handler refuses to fire a quest
+// API if ev.ActorKind != "character" so a misconfigured `on_tick`
+// trigger doesn't silently no-op a quest.advance call.
+type LuaQuestHooks struct {
+	Accept  func(ctx context.Context, charID int64, questID string) error
+	Advance func(ctx context.Context, charID int64, questID string) error
+}
+
 // RegisterLuaAction installs the `lua` action kind on reg, wired to
 // runner. The handler resolves the script name from the payload,
 // invokes the runner with a per-call API binding, and wraps any
@@ -30,14 +46,19 @@ type LuaPayload struct {
 //
 // catalog is needed only for cleaner errors when a trigger names a
 // missing script; the runner already checks the catalog itself.
-func RegisterLuaAction(reg *ActionRegistry, runner *intlua.Runner, _ *scripts.Catalog) {
+//
+// hooks supplies the V2 mutation closures (Phase F #32 slice 2).
+// Pass an empty LuaQuestHooks to register the stubs that raise
+// classified errors — handy for tests / boots that disable quest
+// scripting.
+func RegisterLuaAction(reg *ActionRegistry, runner *intlua.Runner, _ *scripts.Catalog, hooks LuaQuestHooks) {
 	if reg == nil || runner == nil {
 		return
 	}
-	reg.Register("lua", luaActionHandler(runner))
+	reg.Register("lua", luaActionHandler(runner, hooks))
 }
 
-func luaActionHandler(runner *intlua.Runner) ActionHandler {
+func luaActionHandler(runner *intlua.Runner, hooks LuaQuestHooks) ActionHandler {
 	return func(ctx context.Context, deps ActionDeps, owner OwnerRef, ev EventCtx, payload json.RawMessage) error {
 		var p LuaPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
@@ -51,11 +72,16 @@ func luaActionHandler(runner *intlua.Runner) ActionHandler {
 		}
 
 		bindings := intlua.APIBindings{
-			Logger:    loggerOr(deps),
-			Ctx:       ctxViewFromEvent(ev),
-			Broadcast: makeSayBroadcaster(ctx, deps, owner),
+			Logger:         loggerOr(deps),
+			Ctx:            ctxViewFromEvent(ev),
+			Broadcast:      makeSayBroadcaster(ctx, deps, owner),
 			EmoteBroadcast: makeEmoteBroadcaster(ctx, deps, owner),
+			QuestAccept:    makeQuestHook(ctx, ev, "quest.accept", hooks.Accept),
+			QuestAdvance:   makeQuestHook(ctx, ev, "quest.advance", hooks.Advance),
 		}
+		// PushMode stays unbound on triggers — there's no surrounding
+		// session to push a mode onto. The classified Lua error is
+		// the right outcome for misuse.
 		bind := func(l *gluua.LState) { bindings.Bind(l) }
 
 		err := runner.Run(ctx, p.Script, bind)
@@ -63,6 +89,23 @@ func luaActionHandler(runner *intlua.Runner) ActionHandler {
 			return fmt.Errorf("%w: %v", ErrActionFaulted, err)
 		}
 		return nil
+	}
+}
+
+// makeQuestHook adapts a (charID, questID) hook onto the Lua-side
+// (questID) closure. The character id comes from the trigger's
+// EventCtx; an event with no character actor (e.g. on_tick) returns
+// a closure that errors with a classified message so misuse trips
+// the fault budget instead of silently mutating no one's state.
+func makeQuestHook(ctx context.Context, ev EventCtx, name string, hook func(context.Context, int64, string) error) func(string) error {
+	if hook == nil {
+		return nil // bind-side stub will surface "<name> not bound"
+	}
+	return func(questID string) error {
+		if ev.ActorKind != "character" || ev.ActorID == 0 {
+			return fmt.Errorf("%s requires a character actor (got %q)", name, ev.ActorKind)
+		}
+		return hook(ctx, ev.ActorID, questID)
 	}
 }
 

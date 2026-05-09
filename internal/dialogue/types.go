@@ -66,6 +66,20 @@ const (
 	// Same closure-injection pattern as EffectAcceptQuest. Logs +
 	// no-ops on mismatch so authoring mistakes never lock players.
 	EffectAdvanceQuest EffectKind = "advance_quest"
+
+	// EffectScript runs a Lua catalog script. Args["script"] names
+	// a `internal/scripts/default/<name>.lua` entry. The script
+	// receives the V1 + V2 API surface (`say`, `emote`, `log`,
+	// `ctx`, `quest.accept`, `quest.advance`); it does NOT have
+	// access to a per-NPC speaker — dialogue scripts run on behalf
+	// of the *acting character*, so any reply text should still come
+	// from the dialogue tree's Reply field. The runtime closure is
+	// injected by the cmd-layer (DialogueHooks.RunScript) so this
+	// package stays free of internal/lua imports. Boot-time cross-
+	// reference against the script catalog lives in the world
+	// loader (loader.go) — package dialogue stays catalog-agnostic.
+	// Phase F #32 slice 2.
+	EffectScript EffectKind = "script"
 )
 
 // Effect is one atomic state mutation fired when a Response is taken.

@@ -168,6 +168,47 @@ func (e *Engine) AdvanceTalkTo(ctx context.Context, charID int64, questID, npcEx
 	return e.advanceStep(ctx, char, q, idx)
 }
 
+// Advance is the kind-agnostic advance entry point used by the V2
+// Lua API (`quest.advance`). It looks up the active step for
+// (charID, questID) and advances iff the step kind is one of the
+// "passive" kinds whose progress isn't event-counted: StepTalkTo
+// or StepScript. StepKillN / StepReachRoom have their own per-event
+// counters and ignore Advance — calling Advance on them is logged
+// as a content bug and treated as a no-op so the player isn't
+// surprised by an early skip.
+//
+// Returns nil even on no-op cases (unknown quest, not on quest,
+// non-advanceable step kind). Returning an error here would propagate
+// up through the Lua binding and surface in the script as a runtime
+// error — but the script can't tell the difference between "your
+// dialogue called advance on the wrong quest" and "the repo failed",
+// so we keep behavior aligned with AdvanceTalkTo: log + nil.
+func (e *Engine) Advance(ctx context.Context, charID int64, questID string) error {
+	q, ok := e.cat.Get(questID)
+	if !ok {
+		slog.Warn("quest advance: unknown quest id", "char", charID, "quest", questID)
+		return nil
+	}
+	char, err := e.chars.GetByID(ctx, charID)
+	if err != nil {
+		return fmt.Errorf("get character: %w", err)
+	}
+	idx, found := findActive(char.QuestLog, questID)
+	if !found {
+		slog.Debug("quest advance: not on quest", "char", charID, "quest", questID)
+		return nil
+	}
+	step := q.Steps[char.QuestLog[idx].StepIndex]
+	switch step.Kind {
+	case StepTalkTo, StepScript:
+		return e.advanceStep(ctx, char, q, idx)
+	default:
+		slog.Warn("quest advance: non-advanceable step kind",
+			"char", charID, "quest", questID, "step_kind", step.Kind)
+		return nil
+	}
+}
+
 // AbandonQuest removes the quest entry from the character's log.
 // Used by the `quest abandon <id>` verb. Returns nil if the quest
 // isn't in the log (idempotent).

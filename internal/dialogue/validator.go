@@ -117,6 +117,12 @@ func validateEffect(e Effect, t *Tree) error {
 		if e.Args["quest_id"] == "" {
 			return fmt.Errorf("%s requires args.quest_id", e.Kind)
 		}
+	case EffectScript:
+		if e.Args["script"] == "" {
+			return fmt.Errorf("script requires args.script")
+		}
+		// Cross-reference against the script catalog runs in the
+		// world loader so this package stays catalog-agnostic.
 	default:
 		return fmt.Errorf("unknown effect kind %q", e.Kind)
 	}
