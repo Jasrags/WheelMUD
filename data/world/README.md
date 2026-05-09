@@ -267,6 +267,76 @@ Teacher rules:
   simultaneously by carrying both `trainer:` and `weave_teacher:`
   blocks.
 
+### Dialogue trees
+
+A mob entry may also carry an optional `dialogue:` block to attach a
+branching conversation that players reach via `talk <mob>` (Phase F
+#30). The loader translates the YAML into the canonical
+`internal/dialogue.Tree` shape and persists it on
+`mob_templates.dialogue_json`.
+
+```yaml
+- id: tr.elder
+  room: tr.commons.green
+  name: village elder
+  short: an aged village elder
+  dialogue:
+    root: greet
+    nodes:
+      - id: greet
+        prompt: "Greetings, traveler. What brings you to Emond's Field?"
+        responses:
+          - match: [hello, hi, greetings]
+            reply: "Well met."
+            next: menu
+          - match: [bye, leave, farewell]
+            reply: "Travel safely."
+            effects:
+              - kind: end
+      - id: menu
+        prompt: "Did you need something?"
+        responses:
+          - match: [quest, work]
+            reply: "Then take this charge — find the lost lamb on the Westwood path."
+            effects:
+              - kind: set_flag
+                args:
+                  name: lamb_quest_started
+            next: menu
+          - match: [reward]
+            reply: "Your service is noted, friend."
+            show:
+              require_flag: lamb_quest_returned
+            next: greet
+          - match: [shop]
+            label: "see your wares"
+            effects:
+              - kind: push_mode
+                args:
+                  mode: shop
+```
+
+Dialogue rules:
+
+- `root` is the starting node id; it must exist in `nodes`.
+- Each node has a unique `id`, a `prompt`, and an ordered `responses`
+  list. Empty `nodes` or a dangling `next` reference fails the boot
+  loudly.
+- `match` is a list of case-insensitive substring keywords. The
+  player can also pick by typing the response number (1-based on the
+  visible list).
+- `label`, when set, overrides the numbered-list label (otherwise the
+  first `match` keyword wins, then the first sentence of `reply`).
+- `next` advances to the named node. Empty `next` ends the
+  conversation, equivalent to an `end` effect.
+- `effects` fire in order before `next` is followed. Effect kinds:
+  `set_flag` / `clear_flag` (per-session flag bag — drops on
+  logout), `goto` (overrides `next`), `push_mode` (hand off to a
+  sibling mode; nil in V1, log-and-noop), `end` (pop the dialogue).
+- `show` gates a response's visibility on the per-session flag bag.
+  `require_flag` keeps the response hidden until the flag is set;
+  `forbid_flag` hides it once the flag is set.
+
 ## Conventions
 
 ### Room ID naming

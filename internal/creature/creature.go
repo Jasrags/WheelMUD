@@ -625,6 +625,15 @@ type MobTemplate struct {
 	DialogueTreeID int64
 	TriggerScripts []string // script refs
 
+	// DialogueJSON is the raw JSON encoding of an authored dialogue.Tree
+	// (Phase F #30 / migration 0045). Stored on `mob_templates.
+	// dialogue_json` (nullable TEXT). Nil/empty means "this NPC has
+	// nothing to say" — the cmd-layer `talk` verb refuses with that
+	// message rather than dispatching. Kept as raw bytes here so this
+	// package stays free of internal/dialogue imports; the talk verb
+	// (and the world loader's validator) decodes on demand.
+	DialogueJSON []byte
+
 	ShopkeeperConfig *ShopConfig // nil if not a vendor
 
 	CorpseDecayTicks   int32

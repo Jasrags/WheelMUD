@@ -537,7 +537,27 @@ Content multiplier. Without this the world is static.
     authored Lua lands in #32), `on_login` / `on_logout` PC
     events, sharded `on_tick` walks once content uses them, and
     the `tedit` authoring verb (#34).
-30. **NPC dialogue trees** (§15). JSON per mob; uses §13 `say` capture.
+30. ~~**NPC dialogue trees** (§15). JSON per mob; uses §13 `say`
+    capture.~~ **Landed 2026-05-08.** Migration 0045 added
+    `mob_templates.dialogue_json` (nullable TEXT). YAML schema gained
+    an optional `dialogue:` block on `Mob` (root + ordered nodes,
+    each with prompt + responses; responses carry match keywords,
+    reply text, next-node, effect list, and flag-gated `show`
+    visibility). `internal/dialogue/` is the pure-data package
+    (Tree/Node/Response/Effect/Show + Validate); `internal/mode/
+    dialogue.go` is the runtime — pushed by `talk <mob>` —
+    rendering numbered choices and dispatching numeric / keyword /
+    `bye`-style input. Effects implemented: `set_flag`,
+    `clear_flag`, `goto`, `push_mode` (closure-injected by the
+    cmd-layer for future shop/banker hand-off; nil in V1), `end`.
+    Per-character branch state (current node + flag bag) is
+    in-session only — drops on logout; persisted per-NPC state is
+    deferred to #31. The legacy reserved `mob_templates.
+    dialogue_tree_id` INT column from 0008 stays unused (V1 trees
+    are one-off per template; collapsing it would force a
+    migration with no win). Followups: persisted flag bag,
+    catalog-style reusable trees, `tedit` OLC, on_say-driven
+    ambient dialogue layered on top of trees.
 31. **Quest engine state machine** (§15). Per-character per-quest
     state + objective ticks.
 32. **Embedded scripting (gopher-lua) + sandbox** (§15). Biggest lift

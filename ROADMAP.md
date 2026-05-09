@@ -1276,11 +1276,23 @@ will need on top of those tables.
       `deliver`, `reach_room`, `script`. Quest log command shows
       active + completed; rewards (xp/gold/item) granted on the
       final step's transition.
-- [ ] NPC dialogue trees — JSON dialogue per mob: nodes with
-      `prompt`, `responses []{Match []string, Reply, Next, Effect}`.
-      `talk <mob>` enters a `Dialogue` mode that takes free-text
-      keyword input or numbered choices. Effects can advance a
-      quest step or push another mode (e.g. shop).
+- [x] NPC dialogue trees — Phase F #30 landed 2026-05-08.
+      Migration 0045 added `mob_templates.dialogue_json` (nullable
+      TEXT). YAML mob entries gain an optional `dialogue:` block
+      (sibling to `shop:`/`trainer:`/`weave_teacher:`/`triggers:`)
+      with `root` + ordered `nodes`; the loader validates via
+      `internal/dialogue.Validate` (rejects empty root, dangling
+      `next`, unknown effect kinds, missing effect args) and
+      persists the compact JSON encoding. `talk <mob>` resolves an
+      NPC in the room, decodes its tree, and pushes the new
+      `internal/mode.Dialogue` mode. The mode renders the current
+      node prompt + numbered, flag-gated responses; accepts bare
+      number, free-text keyword (case-insensitive substring match),
+      or `bye`/`quit`/empty to exit. Effects: `set_flag`,
+      `clear_flag`, `goto`, `push_mode` (closure-injected by the
+      cmd-layer; no V1 targets), `end`. Per-character branch state
+      (current node + flag bag) lives in-session and drops on
+      logout — quest-bound persistent flags are deferred to #31.
 - [x] Trigger / event system (`on_enter`, `on_say`, `on_attack`,
       `on_death`, `on_tick`) — Phase F #29 landed 2026-05-08.
       Migration 0044 added the `triggers` table; the YAML loader

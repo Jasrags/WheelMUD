@@ -22,6 +22,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
+	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
@@ -908,6 +909,20 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewUnstill(characters, sessions, audits)); err != nil {
+		return nil, err
+	}
+	// Phase F #30: NPC dialogue trees. main.go is the only place that
+	// can hand cmd a closure that builds a *mode.Dialogue, since cmd
+	// can't import internal/mode without risking an import cycle
+	// through chargen.
+	pushDialogue := func(s *telnet.Session, npcName string, tree *dialogue.Tree) error {
+		dm, err := mode.NewDialogue(npcName, tree, nil)
+		if err != nil {
+			return err
+		}
+		return s.PushMode(dm)
+	}
+	if err := r.Register(cmd.NewTalk(mobs, mobTemplates, pushDialogue)); err != nil {
 		return nil, err
 	}
 	return r, nil

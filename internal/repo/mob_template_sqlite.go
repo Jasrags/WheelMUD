@@ -33,7 +33,8 @@ const templateExtraColumns = `challenge_code, organization, behavior_flags,
 		short_desc, long_desc,
 		natural_attacks_json, special_attacks_json, traits_json,
 		advancement_json, climate_json, terrain_json, trigger_scripts_json,
-		xp_value`
+		xp_value,
+		dialogue_json`
 
 // clampWanderChance pins values to the CHECK-enforced [0, 1] range
 // so a Create with an out-of-range field reports the typo via the
@@ -68,6 +69,11 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		shopJSON = sql.NullString{String: s, Valid: true}
 	}
 
+	var dialogueJSON sql.NullString
+	if len(t.DialogueJSON) > 0 {
+		dialogueJSON = sql.NullString{String: string(t.DialogueJSON), Valid: true}
+	}
+
 	challengeCode := string(t.ChallengeCode)
 	if challengeCode == "" {
 		challengeCode = "A"
@@ -90,6 +96,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		j.natural, j.special, j.traits,
 		j.advancement, j.climate, j.terrain, j.scripts,
 		t.XPValue,
+		dialogueJSON,
 		time.Now().UTC(),
 	)
 
@@ -173,6 +180,7 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 		j             templateJSON
 		challengeCode string
 		shopJSON      sql.NullString
+		dialogueJSON  sql.NullString
 		taintImmune   int
 		fadeTicks     int64
 	)
@@ -188,6 +196,7 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 		&j.natural, &j.special, &j.traits,
 		&j.advancement, &j.climate, &j.terrain, &j.scripts,
 		&t.XPValue,
+		&dialogueJSON,
 	)
 	if err := s.Scan(dest...); err != nil {
 		return creature.MobTemplate{}, fmt.Errorf("scan mob_template: %w", err)
@@ -207,6 +216,9 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 			return creature.MobTemplate{}, err
 		}
 		t.ShopkeeperConfig = &sc
+	}
+	if dialogueJSON.Valid && dialogueJSON.String != "" {
+		t.DialogueJSON = []byte(dialogueJSON.String)
 	}
 	return t, nil
 }
@@ -236,6 +248,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		j             templateJSON
 		challengeCode string
 		shopJSON      sql.NullString
+		dialogueJSON  sql.NullString
 		taintImmune   int
 		fadeTicks     int64
 	)
@@ -251,6 +264,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		&j.natural, &j.special, &j.traits,
 		&j.advancement, &j.climate, &j.terrain, &j.scripts,
 		&t.XPValue,
+		&dialogueJSON,
 	)
 
 	err := r.db.QueryRowContext(ctx, query, arg).Scan(dest...)
@@ -277,6 +291,9 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 			return creature.MobTemplate{}, err
 		}
 		t.ShopkeeperConfig = &sc
+	}
+	if dialogueJSON.Valid && dialogueJSON.String != "" {
+		t.DialogueJSON = []byte(dialogueJSON.String)
 	}
 	return t, nil
 }

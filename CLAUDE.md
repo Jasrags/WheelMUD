@@ -122,7 +122,12 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `learn weave [id]` / `learn weave info <id>` draining
   `pending_weaves`, channeler-only and affinity-gated via
   `Channeling.Affinities`, dispatched off the `learn` verb's
-  router with a leading `weave` arg), the admin movement verbs (`goto <player|
+  router with a leading `weave` arg), the §F #30 dialogue verb
+  (`talk <mob>` — resolves the NPC via `mobs.ListInRoom` +
+  `MatchMob`, decodes `MobTemplate.DialogueJSON`, hands off to a
+  `cmd.PushDialogueFn` closure provided by `cmd/server/main.go`
+  that builds and pushes `*mode.Dialogue`; refusal lines for
+  no-mob / no-tree / corrupt-tree are name-aware), the admin movement verbs (`goto <player|
   room>`, `transfer <player> [<room>]`, `summon <player>`,
   `wizinvis` toggle), the `shutdown` / `reboot` countdown verbs,
   and the admin tools (`whereami`, `zones`,
@@ -147,7 +152,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0044. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0045. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -358,6 +363,37 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `cmd/server/main.go` after the channeling ticker; shutdown
   drain calls `srv.triggers.Stop()` before `bus.Stop()` so
   in-flight subscriptions cancel cleanly.
+  0045 added `mob_templates.dialogue_json` (nullable TEXT)
+  backing §15 / Phase F #30 — NPC dialogue trees authored inline
+  on the mob YAML entry (sibling to `shop:` / `trainer:` /
+  `weave_teacher:` / `triggers:`). The reserved `dialogue_tree_id`
+  INT column from 0008 stays unused (V1 trees are one-off per
+  template). `internal/dialogue/` ships the pure-data model
+  (`Tree`, `Node`, `Response`, `Effect`, `Show`) plus a
+  `Validate` that rejects dangling `next` references, unknown
+  effect kinds, missing effect args, and same-flag
+  require/forbid combos. The YAML loader translates
+  `DialogueDecl` → `*dialogue.Tree`, validates at boot, marshals
+  compact JSON onto `MobTemplate.DialogueJSON` before
+  `templates.Create`. `internal/mode/dialogue.go` is the runtime
+  conversation mode — pushed by the `talk <mob>` verb
+  (`internal/cmd/talk.go`, resolves NPC via `mobs.ListInRoom` +
+  `MatchMob` + `templates.GetByID`, decodes + revalidates the
+  tree). The mode renders the current node prompt + numbered
+  flag-gated responses each turn via `Prompt`; `Handle` accepts
+  bare number, free-text keyword (case-insensitive substring
+  match against `Response.Match[]`), or `bye`/`quit`/`leave`/
+  empty to pop. Effects fire in order before `Next` is followed:
+  `set_flag` / `clear_flag` (mutates per-session flag bag),
+  `goto` (overrides Next), `push_mode` (closure-injected by the
+  cmd-layer in `cmd/server/main.go`'s buildRegistry; nil in V1
+  → logs a warning), `end` (pops mode). Per-character branch
+  state (current node id + flag bag) lives on the mode
+  instance — drops on PopMode. Cross-package wiring rule:
+  `internal/cmd` does NOT import `internal/mode` (chargen-cycle
+  risk); the `talk` verb takes a `cmd.PushDialogueFn` closure
+  that `cmd/server/main.go` constructs after both packages
+  resolve.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

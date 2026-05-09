@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
 
@@ -553,6 +554,13 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 				ReachFt: 5, FaceFt: 5, ThreatFt: 5,
 			},
 		}
+		if m.Dialogue != nil {
+			djson, err := buildDialogueJSON(m.Dialogue)
+			if err != nil {
+				return fmt.Errorf("mob %q dialogue: %w", m.ID, err)
+			}
+			tpl.DialogueJSON = djson
+		}
 		created, err := templates.Create(ctx, tpl)
 		if err != nil {
 			return fmt.Errorf("insert mob template %q: %w", m.ID, err)
@@ -623,6 +631,88 @@ func insertMobTriggers(ctx context.Context, triggers repo.TriggerRepo, mobTempla
 		}
 	}
 	return nil
+}
+
+// buildDialogueJSON converts an authored DialogueDecl into the
+// canonical dialogue.Tree, runs duplicate-id + Validate checks, and
+// returns the compact JSON encoding ready for the
+// `mob_templates.dialogue_json` column. Validation runs here so a
+// bad tree fails LoadAndSync's transaction before the partial state
+// lands in SQLite.
+func buildDialogueJSON(d *DialogueDecl) ([]byte, error) {
+	if err := checkDialogueDupes(d); err != nil {
+		return nil, err
+	}
+	tree := decodeDialogueTree(d)
+	if err := dialogue.Validate(tree); err != nil {
+		return nil, err
+	}
+	out, err := json.Marshal(tree)
+	if err != nil {
+		return nil, fmt.Errorf("marshal dialogue: %w", err)
+	}
+	return out, nil
+}
+
+// checkDialogueDupes scans the authored Nodes slice for duplicate
+// IDs. Required because decodeDialogueTree's slice-to-map step
+// silently overwrites duplicates, hiding the typo from
+// dialogue.Validate. Run before the slice is collapsed.
+func checkDialogueDupes(d *DialogueDecl) error {
+	if d == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(d.Nodes))
+	for _, n := range d.Nodes {
+		if seen[n.ID] {
+			return fmt.Errorf("duplicate dialogue node id %q", n.ID)
+		}
+		seen[n.ID] = true
+	}
+	return nil
+}
+
+// decodeDialogueTree maps the YAML authoring shape onto the runtime
+// dialogue.Tree. Duplicate detection runs in checkDialogueDupes
+// before this function, so by the time we collapse the slice into a
+// map every key is unique.
+func decodeDialogueTree(d *DialogueDecl) *dialogue.Tree {
+	if d == nil {
+		return nil
+	}
+	t := &dialogue.Tree{
+		Root:  dialogue.NodeID(d.Root),
+		Nodes: make(map[dialogue.NodeID]dialogue.Node, len(d.Nodes)),
+	}
+	for _, n := range d.Nodes {
+		responses := make([]dialogue.Response, 0, len(n.Responses))
+		for _, r := range n.Responses {
+			effects := make([]dialogue.Effect, 0, len(r.Effects))
+			for _, e := range r.Effects {
+				effects = append(effects, dialogue.Effect{
+					Kind: dialogue.EffectKind(e.Kind),
+					Args: e.Args,
+				})
+			}
+			responses = append(responses, dialogue.Response{
+				Match:   r.Match,
+				Reply:   r.Reply,
+				Label:   r.Label,
+				Next:    dialogue.NodeID(r.Next),
+				Effects: effects,
+				Show: dialogue.Show{
+					RequireFlag: r.Show.RequireFlag,
+					ForbidFlag:  r.Show.ForbidFlag,
+				},
+			})
+		}
+		t.Nodes[dialogue.NodeID(n.ID)] = dialogue.Node{
+			ID:        dialogue.NodeID(n.ID),
+			Prompt:    n.Prompt,
+			Responses: responses,
+		}
+	}
+	return t
 }
 
 // insertTrainer materializes one `trainer:` YAML block into a trainers

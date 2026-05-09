@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"gopkg.in/yaml.v3"
 )
@@ -306,6 +307,16 @@ func validateMobs(mobs []Mob, rooms []Room, items []Item) error {
 		}
 		if err := validateTriggers(m.SourceFile, m.Line, "mob "+m.ID, m.Triggers); err != nil {
 			return err
+		}
+		if m.Dialogue != nil {
+			if err := checkDialogueDupes(m.Dialogue); err != nil {
+				return fmt.Errorf("%s:%d: mob %s dialogue: %w",
+					m.SourceFile, m.Line, m.ID, err)
+			}
+			if err := dialogue.Validate(decodeDialogueTree(m.Dialogue)); err != nil {
+				return fmt.Errorf("%s:%d: mob %s dialogue: %w",
+					m.SourceFile, m.Line, m.ID, err)
+			}
 		}
 	}
 	return nil

@@ -168,6 +168,44 @@ func runMobTemplateRepoTests(t *testing.T, name string, newRepo func(t *testing.
 			t.Fatalf("InventoryIDs = %v", got.ShopkeeperConfig.InventoryIDs)
 		}
 	})
+
+	t.Run(name+"/dialogue_json_roundtrip", func(t *testing.T) {
+		repo := newRepo(t)
+		ctx := context.Background()
+
+		t.Run("nil_when_unset", func(t *testing.T) {
+			t1 := sample()
+			t1.ExternalID = "dialogue.absent"
+			created, err := repo.Create(ctx, t1)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if len(got.DialogueJSON) != 0 {
+				t.Fatalf("DialogueJSON = %q, want empty", got.DialogueJSON)
+			}
+		})
+
+		t.Run("populated_roundtrip", func(t *testing.T) {
+			t2 := sample()
+			t2.ExternalID = "dialogue.present"
+			t2.DialogueJSON = []byte(`{"root":"root","nodes":{"root":{"id":"root","prompt":"hi"}}}`)
+			created, err := repo.Create(ctx, t2)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if string(got.DialogueJSON) != string(t2.DialogueJSON) {
+				t.Fatalf("DialogueJSON mismatch:\n got = %s\nwant = %s", got.DialogueJSON, t2.DialogueJSON)
+			}
+		})
+	})
 }
 
 func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {

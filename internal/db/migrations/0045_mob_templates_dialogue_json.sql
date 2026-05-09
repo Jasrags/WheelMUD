@@ -1,0 +1,21 @@
+-- 0045_mob_templates_dialogue_json.sql
+--
+-- NPC dialogue trees (§15 / Phase F #30). One nullable JSON column
+-- on mob_templates carrying the full dialogue.Tree authored inline
+-- on the mob YAML entry (sibling to shop_json / weave_teachers /
+-- triggers).
+--
+-- Schema choices:
+--   * dialogue_json is TEXT NULL. Mob templates without a dialogue
+--     block leave it NULL; the cmd-layer `talk` verb refuses with
+--     "they have nothing to say" rather than dispatching.
+--   * The legacy `dialogue_tree_id` INTEGER column from 0008 stays
+--     unused. V1 trees are one-off per mob_template; collapsing the
+--     reserved id column would force a migration with no win.
+--   * The full Tree (root + nodes + responses + effects) is marshalled
+--     as compact JSON via internal/dialogue. Validation runs at YAML
+--     load and again at repo Get for defense in depth.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+
+ALTER TABLE mob_templates ADD COLUMN dialogue_json TEXT;

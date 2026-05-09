@@ -2,12 +2,14 @@ package world
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
+	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
 
@@ -1161,6 +1163,156 @@ func TestLoadAndSync_TriggerRejectsScalarPayload(t *testing.T) {
 		t.Fatal("want error on scalar payload")
 	}
 	if !strings.Contains(err.Error(), "payload must be a mapping") {
+		t.Fatalf("err = %q", err)
+	}
+}
+
+func TestLoadAndSync_DialogueRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.commons
+  starter: true
+  name: Commons
+  long: A common room.
+`)},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.elder
+  room: z.commons
+  name: village elder
+  dialogue:
+    root: greet
+    nodes:
+      - id: greet
+        prompt: "Greetings, traveler."
+        responses:
+          - match: [hello, hi]
+            reply: "Well met."
+            next: farewell
+          - match: [quest]
+            effects:
+              - kind: set_flag
+                args:
+                  name: started_quest
+            next: farewell
+      - id: farewell
+        prompt: "Travel safely."
+`)},
+	}
+
+	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	mobs := repo.NewSQLiteMobTemplateRepo(conn)
+	tpl, err := mobs.GetByExternalID(ctx, "z.elder")
+	if err != nil {
+		t.Fatalf("template: %v", err)
+	}
+	if len(tpl.DialogueJSON) == 0 {
+		t.Fatal("DialogueJSON empty after roundtrip")
+	}
+	var got dialogue.Tree
+	if err := json.Unmarshal(tpl.DialogueJSON, &got); err != nil {
+		t.Fatalf("unmarshal dialogue: %v", err)
+	}
+	if got.Root != "greet" {
+		t.Fatalf("root = %q, want greet", got.Root)
+	}
+	greet, ok := got.Nodes["greet"]
+	if !ok {
+		t.Fatal("missing greet node")
+	}
+	if len(greet.Responses) != 2 {
+		t.Fatalf("greet responses len = %d, want 2", len(greet.Responses))
+	}
+	if greet.Responses[1].Effects[0].Kind != dialogue.EffectSetFlag {
+		t.Fatalf("effect kind = %q", greet.Responses[1].Effects[0].Kind)
+	}
+}
+
+func TestLoadAndSync_DialogueRejectsDanglingNext(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.r
+  starter: true
+  name: R
+  long: x
+`)},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.npc
+  room: z.r
+  name: stranger
+  dialogue:
+    root: greet
+    nodes:
+      - id: greet
+        prompt: hi
+        responses:
+          - match: [hello]
+            next: ghost
+`)},
+	}
+
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on dangling next")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("err = %q, want it to mention ghost", err)
+	}
+}
+
+func TestLoadAndSync_DialogueRejectsDuplicateNodeID(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.r
+  starter: true
+  name: R
+  long: x
+`)},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.npc
+  room: z.r
+  name: stranger
+  dialogue:
+    root: greet
+    nodes:
+      - id: greet
+        prompt: hi
+      - id: greet
+        prompt: also hi
+`)},
+	}
+
+	err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil {
+		t.Fatal("want error on duplicate node id")
+	}
+	if !strings.Contains(err.Error(), "duplicate dialogue node id") {
 		t.Fatalf("err = %q", err)
 	}
 }

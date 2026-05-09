@@ -246,6 +246,13 @@ type Mob struct {
 	// pending_weaves chargen pool.
 	WeaveTeacher *WeaveTeacher `yaml:"weave_teacher,omitempty"`
 
+	// Dialogue, if present, attaches a §15 / Phase F #30 NPC dialogue
+	// tree to the mob_template this entry spawns from. The loader
+	// translates the authoring shape into dialogue.Tree, validates it,
+	// and persists the JSON encoding on `mob_templates.dialogue_json`
+	// (migration 0045). Players engage via the `talk <mob>` verb.
+	Dialogue *DialogueDecl `yaml:"dialogue,omitempty"`
+
 	// Triggers attaches §15 / Phase F #29 declarative event handlers
 	// to the mob_template this entry spawns from. Loader inserts one
 	// triggers row per entry keyed by owner_kind='mob_template'.
@@ -301,6 +308,50 @@ type Trainer struct {
 type WeaveTeacher struct {
 	MaxLevelTaught  int      `yaml:"max_level_taught"`
 	AffinityFilter  []string `yaml:"affinity_filter,omitempty"`
+}
+
+// DialogueDecl is the authoring shape for a `dialogue:` block on a
+// Mob (Phase F #30). Nodes are an ordered list — the loader rewrites
+// into a dialogue.Tree (map keyed by node id) before persisting.
+// Validation runs at load-time so a malformed tree fails the boot
+// loudly, with the source file and mob id in the error.
+type DialogueDecl struct {
+	Root  string             `yaml:"root"`
+	Nodes []DialogueNodeDecl `yaml:"nodes"`
+}
+
+// DialogueNodeDecl is one node within a DialogueDecl.
+type DialogueNodeDecl struct {
+	ID        string                 `yaml:"id"`
+	Prompt    string                 `yaml:"prompt"`
+	Responses []DialogueResponseDecl `yaml:"responses,omitempty"`
+}
+
+// DialogueResponseDecl is one response option under a dialogue node.
+//
+// Match keywords are matched case-insensitively against player
+// free-text input as substrings. Empty Match still allows numbered
+// selection. Effects fire in order before Next is followed.
+type DialogueResponseDecl struct {
+	Match   []string               `yaml:"match,omitempty"`
+	Reply   string                 `yaml:"reply,omitempty"`
+	Label   string                 `yaml:"label,omitempty"`
+	Next    string                 `yaml:"next,omitempty"`
+	Effects []DialogueEffectDecl   `yaml:"effects,omitempty"`
+	Show    DialogueShowDecl       `yaml:"show,omitempty"`
+}
+
+// DialogueEffectDecl is one effect entry under a dialogue response.
+// Kind is one of dialogue.EffectKind; Args is a free-form string map.
+type DialogueEffectDecl struct {
+	Kind string            `yaml:"kind"`
+	Args map[string]string `yaml:"args,omitempty"`
+}
+
+// DialogueShowDecl gates response visibility on per-session flags.
+type DialogueShowDecl struct {
+	RequireFlag string `yaml:"require_flag,omitempty"`
+	ForbidFlag  string `yaml:"forbid_flag,omitempty"`
 }
 
 // TriggerDecl is one entry under a `triggers:` YAML sub-block on a
