@@ -5,8 +5,11 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	gluua "github.com/yuin/gopher-lua"
+
+	"github.com/Jasrags/WheelMUD/internal/scripts"
 )
 
 // V2 surface (Phase F #32 slice 2): quest.accept, quest.advance,
@@ -96,31 +99,61 @@ func TestAPIv2_PushMode_NilBoundIsClassified(t *testing.T) {
 	}
 }
 
-// Successive calls reuse the pool — make sure release wipes the
-// quest / push_mode globals so a script can't observe leaked
-// closures from the previous borrow.
+// Successive calls on the SAME runner must observe wiped V2
+// globals — release clears `quest` / `push_mode` so a pooled
+// LState never sees leaked closures from the previous borrow.
+// Bundle both scripts in one catalog so the second call hits the
+// same runner (and, with poolSize=1 in production behavior, very
+// likely the same LState — but the test claim is correctness, not
+// observed pool-slot reuse).
 func TestAPIv2_ReleaseClearsV2Globals(t *testing.T) {
-	cat := loadScript(t, "leakprobe", `
+	body := func(name, src string) (string, []byte) { return name + ".lua", []byte(src) }
+	n1, b1 := body("with_bindings", `quest.accept("x") push_mode("y")`)
+	n2, b2 := body("leakprobe", `
 if type(quest) ~= "nil" then error("expected quest=nil, got " .. type(quest)) end
 if type(push_mode) ~= "nil" then error("expected push_mode=nil, got " .. type(push_mode)) end
 `)
+	parser := gluua.NewState()
+	defer parser.Close()
+	cat := loadCatalogMulti(t, parser, map[string][]byte{n1: b1, n2: b2})
+
 	r := NewRunner(cat, nil)
 	defer r.Stop()
 
-	// First call: install bindings.
-	first := loadScript(t, "first", `quest.accept("x") push_mode("y")`)
-	r2 := NewRunner(first, nil)
-	defer r2.Stop()
 	bindings := APIBindings{
 		QuestAccept: func(string) error { return nil },
 		PushMode:    func(string) error { return nil },
 	}
-	if err := r2.Run(context.Background(), "first", func(l *gluua.LState) { bindings.Bind(l) }); err != nil {
-		t.Fatalf("first Run: %v", err)
+	bind := func(l *gluua.LState) { bindings.Bind(l) }
+	// The pool size is poolSize=8; running with_bindings >= poolSize
+	// times guarantees every pooled LState has installed (and then
+	// released) the V2 globals. A subsequent run of leakprobe
+	// >= poolSize times then exercises all of them in the unbound
+	// state; a release-bug on any single LState surfaces.
+	for i := 0; i < poolSize; i++ {
+		if err := r.Run(context.Background(), "with_bindings", bind); err != nil {
+			t.Fatalf("with_bindings Run #%d: %v", i, err)
+		}
 	}
-	// Second call on same runner with no bindings — globals must
-	// observe as nil because release wiped them.
-	if err := r.Run(context.Background(), "leakprobe", nil); err != nil {
-		t.Fatalf("leakprobe Run: %v", err)
+	for i := 0; i < poolSize; i++ {
+		if err := r.Run(context.Background(), "leakprobe", nil); err != nil {
+			t.Fatalf("leakprobe Run #%d (release should have wiped): %v", i, err)
+		}
 	}
+}
+
+// loadCatalogMulti compiles each (name → body) pair into one
+// scripts.Catalog so a single Runner can serve both. Mirrors
+// loadScript's shape but accepts a map.
+func loadCatalogMulti(t *testing.T, parser *gluua.LState, files map[string][]byte) *scripts.Catalog {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	for name, body := range files {
+		fsys[name] = &fstest.MapFile{Data: body}
+	}
+	cat, err := scripts.Load(fsys, parser)
+	if err != nil {
+		t.Fatalf("scripts.Load: %v", err)
+	}
+	return cat
 }

@@ -267,6 +267,49 @@ func TestEngine_Advance_OnKillNStep_NoOp(t *testing.T) {
 	}
 }
 
+// Advance on a talk_to step is REFUSED — talk_to has its own
+// AdvanceTalkTo entry point which validates the dialogue NPC
+// against Step.Mob. Allowing the kind-agnostic Advance to bypass
+// that gate would let a Lua script short-circuit the player's
+// actual dialogue with the correct NPC.
+func TestEngine_Advance_OnTalkToStep_NoOp(t *testing.T) {
+	e, chars, accounts, _ := fixtureEngine(t)
+	c := makeChar(t, chars, accounts, "Nynaeve")
+	ctx := context.Background()
+
+	_ = e.AcceptQuest(ctx, c.ID, "lost_lamb")
+	// Walk through reach_room (step 0) and kill_n (step 1) so step
+	// 2 (talk_to) is active.
+	e.onPlayerEntered(ctx, world.PlayerEntered{CharacterID: c.ID, ToRoomID: 100})
+	for i := 0; i < 3; i++ {
+		e.onCombatDeath(ctx, combat.CombatDeath{
+			Killer:                combat.ActorRef{Kind: combat.ActorKindCharacter, ID: c.ID},
+			Victim:                combat.ActorRef{Kind: combat.ActorKindMob, ID: 1},
+			MobTemplateExternalID: "tr.wolf",
+		})
+	}
+	got, _ := chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].StepIndex != 2 {
+		t.Fatalf("setup precondition failed: stepIndex %d, want 2", got.QuestLog[0].StepIndex)
+	}
+
+	if err := e.Advance(ctx, c.ID, "lost_lamb"); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	got, _ = chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].StepIndex != 2 {
+		t.Fatalf("StepIndex = %d after refused Advance, want 2 (unchanged)", got.QuestLog[0].StepIndex)
+	}
+	// AdvanceTalkTo with the right NPC still works.
+	if err := e.AdvanceTalkTo(ctx, c.ID, "lost_lamb", "tr.elder"); err != nil {
+		t.Fatalf("AdvanceTalkTo: %v", err)
+	}
+	got, _ = chars.GetByID(ctx, c.ID)
+	if got.QuestLog[0].CompletedAt.IsZero() {
+		t.Fatalf("expected quest completed after AdvanceTalkTo")
+	}
+}
+
 // Advance on a quest the character isn't on is a silent no-op, not
 // an error — Lua scripts may be invoked in contexts where the
 // character has dropped the quest already.
