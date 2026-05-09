@@ -439,7 +439,15 @@ catalogs.
     caps from the chargen catalog.
 25. **Affects / buffs / debuffs with durations** (§12).
     `creature_affects` table. Combat reads it for poison/bleed; weaves
-    and consumables write it.
+    and consumables write it. **Slice 1 landed 2026-05-09:** the
+    `affects` inspect verb (Player) + `affect` / `dispel` admin verbs
+    fill the no-callers gap on `affects.Apply` and give builders an
+    end-to-end producer to test the existing tick / Effective /
+    Expired pipeline. Sentinel Source `-1` flags admin-applied
+    affects in the inspect-verb display. Slice 2+ wires
+    consumable/weave/combat-hit producers, TickEffect dispatch
+    (DoT/poison/bleed), the §9 condition enum, and stacking caps
+    from different sources.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure.
 27. ~~**Channeling slot refresh + madness tick** (§9). Schema half-

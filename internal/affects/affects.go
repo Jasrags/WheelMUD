@@ -4,12 +4,38 @@
 // per-tick driver calls Tick to count durations down; sources call
 // Apply to add/refresh an entry.
 //
-// V1 (Phase E #26) ships stat-mods only. TickEffect dispatch (poison /
+// V1 (Phase E #25) ships stat-mods only. TickEffect dispatch (poison /
 // bleed DOTs) is deferred until a content source needs it; see the
 // plan file for the full deferred-followups list.
 package affects
 
 import "github.com/Jasrags/WheelMUD/internal/creature"
+
+// TickSeconds is the wall-clock cadence at which the SessionTicker
+// pulses. Subscribers in cmd/server/main.go bind the ticker to
+// tick.Buckets.Regen (30s); the constant is the single source of
+// truth so the `affects` verb's duration readout stays in sync if the
+// bucket binding changes.
+const TickSeconds = 30
+
+// AllowedStatModFields enumerates the field names accepted by Apply /
+// Effective. Used by the `affect` admin verb's argument parser to
+// reject typos with a useful hint instead of silently no-opping in
+// applyMod's switch.
+var AllowedStatModFields = []string{
+	FieldStrCurrent,
+	FieldDexCurrent,
+	FieldConCurrent,
+	FieldIntCurrent,
+	FieldWisCurrent,
+	FieldChaCurrent,
+	FieldDefense,
+	FieldSavesFort,
+	FieldSavesRef,
+	FieldSavesWill,
+	FieldSpeedBase,
+	FieldBAB,
+}
 
 // StatMod field names. Centralised so callers and tests use the same
 // strings — typos in StatMod.Field silently no-op in Effective.

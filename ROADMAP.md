@@ -1128,9 +1128,18 @@ will need on top of those tables.
       pool, cap, duplicate, miss-affinity, unknown id) do not
       mutate or audit; success writes one `feat` / `bump` /
       `learn` audit row.
-- [ ] Affects / buffs / debuffs with durations — `creature_affects`
+- [~] Affects / buffs / debuffs with durations — `creature_affects`
       list `(source_id, name, modifiers []StatMod, duration_ticks,
-      tick_effect)`. Must support the WoT condition enum from §9:
+      tick_effect)`. Phase E #25 slice 1 landed 2026-05-09: player
+      `affects` inspect verb + admin `affect` / `dispel` producer
+      verbs. `affects.Apply` now has live callers (admin sentinel
+      Source = -1); the existing `SessionTicker` decrements
+      durations, `Effective` folds StatMods at attack time, and
+      the `Expired` subscriber emits fade lines. Out of slice 1:
+      consumable / weave / combat-hit producers, TickEffect
+      dispatch (poison/bleed DoT), §9 condition enum, stacking
+      caps, player-driven dispel. Must support the WoT condition
+      enum from §9:
       `AbilityDamaged, AbilityDrained, Blinded, Checked, Cowering,
       Dazed, Deafened, Disabled, Dying, Entangled, Exhausted,
       Fatigued, FlatFooted, Frightened, Grappled, Held, Helpless,
