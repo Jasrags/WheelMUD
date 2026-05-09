@@ -52,6 +52,20 @@ const (
 	// EffectEnd pops the Dialogue mode immediately. Equivalent to a
 	// Response with empty Next, but explicit.
 	EffectEnd EffectKind = "end"
+
+	// EffectAcceptQuest enrolls the character in a quest at step 0.
+	// Args["quest_id"] names the quest catalog entry. The runtime
+	// handler is closure-injected by the cmd-layer (no internal/quest
+	// import here). No-op if the character already has the quest in
+	// their log (active or completed) so re-clicking is safe.
+	EffectAcceptQuest EffectKind = "accept_quest"
+
+	// EffectAdvanceQuest advances the character's active step on a
+	// quest IFF that step is StepTalkTo and the current NPC matches
+	// the step's Mob ExternalID. Args["quest_id"] names the quest.
+	// Same closure-injection pattern as EffectAcceptQuest. Logs +
+	// no-ops on mismatch so authoring mistakes never lock players.
+	EffectAdvanceQuest EffectKind = "advance_quest"
 )
 
 // Effect is one atomic state mutation fired when a Response is taken.

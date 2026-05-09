@@ -1269,13 +1269,32 @@ will need on top of those tables.
 
 ## 15. Quests, scripts & NPC behavior
 
-- [ ] Quest engine (state machine per character per quest) —
-      `quests` table (id, name, steps JSON), `character_quests`
-      (`character_id`, `quest_id`, `step_index`, `state JSON`,
-      `completed_at`). Step types: `talk_to`, `kill_n`, `fetch`,
-      `deliver`, `reach_room`, `script`. Quest log command shows
-      active + completed; rewards (xp/gold/item) granted on the
-      final step's transition.
+- [x] Quest engine (state machine per character per quest) — Phase
+      F #31 landed 2026-05-09. No new migration: V1 reuses
+      `characters.quest_log_json` (already shipped in 0009) and
+      widened `creature.QuestProgress.QuestID` from int64 to
+      string for catalog-id round-trip. V1 step types: `talk_to`,
+      `kill_n`, `reach_room` (`fetch`/`deliver` deferred until item
+      events land; `script` deferred to #32 Lua). Authoring lives
+      in `internal/quest/default/<id>.yaml` (one file per quest)
+      with `QUEST_DIR` env-override mirroring chargen / news.
+      Cross-references against world content (mob_template +
+      room ExternalIDs) validate at boot; a typo fails loudly.
+      Two new dialogue Effects: `accept_quest` and `advance_quest`
+      (closure-injected from `cmd/server/main.go` so
+      `internal/cmd` and `internal/dialogue` stay free of the
+      `internal/quest` import). Engine subscribes to
+      `combat.CombatDeath` (kill_n decrement; new
+      `MobTemplateID` + `MobTemplateExternalID` fields on the
+      event so the template id survives the post-kill cleanup)
+      and `world.PlayerEntered` (reach_room transition); talk_to
+      advances via the dialogue advance_quest effect. Final-step
+      transition grants XP via `RecordXP` and coin via
+      `RecordCoin` with one optimistic-lock retry on
+      `ErrCoinConflict` (mirrors the shop verbs). New `quest`
+      verb (alias `quests`): bare lists active + completed, `info
+      <id>` renders the step list with progress markers, `abandon
+      <id>` drops an active entry (audited).
 - [x] NPC dialogue trees — Phase F #30 landed 2026-05-08.
       Migration 0045 added `mob_templates.dialogue_json` (nullable
       TEXT). YAML mob entries gain an optional `dialogue:` block

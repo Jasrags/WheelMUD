@@ -113,6 +113,10 @@ func validateEffect(e Effect, t *Tree) error {
 		}
 	case EffectEnd:
 		// no args required
+	case EffectAcceptQuest, EffectAdvanceQuest:
+		if e.Args["quest_id"] == "" {
+			return fmt.Errorf("%s requires args.quest_id", e.Kind)
+		}
 	default:
 		return fmt.Errorf("unknown effect kind %q", e.Kind)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/news"
 	"github.com/Jasrags/WheelMUD/internal/persist"
+	"github.com/Jasrags/WheelMUD/internal/quest"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/safego"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -73,6 +74,7 @@ type server struct {
 	combat     *combat.Manager
 	groups     *group.Manager
 	triggers   *trigger.Dispatcher
+	quest      *quest.Engine
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -202,6 +204,18 @@ func main() {
 		"feats", len(chargenCatalog.Feats()),
 		"skills", len(chargenCatalog.Skills()),
 		"weaves", len(chargenCatalog.Weaves()))
+
+	questFS, err := quest.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve quest source", "error", err)
+		os.Exit(1)
+	}
+	questCatalog, err := quest.Load(questFS)
+	if err != nil {
+		slog.Error("Failed to load quest catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Quest catalog loaded", "quests", len(questCatalog.ByID))
 
 	scheduler := tick.New()
 	buckets := tick.NewBuckets(scheduler)
@@ -476,6 +490,22 @@ func main() {
 	triggerDispatcher := trigger.NewDispatcher(bus, buckets.Phase, triggerRunner, mobs)
 	triggerDispatcher.Start(context.Background())
 
+	// Phase F #31: cross-validate the loaded quest catalog against
+	// world content (rooms + mob templates) so a typo in a quest
+	// YAML fails the boot. Then stand up the engine and subscribe
+	// it to combat / movement events.
+	questRefs, err := buildQuestRefSets(context.Background(), rooms, mobTemplates)
+	if err != nil {
+		slog.Error("Failed to build quest ref sets", "error", err)
+		os.Exit(1)
+	}
+	if err := quest.Validate(questCatalog, questRefs); err != nil {
+		slog.Error("Quest catalog validation failed", "error", err)
+		os.Exit(1)
+	}
+	questEngine := quest.NewEngine(questCatalog, characters, rooms, audits, bus, sessions)
+	questEngine.Start(context.Background())
+
 	// affects.Expired subscriber: emits one cfmt line per name to the
 	// owning session via WriteAsync (cross-session output rule).
 	eventbus.Subscribe[affects.Expired](bus, func(_ context.Context, ev affects.Expired) {
@@ -514,6 +544,7 @@ func main() {
 		combat:     combatMgr,
 		groups:     groups,
 		triggers:   triggerDispatcher,
+		quest:      questEngine,
 		closed:     make(chan struct{}),
 	}
 
@@ -521,7 +552,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, questCatalog, questEngine, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -657,6 +688,9 @@ func (srv *server) shutdown() {
 	if srv.triggers != nil {
 		srv.triggers.Stop()
 	}
+	if srv.quest != nil {
+		srv.quest.Stop()
+	}
 	srv.buckets.Stop()
 	srv.scheduler.Stop()
 	srv.bus.Stop()
@@ -690,6 +724,35 @@ func savePlayTimes(ctx context.Context, sessions *session.Registry, characters r
 		slog.Debug("autosave: last_played_at refreshed", "characters", count)
 	}
 	return nil
+}
+
+// buildQuestRefSets assembles the (mobs, rooms) ExternalID sets that
+// quest.Validate cross-references against. Phase F #31 — runs once
+// at boot after the world loader has populated both repos. A typo'd
+// reference in a quest YAML fails the boot loudly before the engine
+// subscribes to any events.
+func buildQuestRefSets(ctx context.Context, rooms repo.RoomRepo, templates repo.MobTemplateRepo) (*quest.RefSets, error) {
+	allRooms, err := rooms.ListAll(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list rooms: %w", err)
+	}
+	mobIDs, err := templates.ListExternalIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list mob templates: %w", err)
+	}
+	refs := &quest.RefSets{
+		Mobs:  make(map[string]bool, len(mobIDs)),
+		Rooms: make(map[string]bool, len(allRooms)),
+	}
+	for _, id := range mobIDs {
+		refs.Mobs[id] = true
+	}
+	for _, r := range allRooms {
+		if r.ExternalID != "" {
+			refs.Rooms[r.ExternalID] = true
+		}
+	}
+	return refs, nil
 }
 
 func envOr(key, fallback string) string {
@@ -748,7 +811,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -915,14 +978,30 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	// can hand cmd a closure that builds a *mode.Dialogue, since cmd
 	// can't import internal/mode without risking an import cycle
 	// through chargen.
-	pushDialogue := func(s *telnet.Session, npcName string, tree *dialogue.Tree) error {
-		dm, err := mode.NewDialogue(npcName, tree, nil)
+	hooks := mode.DialogueHooks{}
+	if questEngine != nil {
+		// Honor the dispatcher's ctx so a stalled repo write under
+		// shutdown drain or session teardown unblocks instead of
+		// holding the dialogue handler open. Engine repo calls
+		// already accept the propagated ctx.
+		hooks.AcceptQuest = func(ctx context.Context, s *telnet.Session, questID string) error {
+			return questEngine.AcceptQuest(ctx, s.CharacterID, questID)
+		}
+		hooks.AdvanceQuest = func(ctx context.Context, s *telnet.Session, questID, npcExternalID string) error {
+			return questEngine.AdvanceTalkTo(ctx, s.CharacterID, questID, npcExternalID)
+		}
+	}
+	pushDialogue := func(s *telnet.Session, npcName, npcExternalID string, tree *dialogue.Tree) error {
+		dm, err := mode.NewDialogue(npcName, npcExternalID, tree, hooks)
 		if err != nil {
 			return err
 		}
 		return s.PushMode(dm)
 	}
 	if err := r.Register(cmd.NewTalk(mobs, mobTemplates, pushDialogue)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewQuest(characters, questCatalog, questEngine, audits)); err != nil {
 		return nil, err
 	}
 	return r, nil

@@ -141,6 +141,72 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_quest_progress", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "qowner", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Perrin"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		// Empty round-trip: a fresh row defaults to '[]'; writing nil
+		// stays empty.
+		if err := cr.RecordQuestProgress(ctx, c.ID, nil); err != nil {
+			t.Fatalf("record empty quest log: %v", err)
+		}
+		got, _ := cr.GetByID(ctx, c.ID)
+		if len(got.QuestLog) != 0 {
+			t.Fatalf("empty quest log: got %d entries", len(got.QuestLog))
+		}
+
+		// Single-entry round-trip.
+		want := []creature.QuestProgress{{
+			QuestID:   "lost_lamb",
+			StepIndex: 1,
+			StateJSON: `{"remaining":3}`,
+		}}
+		if err := cr.RecordQuestProgress(ctx, c.ID, want); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.QuestLog) != 1 {
+			t.Fatalf("len: got %d, want 1", len(got.QuestLog))
+		}
+		if got.QuestLog[0].QuestID != "lost_lamb" || got.QuestLog[0].StepIndex != 1 {
+			t.Fatalf("round-trip: %+v", got.QuestLog[0])
+		}
+		if got.QuestLog[0].StateJSON != `{"remaining":3}` {
+			t.Fatalf("StateJSON = %q", got.QuestLog[0].StateJSON)
+		}
+
+		// Overwrite: full replacement, not append.
+		next := []creature.QuestProgress{
+			{QuestID: "lost_lamb", StepIndex: 2, StateJSON: "{}"},
+			{QuestID: "another", StepIndex: 0, StateJSON: "{}"},
+		}
+		if err := cr.RecordQuestProgress(ctx, c.ID, next); err != nil {
+			t.Fatalf("overwrite: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.QuestLog) != 2 {
+			t.Fatalf("overwrite len: got %d", len(got.QuestLog))
+		}
+
+		// Clear.
+		if err := cr.RecordQuestProgress(ctx, c.ID, nil); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.QuestLog) != 0 {
+			t.Fatalf("clear: got %d entries", len(got.QuestLog))
+		}
+
+		if err := cr.RecordQuestProgress(ctx, c.ID+999, nil); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing id: err = %v", err)
+		}
+	})
+
 	t.Run(name+"/get_by_id", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

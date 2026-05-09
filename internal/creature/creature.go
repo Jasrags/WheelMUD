@@ -699,10 +699,23 @@ type SkillRanks struct {
 	IsClassSkill bool // true ⇒ cap level+3; false ⇒ cap (level+3)/2
 }
 
-// QuestProgress is per-character quest state. The full quest engine
-// lands in §15; this is enough to schema characters today.
+// QuestProgress is per-character quest state. Persisted in
+// `characters.quest_log_json` (migration 0009) as a JSON-encoded
+// slice. The Phase F #31 quest engine owns the semantics; this
+// struct is the wire shape:
+//
+//   - QuestID is the string id from the quest catalog
+//     (`internal/quest/default/<id>.yaml` — slug-style, e.g.
+//     "lost_lamb"). String-keyed rather than int64 so a quest
+//     can be renamed without a backfill, and so a corrupted /
+//     unknown id surfaces as a string the engine can log.
+//   - StepIndex is the active step (0-based). On final-step
+//     completion the engine sets CompletedAt and stops advancing.
+//   - StateJSON is per-step engine state — currently only kill_n
+//     uses it (`{"remaining": 3}`). Opaque to creature.
+//   - CompletedAt zero-value means active; non-zero means done.
 type QuestProgress struct {
-	QuestID     int64
+	QuestID     string
 	StepIndex   int16
 	StateJSON   string // opaque to creature; engine parses
 	CompletedAt time.Time

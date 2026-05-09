@@ -102,10 +102,12 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 
 	if m.bus != nil {
 		m.bus.Publish(ctx, CombatDeath{
-			RoomID:   roomID,
-			Victim:   victim,
-			Killer:   killer,
-			CorpseID: corpseID,
+			RoomID:                roomID,
+			Victim:                victim,
+			Killer:                killer,
+			CorpseID:              corpseID,
+			MobTemplateID:         tmpl.ID,
+			MobTemplateExternalID: tmpl.ExternalID,
 		})
 	}
 }

@@ -332,7 +332,11 @@ Dialogue rules:
 - `effects` fire in order before `next` is followed. Effect kinds:
   `set_flag` / `clear_flag` (per-session flag bag — drops on
   logout), `goto` (overrides `next`), `push_mode` (hand off to a
-  sibling mode; nil in V1, log-and-noop), `end` (pop the dialogue).
+  sibling mode; nil in V1, log-and-noop), `end` (pop the dialogue),
+  `accept_quest` / `advance_quest` (Phase F #31 — `args.quest_id`
+  enrolls or advances a talk_to quest step; quest definitions live
+  under `internal/quest/default/<id>.yaml`, see that directory's
+  README for the schema).
 - `show` gates a response's visibility on the per-session flag bag.
   `require_flag` keeps the response hidden until the flag is set;
   `forbid_flag` hides it once the flag is set.

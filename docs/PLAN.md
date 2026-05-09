@@ -558,8 +558,34 @@ Content multiplier. Without this the world is static.
     migration with no win). Followups: persisted flag bag,
     catalog-style reusable trees, `tedit` OLC, on_say-driven
     ambient dialogue layered on top of trees.
-31. **Quest engine state machine** (§15). Per-character per-quest
-    state + objective ticks.
+31. ~~**Quest engine state machine** (§15). Per-character per-quest
+    state + objective ticks.~~ **Landed 2026-05-09.** No migration
+    — reused `characters.quest_log_json` from migration 0009 and
+    widened `creature.QuestProgress.QuestID` to string for
+    catalog-id round-trip. V1 step types: `talk_to`, `kill_n`,
+    `reach_room`. `fetch` / `deliver` deferred (need
+    `world.ItemPickedUp` / `world.ItemGivenToMob` events from
+    get/give verbs); `script` deferred to #32 Lua.
+    `internal/quest/` is the new package — Catalog (one YAML file
+    per quest under `internal/quest/default/`, `QUEST_DIR`
+    override mirrors chargen/news), Validator (cross-refs
+    against world content at boot), Engine (subscribes to
+    `combat.CombatDeath` + `world.PlayerEntered`; talk_to
+    drives via dialogue effect, not an event). New dialogue
+    effects `accept_quest` / `advance_quest` use the same
+    closure-injection pattern as `push_mode` so the cmd-layer
+    wires them without internal/cmd importing internal/quest.
+    `combat.CombatDeath` gained `MobTemplateID` and
+    `MobTemplateExternalID` fields so kill_n can match by
+    template ExternalID without re-fetching the dead instance.
+    Final-step transition grants XP via `RecordXP` and coin via
+    `RecordCoin` with one optimistic-lock retry on
+    `ErrCoinConflict`; one `audit.Record(verb=quest_complete)`
+    per completion. New `quest` verb (alias `quests`): bare
+    lists active + completed, `info <id>` renders steps with
+    progress markers, `abandon <id>` drops + audits. Followups:
+    item events for fetch/deliver, item rewards on completion,
+    qedit OLC, group quest sharing, XP-debt drain on quest XP.
 32. **Embedded scripting (gopher-lua) + sandbox** (§15). Biggest lift
     in the whole roadmap. Defer until 29–31 prove the trigger surface
     is what you actually want — otherwise the Lua API gets redesigned

@@ -307,6 +307,14 @@ type CharacterRepo interface {
 	// cast). Pass nil or an empty slice to clear all affects. Returns
 	// ErrCharacterNotFound when no row matches id.
 	RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error
+	// RecordQuestProgress rewrites the character's quest_log_json column
+	// with the supplied slice. Phase F #31 — the quest engine calls this
+	// on every state transition (accept_quest, kill_n decrement,
+	// reach_room hit, talk_to advance, completion). Pass nil or an empty
+	// slice to clear the log. Mirrors RecordAffects: full-blob rewrite,
+	// no diff math at the SQL layer. Returns ErrCharacterNotFound when
+	// no row matches id.
+	RecordQuestProgress(ctx context.Context, id int64, log []creature.QuestProgress) error
 	// RecordChanneling rewrites the character's channeling_json column
 	// with the supplied struct. Phase E #27 — the per-tick channeling
 	// driver and the `still`/`unstill`/`embrace`/`release` verbs call

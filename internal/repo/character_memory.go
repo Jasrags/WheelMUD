@@ -413,6 +413,24 @@ func (r *MemoryCharacterRepo) RecordAffects(_ context.Context, id int64, affects
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordQuestProgress(_ context.Context, id int64, log []creature.QuestProgress) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			if len(log) == 0 {
+				c.QuestLog = nil
+			} else {
+				cp := make([]creature.QuestProgress, len(log))
+				copy(cp, log)
+				c.QuestLog = cp
+			}
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordChanneling(_ context.Context, id int64, ch *creature.Channeling) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

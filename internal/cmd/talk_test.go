@@ -56,7 +56,7 @@ func TestTalk_RefusesWhenNoMob(t *testing.T) {
 	mobs := repo.NewMemoryMobInstanceRepo()
 	templates := repo.NewMemoryMobTemplateRepo()
 
-	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _ string, _ *dialogue.Tree) error {
+	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _, _ string, _ *dialogue.Tree) error {
 		t.Fatal("pushDialogue should not be called")
 		return nil
 	})
@@ -71,7 +71,7 @@ func TestTalk_RefusesWhenMobHasNoDialogue(t *testing.T) {
 	mobs, templates, _ := makeNPCWithDialogue(t, 1, "guard", nil)
 
 	called := false
-	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _ string, _ *dialogue.Tree) error {
+	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _, _ string, _ *dialogue.Tree) error {
 		called = true
 		return nil
 	})
@@ -97,13 +97,15 @@ func TestTalk_PushesDialogueOnMatch(t *testing.T) {
 	mobs, templates, _ := makeNPCWithDialogue(t, 1, "elder", tree)
 
 	pushed := struct {
-		called bool
-		name   string
-		root   dialogue.NodeID
+		called      bool
+		name        string
+		externalID  string
+		root        dialogue.NodeID
 	}{}
-	talk := NewTalk(mobs, templates, func(_ *telnet.Session, npcName string, t *dialogue.Tree) error {
+	talk := NewTalk(mobs, templates, func(_ *telnet.Session, npcName, npcExternalID string, t *dialogue.Tree) error {
 		pushed.called = true
 		pushed.name = npcName
+		pushed.externalID = npcExternalID
 		pushed.root = t.Root
 		return nil
 	})
@@ -113,6 +115,9 @@ func TestTalk_PushesDialogueOnMatch(t *testing.T) {
 	}
 	if pushed.name != "elder" {
 		t.Fatalf("npcName = %q, want elder", pushed.name)
+	}
+	if pushed.externalID != "test.elder" {
+		t.Fatalf("externalID = %q, want test.elder", pushed.externalID)
 	}
 	if pushed.root != "root" {
 		t.Fatalf("tree.Root = %q", pushed.root)
@@ -137,7 +142,7 @@ func TestTalk_RefusesOnInvalidJSON(t *testing.T) {
 		t.Fatalf("create instance: %v", err)
 	}
 
-	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _ string, _ *dialogue.Tree) error {
+	talk := NewTalk(mobs, templates, func(_ *telnet.Session, _, _ string, _ *dialogue.Tree) error {
 		t.Fatal("pushDialogue should not be called")
 		return nil
 	})

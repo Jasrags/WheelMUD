@@ -42,7 +42,8 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `internal/db.Open` (runs embedded migrations 0001–0028), constructs every
   repo (accounts, characters, rooms, exits, items, mob_instances,
   mob_templates, mob_trails, zones, channels), loads the news catalog
-  (`internal/news`) and the chargen catalog (`internal/chargen`),
+  (`internal/news`), the chargen catalog (`internal/chargen`),
+  and the quest catalog (`internal/quest`),
   runs `world.LoadAndSync` to seed the DB from
   `WORLD_DIR`, builds the command registry plus a `server` struct
   holding long-lived deps, starts `tick.Scheduler` + `tick.Buckets`
@@ -127,7 +128,11 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `MatchMob`, decodes `MobTemplate.DialogueJSON`, hands off to a
   `cmd.PushDialogueFn` closure provided by `cmd/server/main.go`
   that builds and pushes `*mode.Dialogue`; refusal lines for
-  no-mob / no-tree / corrupt-tree are name-aware), the admin movement verbs (`goto <player|
+  no-mob / no-tree / corrupt-tree are name-aware), the §F #31
+  quest verb (`quest` / `quests` — bare lists active +
+  completed; `quest info <id>` renders steps with ✓ / ▸ /
+  · markers; `quest abandon <id>` drops the entry and audits),
+  the admin movement verbs (`goto <player|
   room>`, `transfer <player> [<room>]`, `summon <player>`,
   `wizinvis` toggle), the `shutdown` / `reboot` countdown verbs,
   and the admin tools (`whereami`, `zones`,
@@ -394,6 +399,36 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   risk); the `talk` verb takes a `cmd.PushDialogueFn` closure
   that `cmd/server/main.go` constructs after both packages
   resolve.
+
+- **`internal/quest/`** — Phase F #31 quest engine: catalog
+  (`Tree`, `Step`, `Reward`), validator (cross-refs against
+  world mob_template + room ExternalIDs at boot), engine
+  (subscribes to `combat.CombatDeath` for kill_n,
+  `world.PlayerEntered` for reach_room; talk_to advances via
+  the dialogue `advance_quest` effect). Authoring is one YAML
+  file per quest under `internal/quest/default/<id>.yaml` with
+  `QUEST_DIR` env-override (mirrors chargen / news). V1 step
+  kinds: `talk_to`, `kill_n`, `reach_room` — `fetch` / `deliver`
+  / `script` deferred. Per-character state lives on the
+  existing `characters.quest_log_json` column (migration 0009)
+  via `RecordQuestProgress`; engine reloads the log before each
+  transition (correctness > throughput on the eventbus
+  goroutine). `combat.CombatDeath` was extended with
+  `MobTemplateID` + `MobTemplateExternalID` so the engine can
+  match kill_n.Mob without re-fetching the dead instance row.
+  Final-step transition grants XP via `RecordXP` and coin via
+  `RecordCoin` with one optimistic-lock retry on
+  `ErrCoinConflict` (mirrors shop verbs). All player-facing
+  notifications go through `Session.WriteAsync` — engine runs
+  on the eventbus goroutine, so cross-session output rule
+  applies. Two new dialogue effects (`accept_quest`,
+  `advance_quest`) use the closure-injection pattern from #30:
+  `internal/mode/dialogue.go::DialogueHooks` is wired by
+  `cmd/server/main.go::buildRegistry` to the engine's
+  `AcceptQuest` / `AdvanceTalkTo` methods so `internal/cmd`
+  and `internal/dialogue` stay free of `internal/quest`
+  imports. Verb: `quest` / `quests` (`internal/cmd/quest.go`)
+  with `info <id>` and `abandon <id>` subcommands.
 
 - **`internal/progression/`** — pure-function helpers for the d20
   XP curve and level-up math (Phase E #23). `XPForLevel(n)`,

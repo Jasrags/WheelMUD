@@ -22,16 +22,21 @@ var errNoDialogueHere = errors.New("cmd: no dialogue partner here")
 // resolvedDialogue pairs a decoded dialogue.Tree with the mob in the
 // room that owns it.
 type resolvedDialogue struct {
-	tree    *dialogue.Tree
-	keeper  creature.MobInstance
-	tplName string
+	tree          *dialogue.Tree
+	keeper        creature.MobInstance
+	tplName       string
+	tplExternalID string
 }
 
 // PushDialogueFn is the closure NewTalk takes for "build and push the
 // Dialogue mode against this tree". main.go provides it; the package
 // doesn't import internal/mode directly to keep the import graph
 // acyclic (mode → cmd would otherwise close a cycle through chargen).
-type PushDialogueFn func(s *telnet.Session, npcName string, tree *dialogue.Tree) error
+//
+// npcExternalID is the resolved mob_template ExternalID — passed
+// through so the dialogue mode's quest hooks (Phase F #31) can match
+// the active step's Mob field against the conversation partner.
+type PushDialogueFn func(s *telnet.Session, npcName, npcExternalID string, tree *dialogue.Tree) error
 
 // NewTalk wires the `talk <mob>` verb. Resolves a target NPC in the
 // player's current room, decodes its dialogue tree, validates as
@@ -81,7 +86,7 @@ func NewTalk(mobs repo.MobInstanceRepo, templates repo.MobTemplateRepo,
 				slog.Error("talk: pushDialogue unbound")
 				return s.WriteString("{{They don't seem inclined to speak.}}::red\r\n")
 			}
-			if err := pushDialogue(s, res.tplName, res.tree); err != nil {
+			if err := pushDialogue(s, res.tplName, res.tplExternalID, res.tree); err != nil {
 				slog.Error("talk: push dialogue mode",
 					"mob", res.keeper.ID, "error", err)
 				return s.WriteString("{{They don't seem inclined to speak.}}::red\r\n")
@@ -123,7 +128,7 @@ func findDialoguePartner(ctx context.Context, roomID int64, target string,
 	if err != nil {
 		return resolvedDialogue{}, fmt.Errorf("get template: %w", err)
 	}
-	res := resolvedDialogue{keeper: mob, tplName: tpl.Core.Name}
+	res := resolvedDialogue{keeper: mob, tplName: tpl.Core.Name, tplExternalID: tpl.ExternalID}
 	if len(tpl.DialogueJSON) == 0 {
 		return res, errNoDialogueTree
 	}

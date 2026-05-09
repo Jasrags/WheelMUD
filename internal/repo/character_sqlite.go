@@ -576,6 +576,24 @@ func (r *SQLiteCharacterRepo) RecordAffects(ctx context.Context, id int64, affec
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordQuestProgress(ctx context.Context, id int64, log []creature.QuestProgress) error {
+	js, err := marshalJSONSlice(log)
+	if err != nil {
+		return fmt.Errorf("marshal quest log: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET quest_log_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record quest progress: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordChanneling(ctx context.Context, id int64, c *creature.Channeling) error {
 	js, err := jsonMarshalString(c)
 	if err != nil {

@@ -65,7 +65,7 @@ func pushDialogue(t *testing.T) *dialogueFixture {
 		mode string
 		args map[string]string
 	}{}
-	hook := func(_ *telnet.Session, name string, args map[string]string) error {
+	hook := func(_ context.Context, _ *telnet.Session, name string, args map[string]string) error {
 		pushed.mode = name
 		pushed.args = args
 		// Simulate handing off to a sibling mode by replacing our own —
@@ -74,7 +74,7 @@ func pushDialogue(t *testing.T) *dialogueFixture {
 		// would PushMode/ReplaceMode here.
 		return nil
 	}
-	m, err := NewDialogue("the elder", sampleTree(), hook)
+	m, err := NewDialogue("the elder", "tr.elder", sampleTree(), DialogueHooks{PushMode: hook})
 	if err != nil {
 		t.Fatalf("NewDialogue: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestDialogue_NewDialogue_RejectsInvalidTree(t *testing.T) {
 	bad := &dialogue.Tree{Root: "missing", Nodes: map[dialogue.NodeID]dialogue.Node{
 		"present": {ID: "present", Prompt: "x"},
 	}}
-	if _, err := NewDialogue("bob", bad, nil); err == nil {
+	if _, err := NewDialogue("bob", "bob.id", bad, DialogueHooks{}); err == nil {
 		t.Fatal("expected validation error for dangling root")
 	}
 }
@@ -244,12 +244,12 @@ func TestDialogue_PushModeInvokesHook(t *testing.T) {
 		called bool
 		name   string
 	}{}
-	hook := func(_ *telnet.Session, name string, _ map[string]string) error {
+	hook := func(_ context.Context, _ *telnet.Session, name string, _ map[string]string) error {
 		pushed.called = true
 		pushed.name = name
 		return nil
 	}
-	m, err := NewDialogue("merchant", tree, hook)
+	m, err := NewDialogue("merchant", "tr.merchant", tree, DialogueHooks{PushMode: hook})
 	if err != nil {
 		t.Fatalf("NewDialogue: %v", err)
 	}

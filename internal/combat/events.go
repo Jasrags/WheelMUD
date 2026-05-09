@@ -92,6 +92,15 @@ type CombatDeath struct {
 	Victim   ActorRef
 	Killer   ActorRef
 	CorpseID int64
+
+	// MobTemplateID and MobTemplateExternalID carry the dying mob's
+	// template identity (Phase F #31 — quest kill_n step matching).
+	// Only populated when Victim.Kind == ActorKindMob; both are zero
+	// for character victims (CharacterDied carries that path). Filled
+	// here at publish time so subscribers don't have to re-fetch the
+	// instance row after combat cleanup deletes it.
+	MobTemplateID         int64
+	MobTemplateExternalID string
 }
 
 // CombatXPAwarded fires once per attacker that earns a share of the

@@ -22,18 +22,39 @@ import (
 // not a concern here: the dispatcher invokes Handle / Prompt
 // synchronously on the read goroutine.
 //
-// PushModeFn is the optional cross-package effect handler the cmd-
-// layer wires up so an `effects: kind: push_mode` entry can hand the
-// player off to shop / banker / future dialogue chains. nil means
-// "log a warning and treat the effect as a no-op" — V1 ships without
-// any push_mode targets, so this is a safe default.
+// DialogueHooks bundles the cross-package effect closures the cmd-
+// layer injects so internal/mode stays free of internal/cmd and
+// internal/quest imports. All hook fields are optional; nil means
+// "log a warning and treat the effect as a no-op."
+//
+// Each hook receives the dispatcher's ctx — the per-session
+// context that is canceled when the read loop exits (EOF, idle,
+// flood) or when shutdown drains. Hooks that do blocking I/O
+// (DB reads, repo writes) MUST honor it so a stalled hook can't
+// keep a torn-down session alive past drain.
+//
+//   - PushMode handles `effects: kind: push_mode`. nil today (no V1
+//     push_mode targets).
+//   - AcceptQuest handles `effects: kind: accept_quest`. Wired by
+//     main.go to internal/quest.Engine.AcceptQuest.
+//   - AdvanceQuest handles `effects: kind: advance_quest`. Wired by
+//     main.go to internal/quest.Engine.AdvanceTalkTo. The mode
+//     forwards both the questID and the conversation's NPC
+//     ExternalID so the engine can verify the active step matches.
+type DialogueHooks struct {
+	PushMode     func(ctx context.Context, s *telnet.Session, modeName string, args map[string]string) error
+	AcceptQuest  func(ctx context.Context, s *telnet.Session, questID string) error
+	AdvanceQuest func(ctx context.Context, s *telnet.Session, questID, npcExternalID string) error
+}
+
 type Dialogue struct {
-	npcName    string
-	tree       *dialogue.Tree
-	currentID  dialogue.NodeID
-	flags      map[string]bool
-	visible    []dialogue.Response // re-computed each render; numbered choice index → entry
-	pushModeFn func(s *telnet.Session, modeName string, args map[string]string) error
+	npcName        string
+	npcExternalID  string // mob_template ExternalID — used by AdvanceQuest hook
+	tree           *dialogue.Tree
+	currentID      dialogue.NodeID
+	flags          map[string]bool
+	visible        []dialogue.Response // re-computed each render; numbered choice index → entry
+	hooks          DialogueHooks
 }
 
 // NewDialogue constructs a Dialogue mode rooted at tree.Root. The
@@ -41,16 +62,21 @@ type Dialogue struct {
 // loader and the cmd-layer both call dialogue.Validate); we re-check
 // here as defense-in-depth so a hand-edited DB row can't crash the
 // mode push.
-func NewDialogue(npcName string, tree *dialogue.Tree, pushMode func(s *telnet.Session, modeName string, args map[string]string) error) (*Dialogue, error) {
+//
+// npcExternalID is the mob_template's ExternalID (e.g. "tr.elder")
+// so AdvanceQuest can verify the active step's Mob matches this
+// conversation. Empty string is fine — quest effects just won't fire.
+func NewDialogue(npcName, npcExternalID string, tree *dialogue.Tree, hooks DialogueHooks) (*Dialogue, error) {
 	if err := dialogue.Validate(tree); err != nil {
 		return nil, err
 	}
 	return &Dialogue{
-		npcName:    npcName,
-		tree:       tree,
-		currentID:  tree.Root,
-		flags:      make(map[string]bool),
-		pushModeFn: pushMode,
+		npcName:       npcName,
+		npcExternalID: npcExternalID,
+		tree:          tree,
+		currentID:     tree.Root,
+		flags:         make(map[string]bool),
+		hooks:         hooks,
 	}, nil
 }
 
@@ -103,7 +129,7 @@ func (m *Dialogue) OnExit(s *telnet.Session) error {
 // Effects fire AFTER the Reply is written and BEFORE Next is followed
 // so a `set_flag` mutation is visible the moment the next node's
 // Prompt computes its visible list.
-func (m *Dialogue) Handle(_ context.Context, s *telnet.Session, line string) error {
+func (m *Dialogue) Handle(ctx context.Context, s *telnet.Session, line string) error {
 	trimmed := strings.TrimSpace(line)
 	switch strings.ToLower(trimmed) {
 	case "", "bye", "quit", "leave":
@@ -156,14 +182,35 @@ func (m *Dialogue) Handle(_ context.Context, s *telnet.Session, line string) err
 				}
 			}
 		case dialogue.EffectPushMode:
-			if m.pushModeFn == nil {
+			if m.hooks.PushMode == nil {
 				slog.Warn("dialogue push_mode unbound", "mode", eff.Args["mode"], "npc", m.npcName)
 				continue
 			}
-			if err := m.pushModeFn(s, eff.Args["mode"], eff.Args); err != nil {
+			if err := m.hooks.PushMode(ctx, s, eff.Args["mode"], eff.Args); err != nil {
 				return fmt.Errorf("dialogue push_mode %q: %w", eff.Args["mode"], err)
 			}
 			popped = true
+		case dialogue.EffectAcceptQuest:
+			if m.hooks.AcceptQuest == nil {
+				slog.Warn("dialogue accept_quest unbound", "quest", eff.Args["quest_id"], "npc", m.npcName)
+				continue
+			}
+			if err := m.hooks.AcceptQuest(ctx, s, eff.Args["quest_id"]); err != nil {
+				slog.Warn("dialogue accept_quest failed",
+					"quest", eff.Args["quest_id"], "npc", m.npcName, "error", err)
+				// Don't surface to player — accept is idempotent and a
+				// repo error shouldn't fail the response. Continue the
+				// effect chain.
+			}
+		case dialogue.EffectAdvanceQuest:
+			if m.hooks.AdvanceQuest == nil {
+				slog.Warn("dialogue advance_quest unbound", "quest", eff.Args["quest_id"], "npc", m.npcName)
+				continue
+			}
+			if err := m.hooks.AdvanceQuest(ctx, s, eff.Args["quest_id"], m.npcExternalID); err != nil {
+				slog.Warn("dialogue advance_quest failed",
+					"quest", eff.Args["quest_id"], "npc", m.npcName, "error", err)
+			}
 		case dialogue.EffectEnd:
 			popped = true
 		}
