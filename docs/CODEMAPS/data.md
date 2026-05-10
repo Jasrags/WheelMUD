@@ -1,12 +1,13 @@
-<!-- Generated: 2026-05-08 | Updated for Phase E #26: affects_json wired live (no migration) | Token estimate: ~1625 -->
+<!-- Generated: 2026-05-10 | Updated for Phase F #29-32 (triggers/dialogue/quest/Lua) + Phase E #25-28 + zone-reset doors | Token estimate: ~1750 -->
 
 # Data
 
-SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). 41
+SQLite-backed persistence via pure-Go `modernc.org/sqlite` (no CGO). 48
 embedded migrations applied at boot. `cmd/server/main.go` opens the DB,
-runs migrations, loads YAML catalogs (chargen / news / help), populates
-world tables via `internal/world.LoadAndSync`, and constructs the
-SQLite-backed repos that modes and commands consume.
+runs migrations, loads YAML catalogs (chargen / news / help / effects /
+quest / scripts), populates world tables via
+`internal/world.LoadAndSync`, and constructs the SQLite-backed repos
+that modes and commands consume.
 
 ## Layers
 
@@ -18,8 +19,8 @@ SQLite-backed repos that modes and commands consume.
 │ internal/repo/  Account, AccountLogin, Character (incl. Level/Skill│ *interfaces*
 │                 Coin Pvp etc), Room, Exit, Item, MobTemplate,      │
 │                 MobInstance, MobTrail, Zone, Channel, Channeling,   │
-│                 Shop+ShopStock, Banker, Trainer, AdminAudit,       │
-│                 WorldState                                          │
+│                 Shop+ShopStock, Banker, Trainer, WeaveTeacher,      │
+│                 Trigger, AdminAudit, AccountLogin, WorldState       │
 ├────────────────────────────────────────────────────────────────────┤
 │ SQLite{...}Repo (prod) + Memory{...}Repo (tests, shared contract)  │
 ├────────────────────────────────────────────────────────────────────┤
@@ -27,13 +28,13 @@ SQLite-backed repos that modes and commands consume.
 │                     SkillRanks, MobTemplate/MobInstance models      │
 │ internal/currency/  Amount type                                     │
 ├────────────────────────────────────────────────────────────────────┤
-│ internal/db.Open / Migrate           *sql.DB + 39 embedded migrations│
+│ internal/db.Open / Migrate           *sql.DB + 48 embedded migrations│
 ├────────────────────────────────────────────────────────────────────┤
 │ modernc.org/sqlite                   pure-Go driver                 │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-## Migrations (0001-0042)
+## Migrations (0001-0048)
 
 | # | File | Purpose |
 |---|---|---|
@@ -79,6 +80,12 @@ SQLite-backed repos that modes and commands consume.
 | 0040 | `create_shops` | (legacy: absorbed into 0030) |
 | 0041 | `characters_xp_debt` | xp_debt INT NOT NULL DEFAULT 0 — stacks on character death via `DeathDebt(curXP, curLevel) → debt` (Phase D #19) |
 | 0042 | `mob_respawn_anchors` | `mob_templates.home_room_id` (0=manual spawn, never respawned) + `zones.last_reset_ts` + index on `mob_templates.respawn_zone_reset_id` — backs `internal/world.Respawner` (Phase D #19) |
+| 0043 | `create_weave_teachers` | `weave_teachers` (1:1 mob_template → max_level_taught + affinity_filter) for Phase E #28 mid-game weave learning. Drains `characters.practice_points` (per-level PP via `RecordLevelUp.PracticePointsDelta=1`); affinity-gated. |
+| 0044 | `create_triggers` | `triggers (owner_kind, owner_id, event, match, action, payload, priority)` — declarative event handlers attached to mob_template or room; events checked: on_enter / on_say / on_attack / on_death / on_tick (Phase F #29). |
+| 0045 | `mob_templates_dialogue_json` | nullable TEXT inline dialogue tree on the mob template (Phase F #30). YAML loader translates `DialogueDecl` → `*dialogue.Tree`, validates, marshals compact JSON. |
+| 0046 | `triggers_fault_counter` | `triggers.consecutive_faults` + `triggers.disabled` — per-trigger fault budget for the new `lua` action kind. `Runner.FaultThreshold = 5`; success resets. World re-deploys reset both via `TriggerRepo.ResetAllFaults` (Phase F #32 slice 1). |
+| 0047 | `characters_skill_cooldowns` | `skill_cooldowns_json` TEXT — per-skill cooldown deadline map keyed by `chargen.HashID(skillID)`. `RecordSkillCooldown` prunes past entries on every write. V1 producer is admin `cooldown <player> <skill> <seconds>`; player `cooldowns` is the only reader (Phase E #26 slice B). |
+| 0048 | `exits_authored_door_state` | `exits.authored_closed` + `exits.authored_locked` — backs §7 zone-reset door restoration via `ExitRepo.RestoreAuthored(fromRoomIDs)` from `ZoneResetter`. |
 
 Runner (`internal/db/db.go::Migrate`):
 - Ensures `schema_migrations(version, applied_at)` exists.
@@ -109,6 +116,8 @@ Pragmas on `Open`: `foreign_keys=ON`, `journal_mode=WAL`,
 | `shop_stock` | 0030 | `(shop_id, item_external_id), qty, qty_max, last_restock_ts` — sentinel `qty=-1, qty_max=-1` is infinite |
 | `bankers` | 0031 | `id, mob_template_id (UNIQUE), open_hour, close_hour` — V1 has no fees, no item vault |
 | `trainers` | 0038 | `id, mob_template_id (UNIQUE), class_id` — Phase E #23 slice 2 |
+| `weave_teachers` | 0043 | `id, mob_template_id (UNIQUE), max_level_taught, affinity_filter` — Phase E #28 |
+| `triggers` | 0044/0046 | `id, owner_kind, owner_id, event, match, action, payload, priority, consecutive_faults, disabled` — declarative event handlers (Phase F #29 + Lua fault budget) |
 | `admin_audit` | 0029/0034 | `id, ts, actor_type, actor_account_id, actor_username, character_id, character_name, verb, target, args, remote_address` — append-only |
 | `world_state` | 0024 | `(key TEXT PK, value TEXT)` — currently `world.ticks` for `Clock` |
 
@@ -133,6 +142,10 @@ CharacterRepo          Create / FindByName / GetByID / ListByAccount /
                        RecordFeatPick(featID, newPending) /
                        RecordAbilityBump(abilityKey, newPending) /
                        RecordWeavePick(weaveID, newPending) /
+                       RecordWeaveStudy(weaveID, newPracticePoints) /
+                       RecordAffects(affects []) /
+                       RecordSkillCooldown(skillID, deadline) /
+                       RecordQuestProgress(log) /
                        MarkNewsSeen / Delete
 RoomRepo               Find/Create + flag/sector/coords accessors
 ExitRepo               ListFrom / FindByDirection / door state writes
@@ -150,6 +163,9 @@ ShopRepo               GetByMobTemplateID / ListStock / DecrementStock /
                        RestockSubMax (areaReset bucket)
 BankerRepo             GetByMobTemplateID
 TrainerRepo            Create / GetByMobTemplateID / List
+WeaveTeacherRepo       Create / GetByMobTemplateID / List   (Phase E #28)
+TriggerRepo            Create / ListByOwner / All / IncrementFault /
+                       Disable / ResetAllFaults              (Phase F #29/#32)
 AdminAuditRepo         Record / RecordAccount / List(filter)
 WorldStateRepo         Get / Set (key/value store)
 ```

@@ -1,44 +1,60 @@
-Phase E #25 Codemap Updates
-===========================
+codemap-diff — 2026-05-10
+=========================
 
-Files Modified
---------------
-1. docs/CODEMAPS/commands.md (201 → 204 lines, +1.5%)
-2. docs/CODEMAPS/architecture.md (248 → 264 lines, +6.5%)
-3. docs/CODEMAPS/data.md (237 → 246 lines, +3.8%)
+Updated since 2026-05-08:
+  docs/CODEMAPS/architecture.md
+  docs/CODEMAPS/commands.md
+  docs/CODEMAPS/data.md
+  docs/CODEMAPS/dependencies.md
 
-Files Unchanged
----------------
-- docs/CODEMAPS/dependencies.md (no new third-party deps)
-- docs/CODEMAPS/telnet.md (no new session fields, no new write paths)
+Unchanged:
+  docs/CODEMAPS/telnet.md (still accurate)
 
-What Was Added
----------------
+New packages added to architecture.md:
+  internal/channeling     Phase E #27 — slot refresh + madness tick
+  internal/effects        Phase E #25 — YAML affect catalog (HoT/DoT)
+  internal/affects        Phase E #25 — SessionTicker + stack caps
+  internal/dialogue       Phase F #30 — Tree/Node/Response/Validate
+  internal/quest          Phase F #31 — talk/kill/reach/script engine
+  internal/trigger        Phase F #29/#32 — Registry/Runner/Dispatcher + faults
+  internal/scripts        Phase F #32 — embedded Lua catalog
+  internal/lua            Phase F #32 — sandboxed gopher-lua runner
 
-New Player Verbs (§E #25):
-  - `feat`: spend pending_feats on background-aware allowed list; drains pending_feats; audits
-  - `bump <ability>`: spend pending_ability_bumps to raise ability +1 (hard cap 20); audits
-  - `learn weave`: channeler-only weave-pick; affinity-gated; drains pending_weaves; audits
+New repos added to data.md:
+  WeaveTeacherRepo (0043) — Phase E #28
+  TriggerRepo (0044/0046) — Phase F #29 + fault budget
 
-New Repo Methods:
-  - CharacterRepo.RecordFeatPick(featID, newPending) — TX-upsert feats_json + pending_feats
-  - CharacterRepo.RecordAbilityBump(abilityKey, newPending) — atomic UPDATE *_cur column
-  - CharacterRepo.RecordWeavePick(weaveID, newPending) — TX-upsert channeling_json + pending_weaves
+New migrations 0043-0048 documented in data.md:
+  0043 weave_teachers
+  0044 triggers (declarative event handlers)
+  0045 mob_templates.dialogue_json
+  0046 triggers fault counter (Lua fault budget)
+  0047 characters.skill_cooldowns_json (per-skill cooldowns)
+  0048 exits authored door state (zone reset restore)
 
-New Types:
-  - repo.AbilityKey enum (Str/Dex/Con/Int/Wis/Cha) with String() method
+New verbs added to commands.md:
+  Phase E:  embrace/release, affects, cooldowns, quaff, learn weave (teacher path)
+  Phase E admin: affect, dispel, cooldown, still/unstill
+  Phase F:  talk <mob>, quest/quests (info/abandon)
 
-New Errors:
-  - repo.ErrNotChanneler — returned by RecordWeavePick on non-channeler characters
+New direct dep:
+  github.com/yuin/gopher-lua v1.1.2 (Phase F #32)
 
-Architecture Notes:
-  - All four pending_* pools (feats/skill_points/ability_bumps/weaves) now have drain paths
-  - Level-up cycle is end-to-end functional per the progression flow diagram
-  - Spend verbs follow the §E #24 audit pattern: no audit on refusal, success audit only
+New env-overrides documented:
+  EFFECTS_DIR, QUEST_DIR, SCRIPT_DIR, NEWS_DIR
 
-Diff Summary:
-  - commands.md: added 3 new verbs to progression table, updated deferred section
-  - architecture.md: expanded progression flow with learn weave / feat / bump details
-  - data.md: documented new repo methods, new error type, new AbilityKey enum, added write-site table for characters table
+Tick bucket changes:
+  Regen — now driven by channeling.SessionTicker (Phase E #27)
+  Affects — now applies TickEffect HP deltas + ExpireMessage (Phase E #25 slices 2-3)
+  AreaReset — Respawner replaced by ZoneResetter (mob → doors → items)
+  Phase — added (PhaseAmbient + trigger on_tick fan)
+  Wander — added (was already wired but not previously documented in table)
 
-All changes under 30% threshold; no approval gate hit.
+Architecture.md additions:
+  - "Triggers / dialogue / quests / Lua" section with eventbus → action diagram
+  - Cross-package wiring rules (cmd ⊥ mode, dialogue ⊥ quest closure injection)
+  - Boot sequence updated for new catalogs + ticker construction order
+  - Shutdown order documented (triggers.Stop → lua.Stop → tickers → bus → persist → conn)
+
+Staleness check:
+  All five codemaps now reflect post-2026-05-10 HEAD.

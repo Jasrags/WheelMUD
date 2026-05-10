@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-08 | Files scanned: go.mod, go.sum | Token estimate: ~350 -->
+<!-- Generated: 2026-05-10 | Files scanned: go.mod, go.sum | Token estimate: ~380 -->
 
 # Dependencies
 
@@ -11,9 +11,10 @@
 | Dep | Version | Used in | Purpose |
 |---|---|---|---|
 | `github.com/i582/cfmt` | v1.4.0 | `telnet/session.go`, every render path | Renders `{{text}}::style` tags inside `WriteString`/`WriteWrapped`. **Important:** treats input as a template — do not pass untrusted strings. Use `WriteRaw`, or run user-derived strings through `display.Defang` first. |
-| `gopkg.in/yaml.v3` | v3.0.1 | `internal/world/yaml.go`, `internal/chargen/catalog.go`, `internal/news/`, `internal/help/` | YAML decoder for the world loader, chargen catalog, news catalog, help catalog. All catalogs validate at boot — typos fail loud. |
-| `modernc.org/sqlite` | v1.50.0 | `internal/db/db.go` | Pure-Go SQLite driver (no CGO). `database/sql` driver name `sqlite`. 39 embedded migrations under `internal/db/migrations/`. |
+| `gopkg.in/yaml.v3` | v3.0.1 | `internal/world/yaml.go`, `internal/chargen/catalog.go`, `internal/news/`, `internal/help/`, `internal/effects/`, `internal/quest/` | YAML decoder for the world loader, chargen catalog, news catalog, help catalog, effects catalog, quest catalog. All catalogs validate at boot — typos fail loud. |
+| `modernc.org/sqlite` | v1.50.0 | `internal/db/db.go` | Pure-Go SQLite driver (no CGO). `database/sql` driver name `sqlite`. 48 embedded migrations under `internal/db/migrations/`. |
 | `golang.org/x/crypto/bcrypt` | v0.50.0 | `internal/auth/hash.go` | Password hashing. Default cost (10); tests drop to MinCost via `auth.SetCost`. |
+| `github.com/yuin/gopher-lua` | v1.1.2 | `internal/lua/`, `internal/scripts/` | Embedded Lua 5.1 runtime backing the §15 trigger/dialogue/quest scripting surface (Phase F #32). Sandboxed (dangerous globals stripped), 50ms ctx timeout per call via `SetContext`, LState pool of 8. |
 
 ## Indirect
 
@@ -39,6 +40,10 @@ None. The server has no outbound network calls, no external DB, no cache, no que
 | `LOG_LEVEL` | `debug` | `debug`/`info`/`warn`/`error`. Wired to `slog`. |
 | `WORLD_DIR` | `./data/world` | Override the embedded world tree. Relative paths resolve from CWD. |
 | `CHARGEN_DIR` | (embedded) | Override the embedded chargen catalogs. |
+| `EFFECTS_DIR` | (embedded) | Override the embedded effects catalog (Phase E #25). |
+| `QUEST_DIR` | (embedded) | Override the embedded quest catalog (Phase F #31). |
+| `SCRIPT_DIR` | (embedded) | Override the embedded Lua script catalog (Phase F #32). |
+| `NEWS_DIR` | (embedded) | Override the embedded MOTD/news catalog. |
 
 ## Build / runtime tooling
 
@@ -52,4 +57,4 @@ None. The server has no outbound network calls, no external DB, no cache, no que
 
 ## Pending integrations
 
-When ROADMAP items land, expect rows for: embedded scripting (`gopher-lua` or starlark/risor) for §15 NPC behavior, Prometheus client for §19 metrics, `golang.org/x/text/unicode/norm` for NFKC username normalization (`persistence_followups.md`), and `golang.org/x/text/width` for wide-glyph wrap (`terminal_rendering_followups.md`).
+When ROADMAP items land, expect rows for: Prometheus client for §19 metrics, `golang.org/x/text/unicode/norm` for NFKC username normalization (`persistence_followups.md`), and `golang.org/x/text/width` for wide-glyph wrap (`terminal_rendering_followups.md`). Embedded scripting (gopher-lua) landed for §15 / Phase F #32 across slices 1–4.

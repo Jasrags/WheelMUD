@@ -39,7 +39,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 ## Architecture
 
 - **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0028), constructs every
+  `internal/db.Open` (runs embedded migrations 0001–0048), constructs every
   repo (accounts, characters, rooms, exits, items, mob_instances,
   mob_templates, mob_trails, zones, channels), loads the news catalog
   (`internal/news`), the chargen catalog (`internal/chargen`),
@@ -477,19 +477,27 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   consumer's `CtxView` (event/room/actor/target/text/bucket).
   Slice 2 (Phase F #32) extends Bind with the V2 mutation surface:
   a `quest` table (`quest.accept(id)` / `quest.advance(id)`) and
-  a top-level `push_mode(name)` global. nil-bound hooks register
-  classified-error stubs that raise `<api> not bound in this
-  context` so misuse trips the trigger fault budget instead of
+  a top-level `push_mode(name)` global. Slice 3 added composing
+  closures `apply_affect(target_id, effect_id [, duration])` /
+  `give_item(target_id, external_id)` plus a read-only `target`
+  table (`target.hp(id)` / `target.level(id)` / `target.classes(id)`).
+  Slice 4 added `room.players()` / `room.mobs()` (resolved at bind
+  time from `b.Ctx.RoomID` so scripts can't snoop on other rooms),
+  `clock.hour()` / `clock.day()`, and the `apply_affect` 3rd
+  duration-override arg (0 = catalog default). nil-bound hooks
+  register classified-error stubs that raise `<api> not bound in
+  this context` so misuse trips the trigger fault budget instead of
   surfacing as a generic "attempt to call nil". The trigger Lua
-  action wires the V2 hooks via `trigger.LuaQuestHooks`; the
-  dialogue `script` effect wires them via `mode.DialogueHooks
-  .RunScript` (closure-injected from `cmd/server/main.go`).
+  action wires the hooks via `trigger.LuaHooks` (legacy alias
+  `LuaQuestHooks` kept); the dialogue `script` effect wires them
+  via `mode.DialogueHooks.RunScript` (closure-injected from
+  `cmd/server/main.go`).
   `Runner.Stop()` closes every LState — must run BEFORE
   `bus.Stop()` in shutdown drain so any in-flight script
-  observes ctx cancellation cleanly. The release path now wipes
-  the V2 globals (`quest`, `push_mode`) alongside the V1 set so a
-  pooled LState never observes a leaked closure from the previous
-  borrow.
+  observes ctx cancellation cleanly. The release path wipes the
+  full surface (`quest`, `push_mode`, `apply_affect`, `give_item`,
+  `target`, `room`, `clock`) alongside the V1 set so a pooled
+  LState never observes a leaked closure from the previous borrow.
 
 - **`internal/quest/`** — Phase F #31 quest engine: catalog
   (`Tree`, `Step`, `Reward`), validator (cross-refs against

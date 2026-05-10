@@ -30,15 +30,15 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
+	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/news"
-	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
 	"github.com/Jasrags/WheelMUD/internal/persist"
 	"github.com/Jasrags/WheelMUD/internal/quest"
 	"github.com/Jasrags/WheelMUD/internal/repo"
-	"github.com/Jasrags/WheelMUD/internal/scripts"
 	"github.com/Jasrags/WheelMUD/internal/safego"
+	"github.com/Jasrags/WheelMUD/internal/scripts"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/tick"
 	"github.com/Jasrags/WheelMUD/internal/trigger"
@@ -366,19 +366,19 @@ func main() {
 			}
 		}
 	}
-	eventbus.Subscribe[combat.CombatStance](bus, func(ctx context.Context, ev combat.CombatStance) {
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatStance) {
 		name := combatActorName(ctx, ev.Actor, characters, mobs)
 		switch ev.Kind {
 		case "parry":
 			combatBroadcast(ev.RoomID, "{{"+name+" raises a weapon to parry.}}::yellow\r\n")
 		}
 	})
-	eventbus.Subscribe[combat.CombatParry](bus, func(ctx context.Context, ev combat.CombatParry) {
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatParry) {
 		def := combatActorName(ctx, ev.Defender, characters, mobs)
 		atk := combatActorName(ctx, ev.Attacker, characters, mobs)
 		combatBroadcast(ev.RoomID, "{{"+def+" parries "+atk+"'s blow!}}::cyan\r\n")
 	})
-	eventbus.Subscribe[combat.CombatFlee](bus, func(ctx context.Context, ev combat.CombatFlee) {
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatFlee) {
 		if ev.Success {
 			// Source-room broadcast lands inline from the FleeMover so
 			// the third-person line is colocated with the actual move.
@@ -398,7 +398,7 @@ func main() {
 	// in the new room. The repo layer (handleCharacterDeath) already
 	// persisted the room change via RecordRoom; the subscriber just
 	// updates the live in-memory session.
-	eventbus.Subscribe[combat.CharacterDied](bus, func(ctx context.Context, ev combat.CharacterDied) {
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CharacterDied) {
 		victim := cmd.LookupByCharacterID(sessions, ev.Victim.ID)
 		name := combatActorName(ctx, ev.Victim, characters, mobs)
 		// Broadcast "X falls dead!" to peers — but skip the dying
@@ -418,7 +418,7 @@ func main() {
 			}
 		}
 	})
-	eventbus.Subscribe[combat.CharacterRespawned](bus, func(ctx context.Context, ev combat.CharacterRespawned) {
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CharacterRespawned) {
 		victim := cmd.LookupByCharacterID(sessions, ev.Character.ID)
 		name := combatActorName(ctx, ev.Character, characters, mobs)
 		if victim != nil {
@@ -609,7 +609,7 @@ func main() {
 	// Catalog-driven affects carry an authored MessageOnExpire string
 	// (Phase E #25 slice 3); admin-applied affects (slice 1) leave it
 	// empty and fall back to the generic fade line.
-	eventbus.Subscribe[affects.Expired](bus, func(_ context.Context, ev affects.Expired) {
+	eventbus.Subscribe(bus, func(_ context.Context, ev affects.Expired) {
 		victim := cmd.LookupByCharacterID(sessions, ev.CharacterID)
 		if victim == nil {
 			return
@@ -630,7 +630,7 @@ func main() {
 
 	// affects.TickDamaged subscriber: per-tick HP delta lines from
 	// poison/bleed/regen affects. Phase E #25 slice 2.
-	eventbus.Subscribe[affects.TickDamaged](bus, func(_ context.Context, ev affects.TickDamaged) {
+	eventbus.Subscribe(bus, func(_ context.Context, ev affects.TickDamaged) {
 		victim := cmd.LookupByCharacterID(sessions, ev.CharacterID)
 		if victim == nil {
 			return
@@ -1213,11 +1213,11 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			bindings := luaeng.APIBindings{
 				Logger: slog.Default(),
 				Ctx: luaeng.CtxView{
-					Event:      "dialogue.script",
-					ActorID:    s.CharacterID,
-					ActorKind:  "character",
-					RoomID:     s.CurrentRoomID,
-					Text:       name,
+					Event:     "dialogue.script",
+					ActorID:   s.CharacterID,
+					ActorKind: "character",
+					RoomID:    s.CurrentRoomID,
+					Text:      name,
 				},
 			}
 			if questEngine != nil {

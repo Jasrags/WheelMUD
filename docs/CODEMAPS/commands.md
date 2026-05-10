@@ -1,4 +1,4 @@
-<!-- Generated: 2026-05-08 | Updated for Phase D #19: death/respawn/XP-debt | Token estimate: ~1500 -->
+<!-- Generated: 2026-05-10 | Updated for Phase E #25-28 (affects/quaff/cooldowns/embrace/weave-teachers) + Phase F #30-32 (talk/quest/Lua) | Token estimate: ~1700 -->
 
 # Command Catalog
 
@@ -110,6 +110,18 @@ alias-introduces-`;` bounded at depth 3.
 | `learn weave` | Player | `learn_weave.go` | Channeler-only weave-pick. `learn weave` (menu), `learn weave <id>`. Affinity-gated; drains `pending_weaves`; audit on success |
 | `feat` | Player | `feat.go` | Spend `pending_feats` anywhere. `feat` (menu), `feat <id>`, `feat info <id>`. Background-aware allowed-list; no prereq enforcement V1; audit on success |
 | `bump` | Player | `bump.go` | Spend `pending_ability_bumps` to raise an ability by +1 (hard cap 20). `bump <ability>` accepts str/dex/con/int/wis/cha or full names; audit on success |
+| `learn weave <id>` (teacher path) | Player | `learn_weave.go` | When a `weave_teacher` NPC is in the room, drains `practice_points` instead of `pending_weaves`; cost = `chargen.Weave.PracticeCost`; affinity-gated (Phase E #28). Audit row records `kind=weave_study power=<p> cost=<n>`. |
+| `embrace` / `release` | Player | `channeling.go` | Toggle the channeler embrace state — feeds `channeling.AccrueMadness` while drawing `SourceSaidin` (Phase E #27) |
+| `affects` | Player | `affects.go` | List active affects on the caller (name, source label, remaining duration, condition mask, tick effect) |
+| `cooldowns` | Player | `cooldowns.go` | List active per-skill cooldowns from `characters.skill_cooldowns_json` (Phase E #26 slice B) |
+| `quaff <potion>` | Player | `quaff.go` | Resolve consumable from inventory → `ConsumableStats.EffectID` → `affects.Apply` (sentinel Source = -2 renders as "potion"). Multi-charge: 0 = unlimited, 1 = consumed, >1 = decrement via `ItemRepo.UpdateStats` (Phase E #25 slice 3) |
+
+### Dialogue & quests (§F #30-31)
+
+| Verb | Aliases | Auth | File | Purpose |
+|---|---|---|---|---|
+| `talk <mob>` | — | Player | `talk.go` | Resolve NPC via `mobs.ListInRoom` + `MatchMob`; decode `MobTemplate.DialogueJSON`; push `*mode.Dialogue` via injected `cmd.PushDialogueFn` closure (Phase F #30) |
+| `quest` / `quests` | `q` | Player | `quest.go` | Bare = active + completed. `quest info <id>` renders steps with ✓ / ▸ / · markers. `quest abandon <id>` drops the entry + audits (Phase F #31) |
 
 ### Help & UX
 
@@ -132,6 +144,9 @@ alias-introduces-`;` bounded at depth 3.
 | `summon <player>` | `admin_movement.go` | Bring a player to the caller |
 | `wizinvis` | `wizinvis.go` | Toggle session wizinvis (filters from `who` and tell-name completion) |
 | `spawn mob <ext> [count]` / `spawn item <ext> [count]` | `spawn.go` | Clone YAML-seeded template into current room |
+| `affect <player> <effect_id> [duration]` / `dispel <player> <name>` | `affect.go` | Admin producer/dispel for the §E #25 affects pipeline (sentinel Source = -1 renders as "admin"); audit on success |
+| `cooldown <player> <skill> <seconds>` | `cooldown.go` | Stamp a cooldown on a target's skill via `RecordSkillCooldown`; audit on success (Phase E #26 slice B) |
+| `still` / `unstill` | `still.go` | Toggle channeler `Stilled` state on a target; suppresses slot refresh + madness accrual; audit on success (Phase E #27) |
 | `shutdown` / `reboot` | `shutdown.go` | `[<delay>] [<reason>]` (default 30s, ≤1h) or `cancel`/`abort`. Countdown broadcasts at T-{60,30,10,5..0}s. `reboot` re-execs via `syscall.Exec` after drain |
 | `quit` | `quit.go` | Closes the session (returns `ErrSessionEnded`) — Player auth, listed here for completeness |
 
@@ -157,7 +172,8 @@ NOT audit — the row represents "this side effect actually happened."
 
 Verbs that audit on success: `spawn`, `teleport`, `goto`, `transfer`,
 `summon`, `wizinvis`, `shutdown`, `reboot`, `train`, `learn`/`learn weave`,
-`feat`, `bump`, banker `deposit`/`withdraw`. Synchronous by design so a
+`feat`, `bump`, banker `deposit`/`withdraw`, `affect`, `dispel`,
+`cooldown`, `still`/`unstill`, `quest abandon`. Synchronous by design so a
 `shutdown` row commits before drain begins.
 
 ## Adding a command
