@@ -343,6 +343,56 @@ if #players ~= 1 or players[1] ~= 99 then error("ids") end
 	}
 }
 
+func TestLuaAction_RoomPlayers_ZeroRoomFaults(t *testing.T) {
+	// Regression: mob-template-owned on_tick triggers leave
+	// EventCtx.RoomID == 0. Without the guard, room.players()
+	// would silently return an empty table; the guard surfaces
+	// a classified fault so authors see the misconfiguration.
+	cat := loadCatalog(t, "rp_zero", `room.players()`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		RoomPlayers: func(context.Context, int64) ([]int64, error) {
+			t.Fatal("hook should not fire when ev.RoomID is 0")
+			return nil, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "rp_zero"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if !errors.Is(err, ErrActionFaulted) ||
+		!strings.Contains(err.Error(), "room.players requires a room context") {
+		t.Fatalf("err = %v; want room-context refusal", err)
+	}
+}
+
+func TestLuaAction_RoomMobs_ZeroRoomFaults(t *testing.T) {
+	cat := loadCatalog(t, "rm_zero", `room.mobs()`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		RoomMobs: func(context.Context, int64) ([]int64, error) {
+			t.Fatal("hook should not fire when ev.RoomID is 0")
+			return nil, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "rm_zero"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if !errors.Is(err, ErrActionFaulted) ||
+		!strings.Contains(err.Error(), "room.mobs requires a room context") {
+		t.Fatalf("err = %v; want room-context refusal", err)
+	}
+}
+
 func TestLuaAction_RoomMobs_ResolvesRoomFromEvent(t *testing.T) {
 	cat := loadCatalog(t, "rm", `local m = room.mobs(); if #m ~= 1 or m[1] ~= 7 then error("ids") end`)
 	runner := intlua.NewRunner(cat, nil)

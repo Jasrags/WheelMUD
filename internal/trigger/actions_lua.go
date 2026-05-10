@@ -237,11 +237,22 @@ func makeTargetClassesHook(ctx context.Context, hook func(context.Context, int64
 // NOT from a Lua-side argument, so scripts can't snoop on rooms
 // they don't own. Read-only — no actor-kind guard. The Lua-side
 // `room.players()` call is no-arg in the V4 surface.
+//
+// Refuses with a classified error when ev.RoomID is zero — this
+// happens for mob-template-owned `on_tick` triggers where the
+// dispatcher leaves owner.RoomID unset. Without the guard, the
+// hook would silently filter for sRoom==0 and return an always-
+// empty table; the explicit error trips the trigger fault budget
+// so a misconfigured author sees the failure instead of debugging
+// a "list is always empty" mystery.
 func makeRoomPlayersHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64) ([]int64, error)) func() ([]int64, error) {
 	if hook == nil {
 		return nil
 	}
 	return func() ([]int64, error) {
+		if ev.RoomID == 0 {
+			return nil, fmt.Errorf("room.players requires a room context (event %q has no room)", ev.Event)
+		}
 		return hook(ctx, ev.RoomID)
 	}
 }
@@ -251,6 +262,9 @@ func makeRoomMobsHook(ctx context.Context, ev EventCtx, hook func(context.Contex
 		return nil
 	}
 	return func() ([]int64, error) {
+		if ev.RoomID == 0 {
+			return nil, fmt.Errorf("room.mobs requires a room context (event %q has no room)", ev.Event)
+		}
 		return hook(ctx, ev.RoomID)
 	}
 }
