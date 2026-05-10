@@ -230,11 +230,18 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 	}
 }
 
-// NewDrop builds the `drop <item>` command. Mirror of `get`.
+// NewDrop builds the `drop <item|amount>` command. Mirror of `get`,
+// symmetric with `give`: an arg that parses as currency (e.g. "5sp",
+// "1gc 50cp") debits the actor's purse and spawns a coin-pile item
+// on the floor — anyone can `get` it back to re-credit. An item form
+// targets inventory.
 func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry) *telnet.Command {
 	return &telnet.Command{
-		Name:      "drop",
-		Help:      "Drop <item> — set something down",
+		Name: "drop",
+		Help: "Drop <item|amount> — set something down or drop coin",
+		Long: "Usage: drop <item>             - drop something from inventory\n" +
+			"       drop <amount>           - drop coin from your purse onto the floor\n\n" +
+			"Amount uses currency syntax (e.g. \"5sp\", \"1gc 50cp\").",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
 		Completer: completeInventoryItems(items),
@@ -243,7 +250,16 @@ func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessi
 			if s.CurrentRoomID == 0 {
 				return s.WriteString("{{There is nowhere to drop it.}}::yellow\r\n")
 			}
-			target := strings.ToLower(strings.TrimSpace(strings.Join(c.Args, " ")))
+			subject := strings.TrimSpace(strings.Join(c.Args, " "))
+
+			// Try currency parse first. Bare-int "5" parses as 5cp,
+			// which is a valid (if tiny) drop — coin form takes
+			// precedence over an inventory item literally named "5".
+			if amount, err := currency.Parse(subject); err == nil {
+				return dropCoin(c, items, characters, sessions, s, amount)
+			}
+
+			target := strings.ToLower(subject)
 			held, err := items.ListInInventory(c.Ctx, s.CharacterID)
 			if err != nil {
 				slog.Error("drop: list inv failed", "char", s.CharacterID, "error", err)
@@ -281,6 +297,71 @@ func NewDrop(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessi
 			return s.WriteString("{{You drop " + it.Name + ".}}::cyan\r\n")
 		},
 	}
+}
+
+// dropCoin debits `amount` from the actor's purse and spawns a
+// coin-pile TradeGood item on the floor of their current room. Mirrors
+// combat.spawnCoinPile so the dropped pile is indistinguishable from
+// a mob-death drop or an admin `spawn coin`, which means `get` will
+// auto-credit it back via the absorbCoinPile path.
+//
+// Ordering: debit-then-create. On Create failure after a successful
+// debit, attempt a fresh-context rollback (mirrors giveCoin); on
+// rollback failure log loud — real coin lost.
+func dropCoin(c *telnet.Context, items repo.ItemRepo, characters repo.CharacterRepo, sessions *session.Registry, s *telnet.Session, amount currency.Amount) error {
+	if amount <= 0 {
+		return s.WriteString("{{You can only drop positive amounts.}}::yellow\r\n")
+	}
+	actor, err := characters.FindByName(c.Ctx, s.CharacterName)
+	if err != nil {
+		slog.Error("drop-coin: actor lookup failed", "char", s.CharacterID, "error", err)
+		return s.WriteString("{{You can't seem to find your purse.}}::red\r\n")
+	}
+	newActor, err := actor.Coin.Sub(amount)
+	if err != nil {
+		if errors.Is(err, currency.ErrInsufficientFunds) {
+			return s.WriteString("{{You don't have that much.}}::yellow\r\n")
+		}
+		return s.WriteString("{{Something went wrong with the coin.}}::red\r\n")
+	}
+	if err := characters.RecordCoin(c.Ctx, actor.ID, newActor, actor.BankBalance, actor.CoinVersion); err != nil {
+		if errors.Is(err, repo.ErrCoinConflict) {
+			return s.WriteString("{{Your purse just changed — try again.}}::yellow\r\n")
+		}
+		slog.Warn("drop-coin: record coin failed", "char", actor.ID, "error", err)
+		return s.WriteString("{{The coin slips from your fingers.}}::red\r\n")
+	}
+
+	pile := repo.Item{
+		ExternalID: fmt.Sprintf("%s%d-%d", coinPilePrefix, s.CharacterID, time.Now().UnixNano()),
+		Name:       "a small pile of coins",
+		ShortDesc:  "A small pile of coins lies here.",
+		RoomID:     s.CurrentRoomID,
+		Type:       repo.ItemTypeTradeGood,
+		Value:      amount,
+		Flags:      repo.FlagTradeGood,
+	}
+	if _, err := items.Create(c.Ctx, pile); err != nil {
+		slog.Warn("drop-coin: pile create failed; rolling back debit",
+			"char", actor.ID, "amount_cp", int64(amount), "error", err)
+		// Compensating write must NOT use c.Ctx — see giveCoin for the
+		// rationale. Rollback uses actor.CoinVersion+1 because the
+		// first RecordCoin succeeded and bumped the version.
+		rbCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if rbErr := characters.RecordCoin(rbCtx, actor.ID, actor.Coin, actor.BankBalance, actor.CoinVersion+1); rbErr != nil {
+			slog.Error("drop-coin: ROLLBACK FAILED — actor permanently debited",
+				"char", actor.ID, "amount_cp", int64(amount),
+				"original_error", err, "rollback_error", rbErr)
+		}
+		return s.WriteString("{{The coin slips from your fingers.}}::red\r\n")
+	}
+
+	short := amount.Format()
+	actorName := safeActor(s)
+	broadcastRoom(sessions, s.CurrentRoomID, s,
+		"{{"+actorName+" drops "+short+".}}::cyan\r\n")
+	return s.WriteString("{{You drop " + short + ".}}::cyan\r\n")
 }
 
 // NewGive builds the `give <item|amount> <name>` command. The first

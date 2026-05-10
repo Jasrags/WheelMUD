@@ -197,6 +197,84 @@ func TestDrop_PutsBackOnFloor(t *testing.T) {
 	}
 }
 
+func TestDrop_CoinDebitsPurseAndSpawnsPile(t *testing.T) {
+	f := newInvFixture(t)
+	// Seed Alice with 2gc carried (2000cp).
+	if err := f.characters.RecordCoin(context.Background(),
+		f.alice.CharacterID, currency.MustNew(2, 0, 0, 0), 0, 0); err != nil {
+		t.Fatalf("seed coin: %v", err)
+	}
+
+	runCmd(t, NewDrop(f.items, f.characters, f.sessions), f.alice, "1gc 5sp")
+
+	out := f.aOut.String()
+	if !strings.Contains(out, "You drop") || !strings.Contains(out, "1gc 5sp") {
+		t.Fatalf("alice echo: %q", out)
+	}
+	if !strings.Contains(f.bOut.String(), "Alice drops 1gc 5sp") {
+		t.Fatalf("bob broadcast: %q", f.bOut.String())
+	}
+
+	// Purse debited (2gc - 1gc 5sp = 95sp = 950cp).
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if int64(c.Coin) != 950 {
+		t.Errorf("purse after drop: got %d cp, want 950", int64(c.Coin))
+	}
+
+	// Pile on floor as a TradeGood with Value matching the drop.
+	floor, _ := f.items.ListInRoom(context.Background(), 1)
+	if len(floor) != 1 {
+		t.Fatalf("floor: got %d items, want 1", len(floor))
+	}
+	pile := floor[0]
+	if !isCoinPile(pile) {
+		t.Errorf("dropped item ext_id %q missing %s prefix", pile.ExternalID, coinPilePrefix)
+	}
+	if int64(pile.Value) != 1050 {
+		t.Errorf("pile value: got %d cp, want 1050 (1gc 5sp)", int64(pile.Value))
+	}
+	if pile.Type != repo.ItemTypeTradeGood || pile.Flags&repo.FlagTradeGood == 0 {
+		t.Errorf("pile should be trade_good with FlagTradeGood: %+v", pile)
+	}
+}
+
+func TestDrop_CoinInsufficientFunds(t *testing.T) {
+	f := newInvFixture(t)
+	// Alice has 0cp; dropping 1sp should refuse.
+	runCmd(t, NewDrop(f.items, f.characters, f.sessions), f.alice, "1sp")
+	if !strings.Contains(f.aOut.String(), "don't have that much") {
+		t.Fatalf("expected insufficient-funds refusal; got %q", f.aOut.String())
+	}
+	// No pile spawned, no debit attempted (purse already at 0).
+	floor, _ := f.items.ListInRoom(context.Background(), 1)
+	if len(floor) != 0 {
+		t.Fatalf("no pile should spawn on refusal; got %+v", floor)
+	}
+}
+
+func TestDrop_CoinRoundTripsThroughGet(t *testing.T) {
+	// End-to-end: drop coin, then get it back — purse should net to
+	// the original amount. Catches any double-debit / double-credit
+	// regression in the absorb/drop pair.
+	f := newInvFixture(t)
+	if err := f.characters.RecordCoin(context.Background(),
+		f.alice.CharacterID, currency.MustNew(1, 0, 0, 0), 0, 0); err != nil {
+		t.Fatalf("seed coin: %v", err)
+	}
+
+	runCmd(t, NewDrop(f.items, f.characters, f.sessions), f.alice, "1gc")
+	runCmd(t, NewGet(f.items, f.characters, f.sessions), f.alice, "coins")
+
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if int64(c.Coin) != 1000 {
+		t.Fatalf("purse after drop+get: got %d cp, want 1000 (1gc)", int64(c.Coin))
+	}
+	floor, _ := f.items.ListInRoom(context.Background(), 1)
+	if len(floor) != 0 {
+		t.Fatalf("floor should be empty after re-pickup; got %+v", floor)
+	}
+}
+
 func TestDrop_NoDropRefuses(t *testing.T) {
 	f := newInvFixture(t)
 	f.items.Insert(repo.Item{ExternalID: "ring", Name: "a cursed ring", OwnerCharacterID: f.alice.CharacterID, Flags: repo.FlagNoDrop})
