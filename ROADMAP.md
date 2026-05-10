@@ -1155,10 +1155,43 @@ will need on top of those tables.
       verbs. `affects.Apply` now has live callers (admin sentinel
       Source = -1); the existing `SessionTicker` decrements
       durations, `Effective` folds StatMods at attack time, and
-      the `Expired` subscriber emits fade lines. Out of slice 1:
-      consumable / weave / combat-hit producers, TickEffect
-      dispatch (poison/bleed DoT), §9 condition enum, stacking
-      caps, player-driven dispel. Must support the WoT condition
+      the `Expired` subscriber emits fade lines. **Slice 2 landed
+      2026-05-10:** foundation gaps + first player-facing producer.
+      `creature.Affect` extended with `ConditionMask` (Effective
+      ORs into `Core.Conditions`) and `TickDamage` (ticker folds
+      into HPCurrent when `TickEffect != ""`). Stacking cap of 4
+      per affect Name from distinct Sources; eviction drops the
+      shortest remaining duration. New `internal/effects/` YAML
+      catalog (mirrors chargen embed-with-override pattern) seeded
+      with `healing_draught` (HoT regen), `weak_poison` (DoT), and
+      `bull_strength` (Str.Current +2). New `internal/affects/
+      tick_effect.go` ApplyTickEffects pure function clamps HP at
+      0 / HPMax. SessionTicker.tickOne calls `RecordCore` for the
+      HP delta and publishes a new `affects.TickDamaged` event;
+      cmd-layer subscriber emits per-tick lines via WriteAsync.
+      DoT-death routes through new `combat.Manager.HandleAffectDeath
+      (ctx, charID)` — wraps the existing `handleCharacterDeath`
+      pipeline with empty Killer so XP debt / respawn / events
+      reuse the §19 path. New `quaff <potion>` verb resolves a
+      consumable from inventory, looks up the effect via
+      `ConsumableStats.EffectID` (chargen.HashID round-trip),
+      applies via `affects.Apply` with sentinel Source = -2
+      (renders as "potion"), and `Delete`s the item. Charge field
+      ignored in V1 — multi-charge consumables wait for an
+      `ItemRepo.UpdateStats` method (slice 3+). Loader extension:
+      consumable items accept `effect_id_string:` in the YAML
+      `stats:` block; world.translateConsumableEffectID translates
+      to int32 via chargen.HashID. Boot-time
+      `validateConsumableEffectRefs` cross-checks every consumable
+      EffectID against the loaded effects catalog so a typo in
+      `effect_id_string:` fails the boot loudly. Three seed
+      potions added to the Winespring Inn kitchen items file.
+      Tick cadence constant `affects.TickSeconds` corrected from
+      30 to 6 (the actual `Buckets.Affects` cadence). Out of
+      slice 2: weave-cast and combat-on-hit producers (need cast
+      verb + §D crit polish), multi-charge consumables, healer
+      NPC service, player-driven dispel weave. Must support the
+      WoT condition
       enum from §9:
       `AbilityDamaged, AbilityDrained, Blinded, Checked, Cowering,
       Dazed, Deafened, Disabled, Dying, Entangled, Exhausted,

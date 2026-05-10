@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
@@ -78,7 +79,18 @@ func convertItemStats(it Item) (repo.ItemStats, error) {
 	if len(it.Stats) == 0 {
 		return target, nil
 	}
-	raw, err := json.Marshal(it.Stats)
+	stats := it.Stats
+	if t == repo.ItemTypeConsumable {
+		// Allow builders to author the effect by string id via
+		// `effect_id_string`; translate to the int32 hash key the
+		// runtime expects. Mutually exclusive with explicit `effect_id`.
+		var err error
+		stats, err = translateConsumableEffectID(stats)
+		if err != nil {
+			return nil, err
+		}
+	}
+	raw, err := json.Marshal(stats)
 	if err != nil {
 		return nil, fmt.Errorf("encode stats: %w", err)
 	}
@@ -88,4 +100,37 @@ func convertItemStats(it Item) (repo.ItemStats, error) {
 		return nil, fmt.Errorf("decode %s stats: %w", t, err)
 	}
 	return target, nil
+}
+
+// translateConsumableEffectID rewrites a consumable stats map so a
+// builder-friendly `effect_id_string` key resolves into the runtime
+// `effect_id` int32 (via chargen.HashID). Unknown effect IDs are NOT
+// rejected here — the loader's validate step cross-checks against the
+// effect catalog so the failure surfaces with the offending YAML
+// filename. Returns a new map; the input is not mutated.
+//
+// Specifying both `effect_id` and `effect_id_string` in the same
+// stats block is an authoring error and returns a non-nil error so
+// the loader fails the boot loudly instead of silently discarding the
+// numeric value.
+func translateConsumableEffectID(in map[string]any) (map[string]any, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	raw, ok := out["effect_id_string"]
+	if !ok {
+		return out, nil
+	}
+	if _, both := out["effect_id"]; both {
+		return nil, fmt.Errorf("cannot set both effect_id and effect_id_string on a consumable")
+	}
+	delete(out, "effect_id_string")
+	if id, ok := raw.(string); ok && id != "" {
+		out["effect_id"] = chargen.HashID(id)
+	}
+	return out, nil
 }

@@ -20,3 +20,18 @@ type Expired struct {
 	RoomID      int64
 	Names       []string
 }
+
+// TickDamaged fires when one or more TickEffect-bearing affects on a
+// character delivered a non-zero HP delta on the current pulse.
+// Subscribers in cmd-layer render per-event lines via WriteAsync
+// (cross-session output rule applies — the affects ticker runs on
+// the eventbus goroutine).
+//
+// Phase E #25 slice 2.
+type TickDamaged struct {
+	CharacterID int64
+	RoomID      int64
+	Events      []TickEvent
+	NewHP       int32
+	HPMax       int32
+}

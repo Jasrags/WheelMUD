@@ -16,11 +16,12 @@ type fakeFights struct {
 func (f *fakeFights) Active(roomID int64) bool { return f.active[roomID] }
 
 type fakeChars struct {
-	mu       sync.Mutex
-	rows     map[int64]Character
-	loadErr  map[int64]error
-	writeErr map[int64]error
-	writes   map[int64][][]creature.Affect
+	mu         sync.Mutex
+	rows       map[int64]Character
+	loadErr    map[int64]error
+	writeErr   map[int64]error
+	writes     map[int64][][]creature.Affect
+	coreWrites map[int64][]coreWrite
 }
 
 func (f *fakeChars) GetByID(_ context.Context, id int64) (Character, error) {
@@ -35,7 +36,14 @@ func (f *fakeChars) GetByID(_ context.Context, id int64) (Character, error) {
 	}
 	out := make([]creature.Affect, len(c.Affects))
 	copy(out, c.Affects)
-	return Character{Affects: out}, nil
+	return Character{
+		Affects:   out,
+		HPCurrent: c.HPCurrent,
+		HPMax:     c.HPMax,
+		Subdual:   c.Subdual,
+		Condition: c.Condition,
+		Position:  c.Position,
+	}, nil
 }
 
 func (f *fakeChars) RecordAffects(_ context.Context, id int64, a []creature.Affect) error {
@@ -52,6 +60,25 @@ func (f *fakeChars) RecordAffects(_ context.Context, id int64, a []creature.Affe
 	f.writes[id] = append(f.writes[id], cp)
 	row := f.rows[id]
 	row.Affects = cp
+	f.rows[id] = row
+	return nil
+}
+
+type coreWrite struct {
+	HP      int32
+	Subdual int32
+}
+
+func (f *fakeChars) RecordHP(_ context.Context, id int64, hp, subdual int32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.coreWrites == nil {
+		f.coreWrites = map[int64][]coreWrite{}
+	}
+	f.coreWrites[id] = append(f.coreWrites[id], coreWrite{HP: hp, Subdual: subdual})
+	row := f.rows[id]
+	row.HPCurrent = hp
+	row.Subdual = subdual
 	f.rows[id] = row
 	return nil
 }
@@ -221,4 +248,165 @@ func TestSessionTicker_WriteErrorContinues(t *testing.T) {
 func TestSessionTicker_NilSafe(t *testing.T) {
 	var tk *SessionTicker
 	tk.Tick(context.Background()) // must not panic
+}
+
+func TestSessionTicker_TickEffectAppliesHPDelta(t *testing.T) {
+	rows := map[int64]Character{
+		7: {
+			HPCurrent: 20,
+			HPMax:     30,
+			Affects: []creature.Affect{
+				{Source: 1, Name: "weak_poison", DurationTicks: 5, TickEffect: "poison", TickDamage: -3},
+			},
+		},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	cand := func() []Candidate { return []Candidate{{CharacterID: 7, RoomID: 100}} }
+
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.Tick(context.Background())
+
+	chars.mu.Lock()
+	cw := chars.coreWrites[7]
+	got := chars.rows[7]
+	chars.mu.Unlock()
+	if len(cw) != 1 || cw[0].HP != 17 {
+		t.Fatalf("expected one HP write to 17, got %+v", cw)
+	}
+	if len(got.Affects) != 1 || got.Affects[0].DurationTicks != 4 {
+		t.Fatalf("affect post-tick: %+v", got.Affects)
+	}
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	var sawTick bool
+	for _, ev := range bus.events {
+		if td, ok := ev.(TickDamaged); ok {
+			sawTick = true
+			if td.NewHP != 17 || td.HPMax != 30 || len(td.Events) != 1 || td.Events[0].Delta != -3 {
+				t.Fatalf("TickDamaged: %+v", td)
+			}
+		}
+	}
+	if !sawTick {
+		t.Fatalf("expected TickDamaged event in %+v", bus.events)
+	}
+}
+
+func TestSessionTicker_TickEffectKillsAndFiresDeathHook(t *testing.T) {
+	rows := map[int64]Character{
+		7: {
+			HPCurrent: 2,
+			HPMax:     30,
+			Affects: []creature.Affect{
+				{Source: 1, Name: "weak_poison", DurationTicks: 5, TickEffect: "poison", TickDamage: -3},
+			},
+		},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	cand := func() []Candidate { return []Candidate{{CharacterID: 7, RoomID: 100}} }
+
+	type call struct {
+		ID    int64
+		Cause string
+	}
+	var deaths []call
+	var dmu sync.Mutex
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.SetDeathHook(func(_ context.Context, id int64, cause string) {
+		dmu.Lock()
+		defer dmu.Unlock()
+		deaths = append(deaths, call{ID: id, Cause: cause})
+	})
+	tk.Tick(context.Background())
+
+	chars.mu.Lock()
+	hp := chars.rows[7].HPCurrent
+	chars.mu.Unlock()
+	if hp != 0 {
+		t.Fatalf("HP after lethal tick should clamp at 0, got %d", hp)
+	}
+	dmu.Lock()
+	defer dmu.Unlock()
+	if len(deaths) != 1 || deaths[0].ID != 7 || deaths[0].Cause != "weak_poison" {
+		t.Fatalf("death hook: %+v", deaths)
+	}
+}
+
+func TestSessionTicker_HoTClampsAtMax(t *testing.T) {
+	rows := map[int64]Character{
+		7: {
+			HPCurrent: 28,
+			HPMax:     30,
+			Affects: []creature.Affect{
+				{Source: 1, Name: "regen", DurationTicks: 5, TickEffect: "regen", TickDamage: +5},
+			},
+		},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	cand := func() []Candidate { return []Candidate{{CharacterID: 7, RoomID: 100}} }
+
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.Tick(context.Background())
+
+	chars.mu.Lock()
+	hp := chars.rows[7].HPCurrent
+	chars.mu.Unlock()
+	if hp != 30 {
+		t.Fatalf("HoT should clamp at HPMax (30), got %d", hp)
+	}
+}
+
+func TestSessionTicker_DoesNotOverwriteConcurrentConditions(t *testing.T) {
+	// Regression: tickOne previously called RecordCore which writes
+	// hp/subdual/conditions/position_flags atomically — using the
+	// snapshot's Condition value would clobber a CondProne/CondStunned
+	// bit set by combat between the snapshot load and the write.
+	// The fix swapped to the narrow RecordHP, which leaves conditions
+	// untouched. This test verifies the fake's coreWrites only carry
+	// HP+Subdual (no condition fields) and that the ticker never
+	// asks the loader to write conditions.
+	rows := map[int64]Character{
+		7: {
+			HPCurrent: 20,
+			HPMax:     30,
+			Affects: []creature.Affect{
+				{Source: 1, Name: "weak_poison", DurationTicks: 5, TickEffect: "poison", TickDamage: -3},
+			},
+		},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	cand := func() []Candidate { return []Candidate{{CharacterID: 7, RoomID: 100}} }
+
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.Tick(context.Background())
+
+	chars.mu.Lock()
+	defer chars.mu.Unlock()
+	cw := chars.coreWrites[7]
+	if len(cw) != 1 {
+		t.Fatalf("expected one HP write, got %d", len(cw))
+	}
+	// coreWrite struct intentionally has no Cond/Pos fields — if a
+	// future change reintroduces a Conditions write here, the field
+	// won't exist and this assertion (compile-time) will fail.
+	if cw[0].HP != 17 || cw[0].Subdual != 0 {
+		t.Fatalf("unexpected HP write payload: %+v", cw[0])
+	}
+}
+
+func TestApplyTickEffects_SkipsNonTickAffects(t *testing.T) {
+	c := creature.Core{
+		HPCurrent: 20, HPMax: 30,
+		Affects: []creature.Affect{
+			{Name: "blessed", DurationTicks: 5, Modifiers: []creature.StatMod{{Field: FieldDefense, Delta: 2}}}, // no TickEffect
+			{Name: "shielded", DurationTicks: 5, TickEffect: "ward", TickDamage: 0},                            // zero delta
+		},
+	}
+	hp, evs := ApplyTickEffects(c)
+	if hp != 20 {
+		t.Fatalf("HP must be untouched, got %d", hp)
+	}
+	if len(evs) != 0 {
+		t.Fatalf("no events expected: %+v", evs)
+	}
 }

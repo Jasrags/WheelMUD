@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -212,9 +213,10 @@ func TestAffects_ListsLiveAffects(t *testing.T) {
 	if !strings.Contains(out, "blessed") || !strings.Contains(out, "Saves.Will +1") {
 		t.Fatalf("listing missing fields: %s", out)
 	}
-	// 4 ticks * 30s = 120s
-	if !strings.Contains(out, "~120s left") {
-		t.Fatalf("duration readout missing: %s", out)
+	// 4 ticks * affects.TickSeconds (6s @ slice 2) = 24s
+	wantDur := fmt.Sprintf("~%ds left", 4*affects.TickSeconds)
+	if !strings.Contains(out, wantDur) {
+		t.Fatalf("duration readout missing %q: %s", wantDur, out)
 	}
 	if !strings.Contains(out, "[admin]") {
 		t.Fatalf("source label missing: %s", out)

@@ -227,3 +227,82 @@ func TestApply_DoesNotMutateInput(t *testing.T) {
 		t.Fatalf("Apply mutated input: %d", in[0].DurationTicks)
 	}
 }
+
+func TestEffective_FoldsConditionMask(t *testing.T) {
+	c := newCore()
+	c.Conditions = creature.CondProne
+	c.Affects = []creature.Affect{
+		{Name: "blinding_dust", DurationTicks: 5, ConditionMask: creature.CondBlinded},
+		{Name: "stunned", DurationTicks: 3, ConditionMask: creature.CondStunned | creature.CondDazed},
+	}
+	got := Effective(c)
+	want := creature.CondProne | creature.CondBlinded | creature.CondStunned | creature.CondDazed
+	if got.Conditions != want {
+		t.Fatalf("Conditions: want %032b, got %032b", want, got.Conditions)
+	}
+	// input must not be mutated
+	if c.Conditions != creature.CondProne {
+		t.Fatalf("input Conditions mutated: %032b", c.Conditions)
+	}
+}
+
+func TestApply_StackingCapEvictsShortest(t *testing.T) {
+	src := func(s int64, dur int32) creature.Affect {
+		return creature.Affect{Source: s, Name: "poison", DurationTicks: dur}
+	}
+	in := []creature.Affect{src(1, 10), src(2, 5), src(3, 20), src(4, 15)}
+	if len(in) != MaxAffectsPerName {
+		t.Fatalf("test premise: want full slice (%d), got %d", MaxAffectsPerName, len(in))
+	}
+	// 5th source pushes count over cap; victim is Source=2 (dur=5).
+	out := Apply(in, src(5, 30))
+	if len(out) != MaxAffectsPerName {
+		t.Fatalf("post-cap len: want %d, got %d", MaxAffectsPerName, len(out))
+	}
+	for _, a := range out {
+		if a.Source == 2 {
+			t.Fatalf("Source=2 (shortest) should have been evicted; out=%+v", out)
+		}
+	}
+	var foundNew bool
+	for _, a := range out {
+		if a.Source == 5 && a.DurationTicks == 30 {
+			foundNew = true
+		}
+	}
+	if !foundNew {
+		t.Fatalf("new source not present: %+v", out)
+	}
+}
+
+func TestApply_RefreshBypassesStackingCap(t *testing.T) {
+	src := func(s int64, dur int32) creature.Affect {
+		return creature.Affect{Source: s, Name: "poison", DurationTicks: dur}
+	}
+	in := []creature.Affect{src(1, 10), src(2, 5), src(3, 20), src(4, 15)}
+	// Refreshing Source=2 must NOT evict — it just rewrites that slot.
+	out := Apply(in, src(2, 99))
+	if len(out) != MaxAffectsPerName {
+		t.Fatalf("refresh shouldn't grow or shrink; got %d", len(out))
+	}
+	for _, a := range out {
+		if a.Source == 2 && a.DurationTicks != 99 {
+			t.Fatalf("Source=2 not refreshed: %+v", a)
+		}
+	}
+}
+
+func TestApply_StackingCapDifferentNamesUnaffected(t *testing.T) {
+	in := []creature.Affect{
+		{Source: 1, Name: "poison", DurationTicks: 5},
+		{Source: 2, Name: "poison", DurationTicks: 5},
+		{Source: 3, Name: "poison", DurationTicks: 5},
+		{Source: 4, Name: "poison", DurationTicks: 5},
+		{Source: 5, Name: "blessed", DurationTicks: 5},
+	}
+	// New "blessed" entry should append cleanly — different Name.
+	out := Apply(in, creature.Affect{Source: 6, Name: "blessed", DurationTicks: 5})
+	if len(out) != 6 {
+		t.Fatalf("cross-name shouldn't evict; got %d", len(out))
+	}
+}

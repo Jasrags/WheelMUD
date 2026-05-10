@@ -444,10 +444,25 @@ catalogs.
     fill the no-callers gap on `affects.Apply` and give builders an
     end-to-end producer to test the existing tick / Effective /
     Expired pipeline. Sentinel Source `-1` flags admin-applied
-    affects in the inspect-verb display. Slice 2+ wires
-    consumable/weave/combat-hit producers, TickEffect dispatch
-    (DoT/poison/bleed), the §9 condition enum, and stacking caps
-    from different sources.
+    affects in the inspect-verb display. **Slice 2 landed 2026-05-10:**
+    foundation gaps closed + first player producer. `creature.Affect`
+    gained `ConditionMask` (Effective ORs into `Core.Conditions`) and
+    `TickDamage` (ticker folds into HPCurrent when `TickEffect != ""`).
+    Apply now caps at 4 entries per Name from distinct Sources
+    (shortest remaining duration evicted). New `internal/effects/`
+    YAML catalog (chargen-style embed+override) seeded with
+    `healing_draught`, `weak_poison`, `bull_strength`. New
+    `affects.ApplyTickEffects` pure fn drives DoT/HoT in
+    `SessionTicker.tickOne`, persisted via `RecordCore`, broadcast
+    via the new `affects.TickDamaged` event. DoT-death wires through
+    new `combat.Manager.HandleAffectDeath` reusing the §19 pipeline.
+    New `quaff <potion>` verb (sentinel Source = -2 → "potion"
+    label) consumes the item on apply (V1: ignores Charges).
+    Loader: consumable items accept `effect_id_string:` translated
+    via chargen.HashID; boot-time `validateConsumableEffectRefs`
+    cross-checks against the catalog. Three seed potions in the
+    Winespring Inn kitchen. Slice 3+: weave/combat-hit producers,
+    multi-charge consumables, healer NPC service, player dispel.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure. **Landed 2026-05-09**
     — both slices in one PR. Slice A (§4): `Command.Lag time.Duration`

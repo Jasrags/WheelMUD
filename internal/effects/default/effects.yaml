@@ -1,0 +1,33 @@
+# Phase E #25 slice 2 — first content effects.
+# Wired through the `quaff` verb via ConsumableStats.EffectID
+# (chargen.HashID(id)).
+#
+# Cadence note: the SessionTicker pulses every TickSeconds (6s).
+# DurationTicks here are in TICKS, not seconds — multiply by 6 to get
+# wall-clock seconds.
+
+effects:
+  - id: healing_draught
+    name: healing draught
+    duration_ticks: 4 # ~24s of regen
+    tick_effect: regen
+    tick_damage: 2
+    message_on_apply: "Warmth spreads through your veins."
+    message_on_expire: "The healing draught's warmth fades."
+
+  - id: weak_poison
+    name: weak poison
+    duration_ticks: 6 # ~36s of poison
+    tick_effect: poison
+    tick_damage: -1
+    message_on_apply: "A sour, biting cold settles in your gut."
+    message_on_expire: "The poison's grip releases."
+
+  - id: bull_strength
+    name: bull's strength
+    duration_ticks: 50 # ~5min @ 6s
+    modifiers:
+      - field: Str.Current
+        delta: 2
+    message_on_apply: "Your muscles surge with new power."
+    message_on_expire: "The surge of strength leaves you."

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/dialogue"
@@ -312,6 +313,50 @@ func TestLoadAndSync_ItemTaxonomyRoundTrip(t *testing.T) {
 	pebble := byID["smith.pebble"]
 	if pebble.Type != repo.ItemTypeTrash {
 		t.Errorf("untyped item should default to trash; got %s", pebble.Type)
+	}
+}
+
+func TestLoadAndSync_ConsumableEffectIDStringResolves(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
+		"z/items.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.potion
+  room: z.r
+  name: a potion
+  type: consumable
+  weight: 0.5
+  stats:
+    charges: 1
+    effect_id_string: healing_draught
+`)},
+	}
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+
+	items := repo.NewSQLiteItemRepo(conn)
+	got, err := items.ListInRoom(ctx, repo.StarterRoomID)
+	if err != nil {
+		t.Fatalf("ListInRoom: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 item, got %d", len(got))
+	}
+	cs, ok := got[0].Stats.(*repo.ConsumableStats)
+	if !ok {
+		t.Fatalf("expected *ConsumableStats, got %T", got[0].Stats)
+	}
+	want := chargen.HashID("healing_draught")
+	if cs.EffectID != want {
+		t.Fatalf("EffectID: want %d (HashID of healing_draught), got %d", want, cs.EffectID)
 	}
 }
 

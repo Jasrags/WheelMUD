@@ -119,3 +119,43 @@
   stats:
     radius_ft: 20
     fuel_ticks: 60
+
+# Phase E #25 slice 2 — seed potions wired to the effects catalog.
+# `effect_id_string` resolves through chargen.HashID to the runtime
+# int32 EffectID. Boot-time validateConsumableEffectRefs cross-checks
+# the hash against the catalog so a typo here fails the boot loudly.
+- id: tr.potion_healing_draught
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: a healing draught
+  short: a small clay vial of warm, ruby-red healing draught
+  type: consumable
+  weight: 0.5
+  value: 2sp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id_string: healing_draught
+
+- id: tr.potion_weak_poison
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: a vial of weak poison
+  short: a smoked-glass vial of pale-green weak poison, sealed with wax
+  type: consumable
+  weight: 0.5
+  value: 1sp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id_string: weak_poison
+
+- id: tr.potion_bull_strength
+  room: tr.emonds_field.winespring_inn.kitchen
+  name: an elixir of strength
+  short: a cut-crystal phial of amber elixir of strength, capped in lead
+  type: consumable
+  weight: 0.5
+  value: 5sp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id_string: bull_strength

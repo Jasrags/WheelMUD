@@ -13,10 +13,17 @@ import "github.com/Jasrags/WheelMUD/internal/creature"
 
 // TickSeconds is the wall-clock cadence at which the SessionTicker
 // pulses. Subscribers in cmd/server/main.go bind the ticker to
-// tick.Buckets.Regen (30s); the constant is the single source of
+// tick.Buckets.Affects (6s); the constant is the single source of
 // truth so the `affects` verb's duration readout stays in sync if the
 // bucket binding changes.
-const TickSeconds = 30
+const TickSeconds = 6
+
+// MaxAffectsPerName caps the number of distinct-Source affects that
+// can share a Name. When a new Source pushes the count past the cap
+// Apply evicts the entry with the shortest remaining DurationTicks
+// (FIFO-ish — the oldest pulse loses). Same-(Source, Name) refresh
+// is unaffected by the cap.
+const MaxAffectsPerName = 4
 
 // AllowedStatModFields enumerates the field names accepted by Apply /
 // Effective. Used by the `affect` admin verb's argument parser to
@@ -55,7 +62,8 @@ const (
 )
 
 // Effective returns a copy of c with every Affect.Modifier folded into
-// the matching numeric field. Combat passes the result of this fn into
+// the matching numeric field, and every Affect.ConditionMask OR'd
+// into Conditions. Combat passes the result of this fn into
 // RollAttack/RollDamage/applyDamage so the math reads through-affect
 // values. The original c is not mutated.
 //
@@ -72,6 +80,7 @@ func Effective(c creature.Core) creature.Core {
 		for _, m := range a.Modifiers {
 			applyMod(&out, m)
 		}
+		out.Conditions |= a.ConditionMask
 	}
 	return out
 }
@@ -154,23 +163,62 @@ func Tick(in []creature.Affect) (out []creature.Affect, expired []string) {
 //
 // (Source, Name) dedup means:
 //   - distinct Sources with the same Name coexist (two casters' poisons
-//     stack as separate entries).
+//     stack as separate entries) up to MaxAffectsPerName.
 //   - distinct Names from the same Source coexist (one item proccing
 //     "blessed" and "shielded").
 //   - identical (Source, Name) — the new one wins outright.
+//
+// Stacking cap: when MaxAffectsPerName entries already share a.Name
+// from different Sources, the entry with the lowest remaining
+// DurationTicks is evicted to make room for the new one. The refresh
+// path bypasses the cap (replacing your own affect can't push you
+// over).
 func Apply(in []creature.Affect, a creature.Affect) []creature.Affect {
-	out := make([]creature.Affect, 0, len(in)+1)
-	replaced := false
-	for _, prev := range in {
-		if prev.Source == a.Source && prev.Name == a.Name {
-			out = append(out, a)
-			replaced = true
+	for i, prev := range in {
+		if prev.Source != a.Source || prev.Name != a.Name {
 			continue
 		}
-		out = append(out, prev)
+		out := make([]creature.Affect, len(in))
+		copy(out, in)
+		out[i] = a
+		return out
 	}
-	if !replaced {
-		out = append(out, a)
-	}
+	// New (Source, Name) pair. Enforce cap on shared Name before
+	// appending.
+	out := make([]creature.Affect, len(in), len(in)+1)
+	copy(out, in)
+	out = evictForName(out, a.Name)
+	out = append(out, a)
 	return out
+}
+
+// evictForName drops the lowest-DurationTicks entry sharing name when
+// the slice already holds MaxAffectsPerName of them. Returns the
+// (possibly shorter) slice; the input slice may be mutated in place
+// (it is the caller-owned working copy from Apply).
+func evictForName(in []creature.Affect, name string) []creature.Affect {
+	count := 0
+	for _, a := range in {
+		if a.Name == name {
+			count++
+		}
+	}
+	if count < MaxAffectsPerName {
+		return in
+	}
+	victim := -1
+	var minDur int32
+	for i, a := range in {
+		if a.Name != name {
+			continue
+		}
+		if victim == -1 || a.DurationTicks < minDur {
+			victim = i
+			minDur = a.DurationTicks
+		}
+	}
+	if victim == -1 {
+		return in
+	}
+	return append(in[:victim], in[victim+1:]...)
 }

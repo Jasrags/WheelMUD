@@ -34,6 +34,11 @@ import (
 // verb's display resolver.
 const adminAffectSource int64 = -1
 
+// consumableAffectSource is the sentinel Source stamped on affects
+// applied by `quaff` (Phase E #25 slice 2). Sibling to
+// adminAffectSource; renders as "potion" in the inspect verb.
+const consumableAffectSource int64 = -2
+
 // NewAffects builds the `affects` player verb. Lists the caller's
 // live affects with name, modifiers, source, and remaining duration.
 func NewAffects(characters repo.CharacterRepo) *telnet.Command {
@@ -286,6 +291,8 @@ func resolveAffectSource(c *telnet.Context, characters repo.CharacterRepo, src i
 	switch {
 	case src == adminAffectSource:
 		return "admin"
+	case src == consumableAffectSource:
+		return "potion"
 	case src == 0:
 		return "unknown"
 	default:

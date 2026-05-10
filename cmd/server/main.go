@@ -25,6 +25,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/display"
+	"github.com/Jasrags/WheelMUD/internal/effects"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
@@ -211,6 +212,26 @@ func main() {
 		"feats", len(chargenCatalog.Feats()),
 		"skills", len(chargenCatalog.Skills()),
 		"weaves", len(chargenCatalog.Weaves()))
+
+	effectsFS, err := effects.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve effects source", "error", err)
+		os.Exit(1)
+	}
+	effectsCatalog, err := effects.Load(effectsFS)
+	if err != nil {
+		slog.Error("Failed to load effects catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Effects catalog loaded", "effects", len(effectsCatalog.IDs()))
+
+	// Cross-validate consumable EffectIDs against the loaded effects
+	// catalog so a typo in `effect_id_string:` fails the boot loudly
+	// instead of fizzling silently at quaff time.
+	if err := validateConsumableEffectRefs(loaded, effectsCatalog); err != nil {
+		slog.Error("Consumable effect refs invalid", "error", err)
+		os.Exit(1)
+	}
 
 	questFS, err := quest.SourceFS()
 	if err != nil {
@@ -443,6 +464,12 @@ func main() {
 		eventbusAdapter{bus},
 		slog.Default(),
 	)
+	affectsTicker.SetDeathHook(func(ctx context.Context, charID int64, _ string) {
+		// DoT-death entrypoint into the §19 death pipeline. Cause is
+		// surfaced via the TickDamaged event the ticker also publishes,
+		// so the handler doesn't need it.
+		combatMgr.HandleAffectDeath(ctx, charID)
+	})
 	buckets.Affects.Subscribe(affectsTicker.Tick)
 
 	// Phase E #27: channeling ticker. Refills slot pools 8h after the
@@ -582,6 +609,30 @@ func main() {
 		}
 	})
 
+	// affects.TickDamaged subscriber: per-tick HP delta lines from
+	// poison/bleed/regen affects. Phase E #25 slice 2.
+	eventbus.Subscribe[affects.TickDamaged](bus, func(_ context.Context, ev affects.TickDamaged) {
+		victim := cmd.LookupByCharacterID(sessions, ev.CharacterID)
+		if victim == nil {
+			return
+		}
+		for _, te := range ev.Events {
+			if te.Delta == 0 {
+				continue
+			}
+			var msg string
+			if te.Delta < 0 {
+				msg = fmt.Sprintf("{{You suffer %d damage from %s.}}::red\r\n", -te.Delta, te.Name)
+			} else {
+				msg = fmt.Sprintf("{{You recover %d hp from %s.}}::green\r\n", te.Delta, te.Name)
+			}
+			if err := victim.WriteAsync(msg); err != nil {
+				slog.Debug("affects: tick notify failed",
+					"char", ev.CharacterID, "name", te.Name, "error", err)
+			}
+		}
+	})
+
 	// srv is constructed before buildRegistry so the shutdown / reboot
 	// admin commands can wire to srv as a ShutdownController. newInitial
 	// is filled in below once gameMode (which depends on the registry)
@@ -613,7 +664,7 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -937,7 +988,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -1009,6 +1060,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewDrop(items, characters, sessions),
 		cmd.NewGive(items, characters, sessions),
 		cmd.NewPut(items, characters, sessions),
+		cmd.NewQuaff(items, characters, effectsCatalog, sessions),
 		cmd.NewWear(items, characters, sessions),
 		cmd.NewWield(items, characters, sessions),
 		cmd.NewRemove(items, characters, sessions),
@@ -1352,6 +1404,32 @@ func (srv *server) runCountdown(verb, reason string, delay time.Duration, cancel
 	}
 }
 
+// validateConsumableEffectRefs walks every consumable item parsed
+// from the world YAML and confirms its EffectID resolves through the
+// loaded effects catalog. Zero (no effect set) is treated as authored
+// intent — the potion fizzles when quaffed. Phase E #25 slice 2.
+func validateConsumableEffectRefs(loaded world.LoadedWorld, eff *effects.Catalog) error {
+	for zone, specs := range loaded.ItemSpecsByZone {
+		for _, spec := range specs {
+			if spec.Item.Type != repo.ItemTypeConsumable {
+				continue
+			}
+			stats, ok := spec.Item.Stats.(repo.ConsumableStats)
+			if !ok {
+				continue
+			}
+			if stats.EffectID == 0 {
+				continue
+			}
+			if _, ok := eff.IDForHash(stats.EffectID); !ok {
+				return fmt.Errorf("zone %s: consumable %q references unknown effect (hash=%d)",
+					zone, spec.Item.ExternalID, stats.EffectID)
+			}
+		}
+	}
+	return nil
+}
+
 // broadcast sends msg to every live session via WriteAsync (the only
 // safe cross-session write path; see CLAUDE.md). Failures are logged
 // at Debug — a closed connection is not a coordinator-level error.
@@ -1376,11 +1454,22 @@ func (a characterAffectsLoader) GetByID(ctx context.Context, id int64) (affects.
 	if err != nil {
 		return affects.Character{}, err
 	}
-	return affects.Character{Affects: ch.Core.Affects}, nil
+	return affects.Character{
+		Affects:   ch.Core.Affects,
+		HPCurrent: ch.Core.HPCurrent,
+		HPMax:     ch.Core.HPMax,
+		Subdual:   ch.Core.Subdual,
+		Condition: ch.Core.Conditions,
+		Position:  ch.Core.Position,
+	}, nil
 }
 
 func (a characterAffectsLoader) RecordAffects(ctx context.Context, id int64, list []creature.Affect) error {
 	return a.chars.RecordAffects(ctx, id, list)
+}
+
+func (a characterAffectsLoader) RecordHP(ctx context.Context, id int64, hp, subdual int32) error {
+	return a.chars.RecordHP(ctx, id, hp, subdual)
 }
 
 // characterChannelingLoader adapts repo.CharacterRepo to the slim

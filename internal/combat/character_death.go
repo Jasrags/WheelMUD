@@ -36,6 +36,14 @@ import (
 const respawnConditionMask creature.Condition = creature.CondDying |
 	creature.CondUnconscious
 
+// HandleAffectDeath drives the §19 player-death pipeline for a victim
+// killed by an out-of-combat affect tick (Phase E #25 slice 2 — DoT
+// poison/bleed). Killer is empty (no attribution). Safe to call when
+// no Fight covers the victim's room — the marker step no-ops.
+func (m *Manager) HandleAffectDeath(ctx context.Context, characterID int64) {
+	m.handleCharacterDeath(ctx, ActorRef{}, ActorRef{Kind: ActorKindCharacter, ID: characterID})
+}
+
 func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim ActorRef) {
 	if m.chars == nil {
 		// Defensive: a manager wired without a character repo can't

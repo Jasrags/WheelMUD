@@ -204,6 +204,12 @@ type CharacterRepo interface {
 	// / weave-resolution paths call this; immutable fields like
 	// abilities and class are untouched.
 	RecordCore(ctx context.Context, id int64, hpCurrent, subdual int32, conditions creature.Condition, positionFlags creature.PositionFlags) error
+	// RecordHP narrowly persists hp_current and subdual without
+	// touching conditions/position_flags. Phase E #25 slice 2 — the
+	// affects ticker uses this for DoT/HoT writes so it can't
+	// silently overwrite a Condition bit set concurrently by combat
+	// (the ticker holds a stale snapshot of conditions/position).
+	RecordHP(ctx context.Context, id int64, hpCurrent, subdual int32) error
 	// RecordChannelSettings persists the per-channel mute map after
 	// a toggle. The channel command writes through immediately so
 	// the setting survives logout even if autosave hasn't fired.

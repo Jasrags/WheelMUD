@@ -34,17 +34,44 @@ type FightLookup interface {
 // CharLoader is the slim subset of repo.CharacterRepo the ticker
 // needs. Defined here so tests can substitute a fake without a real
 // repo / DB.
+//
+// RecordHP commits a HP delta from the TickEffect dispatcher. The
+// ticker uses the narrow HP-only write — NOT RecordCore — because
+// it holds a stale snapshot of conditions/position_flags; combat
+// runs concurrently and may have set CondProne/CondStunned/etc.
+// between the load and the write. RecordHP leaves those columns
+// untouched.
 type CharLoader interface {
 	GetByID(ctx context.Context, id int64) (Character, error)
 	RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error
+	RecordHP(ctx context.Context, id int64, hp, subdual int32) error
 }
 
 // Character is the projection the ticker reads. The full repo.Character
 // type satisfies this implicitly via duck typing through the adapter
 // in cmd/server/main.go (see characterLoaderAdapter there).
+//
+// HP fields + Conditions / Position are needed for the TickEffect
+// dispatcher; an Affect with TickEffect != "" runs through
+// ApplyTickEffects to fold per-tick deltas into HPCurrent.
 type Character struct {
-	Affects []creature.Affect
+	Affects   []creature.Affect
+	HPCurrent int32
+	HPMax     int32
+	Subdual   int32
+	Condition creature.Condition
+	Position  creature.PositionFlags
 }
+
+// DeathHook is the slim callback the cmd-layer wires to the
+// combat.Manager death pipeline. Fired when a TickEffect drains a
+// character's HP to zero (or below). The ticker passes the affect
+// Name as the cause label so the death broadcast can read "X dies
+// from poison." instead of a generic line.
+//
+// nil is allowed — the ticker just skips publishing in that case
+// (used by tests that don't wire a manager).
+type DeathHook func(ctx context.Context, characterID int64, cause string)
 
 // EventPublisher is the slim subset of *eventbus.Bus the ticker needs.
 type EventPublisher interface {
@@ -67,7 +94,18 @@ type SessionTicker struct {
 	fights     FightLookup
 	chars      CharLoader
 	bus        EventPublisher
+	onDeath    DeathHook
 	log        *slog.Logger
+}
+
+// SetDeathHook installs the cmd-layer's death callback. Pass nil to
+// clear (tests). Safe to call before or after wiring the ticker into
+// a bucket.
+func (t *SessionTicker) SetDeathHook(h DeathHook) {
+	if t == nil {
+		return
+	}
+	t.onDeath = h
 }
 
 // NewSessionTicker constructs a ticker. log may be nil; default
@@ -116,6 +154,29 @@ func (t *SessionTicker) tickOne(ctx context.Context, c Candidate) {
 	if len(ch.Affects) == 0 {
 		return
 	}
+	// Run TickEffect dispatch BEFORE the duration tick so a 1-tick
+	// poison still gets one HP delta on the same pulse it expires.
+	tickCore := creature.Core{
+		HPCurrent: ch.HPCurrent,
+		HPMax:     ch.HPMax,
+		Affects:   ch.Affects,
+	}
+	newHP, tickEvents := ApplyTickEffects(tickCore)
+	if len(tickEvents) > 0 {
+		if err := t.chars.RecordHP(ctx, c.CharacterID, newHP, ch.Subdual); err != nil {
+			t.log.Warn("affects: tick HP write-back failed",
+				"char", c.CharacterID, "error", err)
+		} else if t.bus != nil {
+			t.bus.Publish(ctx, TickDamaged{
+				CharacterID: c.CharacterID,
+				RoomID:      c.RoomID,
+				Events:      tickEvents,
+				NewHP:       newHP,
+				HPMax:       ch.HPMax,
+			})
+		}
+	}
+
 	next, expired := Tick(ch.Affects)
 	if err := t.chars.RecordAffects(ctx, c.CharacterID, next); err != nil {
 		t.log.Warn("affects: write-back failed",
@@ -128,5 +189,19 @@ func (t *SessionTicker) tickOne(ctx context.Context, c Candidate) {
 			RoomID:      c.RoomID,
 			Names:       expired,
 		})
+	}
+
+	// Death-from-DoT: if the tick drained HP to zero (or below), hand
+	// off to the cmd-layer's combat death pipeline. Use the last
+	// damaging event's Name as the cause label.
+	if newHP <= 0 && len(tickEvents) > 0 && t.onDeath != nil {
+		var cause string
+		for i := len(tickEvents) - 1; i >= 0; i-- {
+			if tickEvents[i].Delta < 0 {
+				cause = tickEvents[i].Name
+				break
+			}
+		}
+		t.onDeath(ctx, c.CharacterID, cause)
 	}
 }
