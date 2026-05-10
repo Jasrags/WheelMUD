@@ -11,6 +11,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/audit"
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -20,12 +21,14 @@ const (
 	spawnCountMax = 20
 	spawnKindMob  = "mob"
 	spawnKindItem = "item"
+	spawnKindCoin = "coin"
 )
 
-// NewSpawn builds the admin `spawn` command. Two forms:
+// NewSpawn builds the admin `spawn` command. Three forms:
 //
 //	spawn mob <external_id> [count]
 //	spawn item <external_id> [count]
+//	spawn coin <amount> [count]
 //
 // Mobs route through MobTemplateRepo.GetByExternalID + a fresh
 // MobInstance per copy. Items have no separate template repo today —
@@ -35,15 +38,24 @@ const (
 // rejected). Stats pointers are deep-copied so two spawned bags
 // don't share a *ContainerStats shell.
 //
+// `spawn coin` mirrors the mob-death gold-drop path
+// (combat.spawnCoinPile): one ItemTypeTradeGood "a small pile of
+// coins" per count, Value=parsed amount, FlagTradeGood, dropped in
+// the admin's current room.
+//
 // AuthAdmin gated. Count defaults to 1, capped at spawnCountMax to
 // keep a fat-finger spawn from flooding the room.
 func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.MobInstanceRepo, characters repo.CharacterRepo, sessions *session.Registry, audits repo.AdminAuditRepo) *telnet.Command {
 	return &telnet.Command{
 		Name: "spawn",
-		Help: "Spawn a mob or item from a template",
+		Help: "Spawn a mob, item, or coin pile from a template",
 		Long: "Usage: spawn mob <external_id> [count]\n" +
-			"       spawn item <external_id> [count]\n\n" +
-			"Count defaults to 1 and is capped at " + strconv.Itoa(spawnCountMax) + ".",
+			"       spawn item <external_id> [count]\n" +
+			"       spawn coin <amount> [count]\n\n" +
+			"Count defaults to 1 and is capped at " + strconv.Itoa(spawnCountMax) + ".\n" +
+			"Coin amounts use the currency syntax. Single-denomination forms\n" +
+			"like 1gc or 100cp pass bare; multi-denomination amounts must be\n" +
+			"quoted, e.g. spawn coin \"1gc 5sp\" 2.",
 		Auth:      telnet.AuthAdmin,
 		MinArgs:   2,
 		Completer: completeSpawn(items, mobTemplates),
@@ -53,7 +65,6 @@ func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.
 				return s.WriteString("{{You must be in a room to spawn things.}}::yellow\r\n")
 			}
 			kind := strings.ToLower(c.Args[0])
-			ext := c.Args[1]
 			count, msg, ok := parseSpawnCount(c.Args)
 			if !ok {
 				return s.WriteString(msg)
@@ -61,11 +72,13 @@ func NewSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo, mobs repo.
 
 			switch kind {
 			case spawnKindMob:
-				return spawnMobs(c, mobTemplates, mobs, sessions, ext, count, audits)
+				return spawnMobs(c, mobTemplates, mobs, sessions, c.Args[1], count, audits)
 			case spawnKindItem:
-				return spawnItems(c, items, sessions, ext, count, audits)
+				return spawnItems(c, items, sessions, c.Args[1], count, audits)
+			case spawnKindCoin:
+				return spawnCoins(c, items, sessions, c.Args[1], count, audits)
 			default:
-				return s.WriteString("{{First argument must be 'mob' or 'item'.}}::yellow\r\n")
+				return s.WriteString("{{First argument must be 'mob', 'item', or 'coin'.}}::yellow\r\n")
 			}
 		},
 	}
@@ -170,6 +183,50 @@ func spawnItems(c *telnet.Context, items repo.ItemRepo, sessions *session.Regist
 	return announceSpawn(s, sessions, template.Name, created)
 }
 
+// spawnCoins drops `count` coin-pile TradeGood items in the admin's
+// current room, each with Value parsed from the amount string. Mirrors
+// combat.spawnCoinPile so the runtime shape matches what mob death
+// already produces. Negative or zero amounts are refused (currency.Parse
+// rejects negatives, and a zero-cp pile has no QA value).
+func spawnCoins(c *telnet.Context, items repo.ItemRepo, sessions *session.Registry, amountArg string, count int, audits repo.AdminAuditRepo) error {
+	s := c.Session
+	amount, err := currency.Parse(amountArg)
+	if err != nil {
+		return s.WriteString(fmt.Sprintf("{{Bad coin amount %q: %v}}::yellow\r\n", amountArg, err))
+	}
+	if amount <= 0 {
+		return s.WriteString("{{Coin amount must be positive.}}::yellow\r\n")
+	}
+
+	created := 0
+	now := time.Now().UnixNano()
+	for i := 0; i < count; i++ {
+		pile := repo.Item{
+			ExternalID: fmt.Sprintf("coin-pile-spawn-%d-%d", now, i),
+			Name:       "a small pile of coins",
+			ShortDesc:  "A small pile of coins lies here.",
+			RoomID:     s.CurrentRoomID,
+			Type:       repo.ItemTypeTradeGood,
+			Value:      amount,
+			Flags:      repo.FlagTradeGood,
+		}
+		if _, err := items.Create(c.Ctx, pile); err != nil {
+			slog.Warn("spawn: coin pile create", "amount", amount, "i", i, "error", err)
+			return s.WriteString(fmt.Sprintf("{{Spawned %d of %d before error: %v}}::red\r\n", created, count, err))
+		}
+		created++
+	}
+	slog.Info("admin: spawn",
+		"actor", s.CharacterID, "kind", "coin", "amount", amount.Format(),
+		"count", created, "room", s.CurrentRoomID)
+	if created > 0 {
+		audit.Record(c.Ctx, audits, s, "spawn", amount.Format(),
+			fmt.Sprintf("coin %s %d room=%d", amount.Format(), created, s.CurrentRoomID))
+	}
+
+	return announceSpawn(s, sessions, fmt.Sprintf("a small pile of coins (%s)", amount.Format()), created)
+}
+
 // announceSpawn echoes to the admin and broadcasts the room. The
 // admin echo is the returned error path; the room broadcast goes
 // through WriteAsync inside broadcastRoom and any per-peer failure
@@ -200,7 +257,7 @@ func completeSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo) func(
 		defer cancel()
 		switch slot {
 		case 0:
-			return prefixCandidates([]string{spawnKindMob, spawnKindItem}, partial)
+			return prefixCandidates([]string{spawnKindMob, spawnKindItem, spawnKindCoin}, partial)
 		case 1:
 			kind := strings.ToLower(firstToken(args))
 			switch kind {
@@ -216,6 +273,8 @@ func completeSpawn(items repo.ItemRepo, mobTemplates repo.MobTemplateRepo) func(
 					return nil
 				}
 				return prefixCandidates(ids, partial)
+			case spawnKindCoin:
+				return nil
 			}
 		}
 		return nil

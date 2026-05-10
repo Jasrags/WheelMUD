@@ -183,8 +183,60 @@ func TestSpawn_BadCount(t *testing.T) {
 func TestSpawn_BadKind(t *testing.T) {
 	f := newSpawnFixture(t)
 	runCmd(t, f.cmd, f.admin, "creature tr.village_dog")
-	if !strings.Contains(f.adminOut.String(), "'mob' or 'item'") {
+	if !strings.Contains(f.adminOut.String(), "'mob', 'item', or 'coin'") {
 		t.Fatalf("expected kind refusal; got %q", f.adminOut.String())
+	}
+}
+
+func TestSpawn_CoinHappyPath(t *testing.T) {
+	f := newSpawnFixture(t)
+	runCmd(t, f.cmd, f.admin, "coin 1gc 2")
+
+	if !strings.Contains(f.adminOut.String(), "a small pile of coins") {
+		t.Fatalf("admin echo missing; got %q", f.adminOut.String())
+	}
+	got, err := f.items.ListInRoom(context.Background(), f.admin.CurrentRoomID)
+	if err != nil {
+		t.Fatalf("ListInRoom: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d coin piles, want 2", len(got))
+	}
+	for _, it := range got {
+		if it.Type != repo.ItemTypeTradeGood {
+			t.Errorf("coin pile must be trade_good; got %s", it.Type)
+		}
+		if it.Flags&repo.FlagTradeGood == 0 {
+			t.Errorf("coin pile missing FlagTradeGood: %v", it.Flags)
+		}
+		if int64(it.Value) != 1000 {
+			t.Errorf("coin pile value: got %d cp, want 1000 (1gc)", int64(it.Value))
+		}
+	}
+}
+
+func TestSpawn_CoinMultiDenomination(t *testing.T) {
+	f := newSpawnFixture(t)
+	// Multi-denomination amounts must be quoted so the tokenizer keeps
+	// them in a single argument (matching the banker deposit/withdraw
+	// shape).
+	runCmd(t, f.cmd, f.admin, `coin "1gc 5sp 100cp"`)
+
+	got, _ := f.items.ListInRoom(context.Background(), f.admin.CurrentRoomID)
+	if len(got) != 1 {
+		t.Fatalf("default count should be 1; got %d piles", len(got))
+	}
+	// 1gc=1000 + 5sp=50 + 100cp=100 → 1150 cp total.
+	if int64(got[0].Value) != 1150 {
+		t.Fatalf("coin pile value: got %d cp, want 1150", int64(got[0].Value))
+	}
+}
+
+func TestSpawn_CoinBadAmount(t *testing.T) {
+	f := newSpawnFixture(t)
+	runCmd(t, f.cmd, f.admin, "coin notamoney")
+	if !strings.Contains(f.adminOut.String(), "Bad coin amount") {
+		t.Fatalf("expected parse refusal; got %q", f.adminOut.String())
 	}
 }
 
