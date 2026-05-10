@@ -199,10 +199,12 @@ func spawnCoins(c *telnet.Context, items repo.ItemRepo, sessions *session.Regist
 	}
 
 	created := 0
-	now := time.Now().UnixNano()
 	for i := 0; i < count; i++ {
+		// Stamp the nanosecond inside the loop so back-to-back invocations
+		// don't share a now-prefix and collide on the items.external_id
+		// UNIQUE index when the per-pile suffix `i` resets to 0.
 		pile := repo.Item{
-			ExternalID: fmt.Sprintf("coin-pile-spawn-%d-%d", now, i),
+			ExternalID: fmt.Sprintf("coin-pile-spawn-%d-%d", time.Now().UnixNano(), i),
 			Name:       "a small pile of coins",
 			ShortDesc:  "A small pile of coins lies here.",
 			RoomID:     s.CurrentRoomID,

@@ -1455,19 +1455,19 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 	// path: a parse or RecordCoin failure logs and continues so the
 	// character row stays committed. expectedVersion=0 is safe — the
 	// character was just created in this same finalize call and no
-	// other writer can race us before promoteToGame.
-	if m.repo != nil && m.catalog != nil {
-		if cl, ok := m.catalog.Class(m.draft.ClassID); ok && cl.StartingCoin != "" {
-			if amt, err := currency.Parse(cl.StartingCoin); err != nil {
-				slog.Warn("chargen: starting_coin parse failed",
-					"char", c.ID, "class", cl.ID, "raw", cl.StartingCoin, "error", err)
-			} else if err := m.repo.RecordCoin(ctx, c.ID, amt, 0, 0); err != nil {
-				slog.Warn("chargen: starting_coin record failed",
-					"char", c.ID, "class", cl.ID, "amount", amt.Format(), "error", err)
-			} else {
-				c.Coin = amt
-				c.CoinVersion++
-			}
+	// other writer can race us before promoteToGame. Reuses the outer
+	// `cl` rather than re-querying the catalog so a future mutable
+	// catalog can't drift between this block and deriveLevel1Vitals.
+	if m.repo != nil && cl.StartingCoin != "" {
+		if amt, err := currency.Parse(cl.StartingCoin); err != nil {
+			slog.Warn("chargen: starting_coin parse failed",
+				"char", c.ID, "class", cl.ID, "raw", cl.StartingCoin, "error", err)
+		} else if err := m.repo.RecordCoin(ctx, c.ID, amt, 0, 0); err != nil {
+			slog.Warn("chargen: starting_coin record failed",
+				"char", c.ID, "class", cl.ID, "amount", amt.Format(), "error", err)
+		} else {
+			c.Coin = amt
+			c.CoinVersion++
 		}
 	}
 
