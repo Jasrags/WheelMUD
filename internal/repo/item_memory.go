@@ -206,6 +206,22 @@ func (r *MemoryItemRepo) Delete(_ context.Context, id int64) error {
 	return ErrItemNotFound
 }
 
+func (r *MemoryItemRepo) UpdateStats(_ context.Context, id int64, stats ItemStats) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, it := range r.items {
+		if it.ID != id {
+			continue
+		}
+		if !statsTypeMatches(it.Type, stats) {
+			return ErrItemStatsTypeMismatch
+		}
+		r.items[i].Stats = stats
+		return nil
+	}
+	return ErrItemNotFound
+}
+
 func (r *MemoryItemRepo) GetByID(_ context.Context, id int64) (Item, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

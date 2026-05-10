@@ -377,10 +377,14 @@ func (m *Manager) tickParticipantAffects(ctx context.Context, roomID int64) {
 			continue
 		}
 		if len(expired) > 0 && m.bus != nil {
+			entries := make([]affects.ExpiredEntry, len(expired))
+			for i, a := range expired {
+				entries[i] = affects.ExpiredEntry{Name: a.Name, Message: a.ExpireMessage}
+			}
 			m.bus.Publish(ctx, affects.Expired{
 				CharacterID: ref.ID,
 				RoomID:      roomID,
-				Names:       expired,
+				Entries:     entries,
 			})
 		}
 	}

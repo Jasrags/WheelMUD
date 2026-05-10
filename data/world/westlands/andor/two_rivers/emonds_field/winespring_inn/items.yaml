@@ -133,7 +133,7 @@
   value: 2sp
   quality: normal
   stats:
-    charges: 1
+    charges: 3 # multi-dose: each quaff decrements; deletes on the final dose
     effect_id_string: healing_draught
 
 - id: tr.potion_weak_poison

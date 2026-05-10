@@ -444,6 +444,34 @@ func (r *SQLiteItemRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// UpdateStats overwrites the stats_json column. The new stats's
+// concrete type must match the item's row type — guarded with a
+// fresh GetByID before the UPDATE so a caller can't silently turn a
+// weapon row into a consumable row by passing the wrong struct.
+func (r *SQLiteItemRepo) UpdateStats(ctx context.Context, itemID int64, stats ItemStats) error {
+	cur, err := r.GetByID(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	if !statsTypeMatches(cur.Type, stats) {
+		return ErrItemStatsTypeMismatch
+	}
+	js, err := encodeStats(stats)
+	if err != nil {
+		return err
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET stats_json = ? WHERE id = ?`, js, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("update item stats: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
 // scanItemRow reads one row from a SELECT itemSelectCols result and
 // builds a fully decoded Item, including the polymorphic stats blob.
 // Centralized so the column list and decode contract live in one

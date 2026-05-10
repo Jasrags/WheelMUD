@@ -37,5 +37,6 @@ func (e Effect) ToAffect(source int64) creature.Affect {
 		TickEffect:    e.TickEffect,
 		ConditionMask: e.ConditionMask,
 		TickDamage:    e.TickDamage,
+		ExpireMessage: e.MessageOnExpire,
 	}
 }

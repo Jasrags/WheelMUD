@@ -1,13 +1,20 @@
 package cmd
 
 // Phase E #25 slice 2 — `quaff <potion>` consumable producer.
+// Phase E #25 slice 3 — multi-charge consumables.
 //
 // Resolves a potion (or other consumable) from the caller's inventory,
 // looks up its effect via the effects catalog (ConsumableStats.EffectID
 // is chargen.HashID(string id)), applies the effect through
-// affects.Apply, and destroys the item. V1 ignores Charges and always
-// deletes the item; multi-charge consumables wait for an
-// ItemRepo.UpdateStats method (slice 3+).
+// affects.Apply, and either deletes or decrements the item.
+//
+// Charge accounting (slice 3 — see ConsumableStats.Charges):
+//   - Charges == 0 → unlimited. Item stays in inventory after every
+//     quaff. Mirrors ToolStats.Charges == 0 convention.
+//   - Charges == 1 → final dose. Item is deleted; inventory_json
+//     pointer cleaned up.
+//   - Charges  > 1 → multi-dose. Charges decremented via
+//     ItemRepo.UpdateStats; item remains in inventory.
 
 import (
 	"errors"
@@ -44,7 +51,7 @@ func NewQuaff(items repo.ItemRepo, characters repo.CharacterRepo, eff *effects.C
 			if it.Type != repo.ItemTypeConsumable {
 				return s.WriteString("{{" + it.Name + " isn't something you can drink.}}::yellow\r\n")
 			}
-			stats, ok := it.Stats.(repo.ConsumableStats)
+			stats, ok := consumableStatsOf(it.Stats)
 			if !ok {
 				slog.Warn("quaff: consumable item missing ConsumableStats",
 					"item", it.ID, "external", it.ExternalID)
@@ -81,13 +88,27 @@ func NewQuaff(items repo.ItemRepo, characters repo.CharacterRepo, eff *effects.C
 				return s.WriteString("{{The potion slips through your fingers.}}::red\r\n")
 			}
 
-			// Item is consumed regardless of authored Charges (V1 — see
-			// header comment). Failure here is a server-side warning, not
-			// a player refusal: the affect already applied.
-			if err := items.Delete(c.Ctx, it.ID); err != nil {
-				slog.Warn("quaff: delete item failed", "item", it.ID, "char", s.CharacterID, "error", err)
+			// Charge accounting. Failures here are logged but never
+			// surfaced to the player — the affect already applied.
+			switch {
+			case stats.Charges == 0:
+				// Unlimited; nothing to do.
+			case stats.Charges > 1:
+				newStats := &repo.ConsumableStats{
+					Charges:  stats.Charges - 1,
+					EffectID: stats.EffectID,
+				}
+				if err := items.UpdateStats(c.Ctx, it.ID, newStats); err != nil {
+					slog.Warn("quaff: decrement charges failed",
+						"item", it.ID, "char", s.CharacterID, "error", err)
+				}
+			default: // 1 (or any negative — defensive)
+				if err := items.Delete(c.Ctx, it.ID); err != nil {
+					slog.Warn("quaff: delete item failed",
+						"item", it.ID, "char", s.CharacterID, "error", err)
+				}
+				cleanInventoryRef(c, characters, s, it.ID)
 			}
-			cleanInventoryRef(c, characters, s, it.ID)
 
 			actor := safeActor(s)
 			broadcastRoom(sessions, s.CurrentRoomID, s,
@@ -98,6 +119,25 @@ func NewQuaff(items repo.ItemRepo, characters repo.CharacterRepo, eff *effects.C
 			}
 			return s.WriteString(line)
 		},
+	}
+}
+
+// consumableStatsOf extracts ConsumableStats from an item's Stats
+// regardless of pointer-vs-value packaging. The world loader builds
+// items with `*ConsumableStats` (StatsForType returns pointers); a
+// few in-process call sites (admin spawn, tests) build them as
+// values. Both must work.
+func consumableStatsOf(s repo.ItemStats) (repo.ConsumableStats, bool) {
+	switch v := s.(type) {
+	case *repo.ConsumableStats:
+		if v == nil {
+			return repo.ConsumableStats{}, false
+		}
+		return *v, true
+	case repo.ConsumableStats:
+		return v, true
+	default:
+		return repo.ConsumableStats{}, false
 	}
 }
 

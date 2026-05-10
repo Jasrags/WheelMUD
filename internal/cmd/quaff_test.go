@@ -41,7 +41,7 @@ func TestQuaff_AppliesEffectAndConsumesItem(t *testing.T) {
 		ExternalID: "potion_healing", Name: "a healing potion",
 		Type:       repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
-		Stats: repo.ConsumableStats{
+		Stats: &repo.ConsumableStats{
 			Charges:  1,
 			EffectID: chargen.HashID("healing_draught"),
 		},
@@ -110,7 +110,7 @@ func TestQuaff_UnknownEffectFizzles(t *testing.T) {
 		ExternalID: "mystery_potion", Name: "a mystery potion",
 		Type:       repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
-		Stats: repo.ConsumableStats{
+		Stats: &repo.ConsumableStats{
 			Charges:  1,
 			EffectID: chargen.HashID("nonexistent_effect"),
 		},
@@ -122,5 +122,104 @@ func TestQuaff_UnknownEffectFizzles(t *testing.T) {
 	// Item must still be consumed (fizzle is a side effect, not a refusal).
 	if _, err := f.items.GetByID(context.Background(), potion.ID); err == nil {
 		t.Fatalf("fizzled potion should be deleted")
+	}
+}
+
+func TestQuaff_MultiChargeDecrements(t *testing.T) {
+	f := newInvFixture(t)
+	cat := loadTestEffects(t)
+	potion := f.items.Insert(repo.Item{
+		ExternalID:       "potion_healing", Name: "a healing potion",
+		Type:             repo.ItemTypeConsumable,
+		OwnerCharacterID: f.alice.CharacterID,
+		Stats: &repo.ConsumableStats{
+			Charges:  3,
+			EffectID: chargen.HashID("healing_draught"),
+		},
+	})
+	if err := f.characters.RecordInventory(context.Background(), f.alice.CharacterID, []int64{potion.ID}); err != nil {
+		t.Fatalf("seed inventory: %v", err)
+	}
+
+	runCmd(t, NewQuaff(f.items, f.characters, cat, f.sessions), f.alice, "potion")
+
+	got, err := f.items.GetByID(context.Background(), potion.ID)
+	if err != nil {
+		t.Fatalf("multi-dose potion should remain: %v", err)
+	}
+	cs, ok := got.Stats.(*repo.ConsumableStats)
+	if !ok {
+		t.Fatalf("Stats type: %T", got.Stats)
+	}
+	if cs.Charges != 2 {
+		t.Fatalf("Charges: want 2, got %d", cs.Charges)
+	}
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if len(c.Inventory) != 1 || c.Inventory[0] != potion.ID {
+		t.Fatalf("inventory_json should still hold the potion: %+v", c.Inventory)
+	}
+}
+
+func TestQuaff_FinalDoseDeletes(t *testing.T) {
+	f := newInvFixture(t)
+	cat := loadTestEffects(t)
+	potion := f.items.Insert(repo.Item{
+		ExternalID:       "potion_healing", Name: "a healing potion",
+		Type:             repo.ItemTypeConsumable,
+		OwnerCharacterID: f.alice.CharacterID,
+		Stats: &repo.ConsumableStats{
+			Charges:  2,
+			EffectID: chargen.HashID("healing_draught"),
+		},
+	})
+	if err := f.characters.RecordInventory(context.Background(), f.alice.CharacterID, []int64{potion.ID}); err != nil {
+		t.Fatalf("seed inventory: %v", err)
+	}
+
+	// First quaff: 2 → 1, item stays.
+	runCmd(t, NewQuaff(f.items, f.characters, cat, f.sessions), f.alice, "potion")
+	if _, err := f.items.GetByID(context.Background(), potion.ID); err != nil {
+		t.Fatalf("after first dose, potion should remain: %v", err)
+	}
+	// Second quaff: 1 → 0, item deleted.
+	runCmd(t, NewQuaff(f.items, f.characters, cat, f.sessions), f.alice, "potion")
+	if _, err := f.items.GetByID(context.Background(), potion.ID); err == nil {
+		t.Fatalf("after final dose, potion should be deleted")
+	}
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if len(c.Inventory) != 0 {
+		t.Fatalf("inventory_json should be cleaned: %+v", c.Inventory)
+	}
+}
+
+func TestQuaff_UnlimitedChargesNeverDeletes(t *testing.T) {
+	f := newInvFixture(t)
+	cat := loadTestEffects(t)
+	potion := f.items.Insert(repo.Item{
+		ExternalID:       "wellspring", Name: "an enchanted wellspring",
+		Type:             repo.ItemTypeConsumable,
+		OwnerCharacterID: f.alice.CharacterID,
+		Stats: &repo.ConsumableStats{
+			Charges:  0, // unlimited
+			EffectID: chargen.HashID("healing_draught"),
+		},
+	})
+	if err := f.characters.RecordInventory(context.Background(), f.alice.CharacterID, []int64{potion.ID}); err != nil {
+		t.Fatalf("seed inventory: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		runCmd(t, NewQuaff(f.items, f.characters, cat, f.sessions), f.alice, "wellspring")
+	}
+	got, err := f.items.GetByID(context.Background(), potion.ID)
+	if err != nil {
+		t.Fatalf("unlimited consumable should never be deleted: %v", err)
+	}
+	cs, ok := got.Stats.(*repo.ConsumableStats)
+	if !ok {
+		t.Fatalf("Stats type: %T", got.Stats)
+	}
+	if cs.Charges != 0 {
+		t.Fatalf("Charges should remain 0 (unlimited), got %d", cs.Charges)
 	}
 }

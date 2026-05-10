@@ -325,6 +325,7 @@ type Affect struct {
 	TickEffect    string    // script ref; empty for pure stat mods
 	ConditionMask Condition // bits OR'd into Core.Conditions by Effective
 	TickDamage    int16     // per-tick HP delta when TickEffect != ""; <0 damage, >0 heal
+	ExpireMessage string    // optional authored line shown when this affect expires; empty = generic fade line
 }
 
 // StatMod is a single numeric tweak applied while an Affect is live.

@@ -129,7 +129,8 @@ func TestSessionTicker_TicksOutOfCombatCharacter(t *testing.T) {
 		t.Fatalf("event count: want 1, got %d", len(bus.events))
 	}
 	ev, ok := bus.events[0].(Expired)
-	if !ok || ev.CharacterID != 7 || ev.RoomID != 100 || len(ev.Names) != 1 || ev.Names[0] != "weakened" {
+	if !ok || ev.CharacterID != 7 || ev.RoomID != 100 ||
+		len(ev.Entries) != 1 || ev.Entries[0].Name != "weakened" {
 		t.Fatalf("expired event: %+v", bus.events[0])
 	}
 }
@@ -391,6 +392,40 @@ func TestSessionTicker_DoesNotOverwriteConcurrentConditions(t *testing.T) {
 	// won't exist and this assertion (compile-time) will fail.
 	if cw[0].HP != 17 || cw[0].Subdual != 0 {
 		t.Fatalf("unexpected HP write payload: %+v", cw[0])
+	}
+}
+
+func TestSessionTicker_ExpiredEventCarriesAuthoredMessage(t *testing.T) {
+	rows := map[int64]Character{
+		7: {Affects: []creature.Affect{
+			{Source: 1, Name: "healing draught", DurationTicks: 1, ExpireMessage: "The healing draught's warmth fades."},
+			{Source: 1, Name: "weakened", DurationTicks: 1}, // no message → fallback
+		}},
+	}
+	chars, fights, bus := newFakes(rows, nil)
+	cand := func() []Candidate { return []Candidate{{CharacterID: 7, RoomID: 100}} }
+
+	tk := NewSessionTicker(cand, fights, chars, bus, nil)
+	tk.Tick(context.Background())
+
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(bus.events))
+	}
+	ev, ok := bus.events[0].(Expired)
+	if !ok {
+		t.Fatalf("event type: %T", bus.events[0])
+	}
+	if len(ev.Entries) != 2 {
+		t.Fatalf("entry count: want 2, got %d (%+v)", len(ev.Entries), ev.Entries)
+	}
+	if ev.Entries[0].Name != "healing draught" ||
+		ev.Entries[0].Message != "The healing draught's warmth fades." {
+		t.Fatalf("entry[0]: %+v", ev.Entries[0])
+	}
+	if ev.Entries[1].Name != "weakened" || ev.Entries[1].Message != "" {
+		t.Fatalf("entry[1] should have empty Message (fallback): %+v", ev.Entries[1])
 	}
 }
 

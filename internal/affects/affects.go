@@ -131,16 +131,19 @@ func clampInt8(v int16) int8 {
 }
 
 // Tick decrements every Affect's DurationTicks by 1 and drops affects
-// whose duration drops to <= 0. Returns (newAffects, expiredNames). An
-// affect with DurationTicks == 0 on input is treated as expired and
-// dropped (it never had any duration left to begin with).
+// whose duration drops to <= 0. Returns (newAffects, expired) — the
+// expired slice carries the dropped Affect entries verbatim (with
+// their pre-decrement duration overwritten to 0) so subscribers can
+// read fields like ExpireMessage off them. An affect with
+// DurationTicks == 0 on input is treated as expired and dropped (it
+// never had any duration left to begin with).
 //
 // out preserves input order for non-expired entries. Callers detect
 // "did anything change" via len(expired) > 0 || len(out) != len(in).
 //
 // Returns (nil, nil) for an empty input — allocation only happens when
 // at least one affect is dropped or carried forward.
-func Tick(in []creature.Affect) (out []creature.Affect, expired []string) {
+func Tick(in []creature.Affect) (out []creature.Affect, expired []creature.Affect) {
 	if len(in) == 0 {
 		return nil, nil
 	}
@@ -148,7 +151,8 @@ func Tick(in []creature.Affect) (out []creature.Affect, expired []string) {
 	for _, a := range in {
 		a.DurationTicks--
 		if a.DurationTicks <= 0 {
-			expired = append(expired, a.Name)
+			a.DurationTicks = 0
+			expired = append(expired, a)
 			continue
 		}
 		out = append(out, a)

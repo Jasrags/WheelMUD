@@ -15,10 +15,22 @@ package affects
 // (combat already imports affects, which would be circular).
 //
 // Phase E #26.
+// ExpiredEntry is one expired affect surfaced to the cmd-layer
+// subscriber. Message is empty for admin-applied affects (slice 1) —
+// the subscriber falls back to the generic "Your <name> fades." line
+// in that case. Catalog-driven producers (slice 2 onward) carry the
+// authored MessageOnExpire string here.
+//
+// Phase E #25 slice 3.
+type ExpiredEntry struct {
+	Name    string
+	Message string
+}
+
 type Expired struct {
 	CharacterID int64
 	RoomID      int64
-	Names       []string
+	Entries     []ExpiredEntry
 }
 
 // TickDamaged fires when one or more TickEffect-bearing affects on a

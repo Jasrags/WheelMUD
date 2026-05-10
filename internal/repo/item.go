@@ -287,6 +287,15 @@ type ItemRepo interface {
 	// ErrItemNotFound if no row matches. Caller must clear any
 	// dangling references (inventory_json, equipment slots) first.
 	Delete(ctx context.Context, id int64) error
+	// UpdateStats overwrites the items.stats_json column for the row
+	// identified by id. Used by Phase E #25 slice 3 `quaff` to
+	// decrement ConsumableStats.Charges instead of deleting the
+	// item. The stats type MUST match the item's row type — callers
+	// load the item, build a fresh ItemStats of the same concrete
+	// type, and pass it through. Returns ErrItemNotFound when no row
+	// matches; ErrItemStatsTypeMismatch when stats's concrete type
+	// disagrees with the row's type column.
+	UpdateStats(ctx context.Context, itemID int64, stats ItemStats) error
 }
 
 // ErrItemNotFound is returned by GetByID when no row matches the id.

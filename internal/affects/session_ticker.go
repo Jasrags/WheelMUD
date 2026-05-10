@@ -184,10 +184,14 @@ func (t *SessionTicker) tickOne(ctx context.Context, c Candidate) {
 		return
 	}
 	if len(expired) > 0 && t.bus != nil {
+		entries := make([]ExpiredEntry, len(expired))
+		for i, a := range expired {
+			entries[i] = ExpiredEntry{Name: a.Name, Message: a.ExpireMessage}
+		}
 		t.bus.Publish(ctx, Expired{
 			CharacterID: c.CharacterID,
 			RoomID:      c.RoomID,
-			Names:       expired,
+			Entries:     entries,
 		})
 	}
 

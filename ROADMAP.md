@@ -1187,10 +1187,37 @@ will need on top of those tables.
       `effect_id_string:` fails the boot loudly. Three seed
       potions added to the Winespring Inn kitchen items file.
       Tick cadence constant `affects.TickSeconds` corrected from
-      30 to 6 (the actual `Buckets.Affects` cadence). Out of
-      slice 2: weave-cast and combat-on-hit producers (need cast
-      verb + §D crit polish), multi-charge consumables, healer
-      NPC service, player-driven dispel weave. Must support the
+      30 to 6 (the actual `Buckets.Affects` cadence). **Slice 3
+      landed 2026-05-10:** foundation polish + multi-charge.
+      New `ItemRepo.UpdateStats(ctx, itemID, stats)` write path
+      (sqlite + memory) overwrites items.stats_json with a
+      type-checked replacement; `quaff` now branches on
+      ConsumableStats.Charges — 0 = unlimited (item never
+      consumed, mirrors ToolStats convention), 1 = final dose
+      (existing Delete + cleanInventoryRef), >1 = decrement via
+      UpdateStats and item stays in inventory. Existing slice 2
+      latent type-assertion bug fixed (loaded items carry
+      `*ConsumableStats` pointer; quaff was asserting value
+      type) — new `consumableStatsOf` helper handles both.
+      `creature.Affect` extended with `ExpireMessage string`
+      (no migration; affects_json carries it).
+      `effects.Effect.ToAffect` now propagates `MessageOnExpire`.
+      `affects.Tick` signature changed: returns
+      `[]creature.Affect` (the dropped entries) instead of
+      `[]string` so subscribers can read ExpireMessage.
+      `affects.Expired` event reshaped: `Names []string` →
+      `Entries []ExpiredEntry` (Name + Message pairs).
+      cmd-layer Expired subscriber renders the authored message
+      when present; falls back to "Your <name> fades." for
+      admin-applied affects. Combat's end-of-round Tick
+      publisher (manager.go::tickParticipantAffects) updated to
+      build Entries identically. Seed `tr.potion_healing_draught`
+      bumped to `charges: 3` so a builder can exercise the
+      multi-dose path end-to-end. Out of slice 3:
+      weave-cast and combat-on-hit producers (need cast verb +
+      §D crit polish), healer NPC service, player-driven
+      dispel weave, light/torch fuel burn-down (different
+      bucket). Must support the
       WoT condition
       enum from §9:
       `AbilityDamaged, AbilityDrained, Blinded, Checked, Cowering,

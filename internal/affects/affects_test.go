@@ -162,9 +162,13 @@ func TestTick_DecrementAndExpiry(t *testing.T) {
 	if out[1].Name != "mid" || out[1].DurationTicks != 1 {
 		t.Fatalf("mid: %+v", out[1])
 	}
-	wantExp := []string{"short", "stale"}
-	if !reflect.DeepEqual(exp, wantExp) {
-		t.Fatalf("expired: want %v, got %v", wantExp, exp)
+	if len(exp) != 2 || exp[0].Name != "short" || exp[1].Name != "stale" {
+		t.Fatalf("expired: want short+stale Affects, got %+v", exp)
+	}
+	for _, e := range exp {
+		if e.DurationTicks != 0 {
+			t.Fatalf("expired entry should report DurationTicks=0; got %+v", e)
+		}
 	}
 }
 

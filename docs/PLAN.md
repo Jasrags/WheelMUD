@@ -461,8 +461,20 @@ catalogs.
     Loader: consumable items accept `effect_id_string:` translated
     via chargen.HashID; boot-time `validateConsumableEffectRefs`
     cross-checks against the catalog. Three seed potions in the
-    Winespring Inn kitchen. Slice 3+: weave/combat-hit producers,
-    multi-charge consumables, healer NPC service, player dispel.
+    Winespring Inn kitchen. **Slice 3 landed 2026-05-10:**
+    foundation polish + multi-charge consumables + effect-message
+    plumbing. New `ItemRepo.UpdateStats` write path; `quaff`
+    branches on Charges (0=unlimited, 1=delete, >1=decrement); a
+    latent slice-2 type-assertion bug (loaded items carry pointer
+    ConsumableStats, quaff was asserting value type) was fixed via
+    `consumableStatsOf` helper. `creature.Affect.ExpireMessage`
+    + `affects.Tick` returns `[]Affect` + `Expired` event reshaped
+    to `Entries []ExpiredEntry` so the cmd-layer subscriber
+    renders the authored `MessageOnExpire` line. Combat's
+    end-of-round Tick publisher updated identically. Seed
+    `potion_healing_draught` bumped to `charges: 3`. Slice 4+:
+    weave/combat-hit producers, healer NPC service, player
+    dispel, light/torch fuel burn-down.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure. **Landed 2026-05-09**
     — both slices in one PR. Slice A (§4): `Command.Lag time.Duration`

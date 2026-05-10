@@ -593,18 +593,26 @@ func main() {
 	triggerDispatcher.Start(context.Background())
 	questEngine.Start(context.Background())
 
-	// affects.Expired subscriber: emits one cfmt line per name to the
-	// owning session via WriteAsync (cross-session output rule).
+	// affects.Expired subscriber: emits one cfmt line per entry to
+	// the owning session via WriteAsync (cross-session output rule).
+	// Catalog-driven affects carry an authored MessageOnExpire string
+	// (Phase E #25 slice 3); admin-applied affects (slice 1) leave it
+	// empty and fall back to the generic fade line.
 	eventbus.Subscribe[affects.Expired](bus, func(_ context.Context, ev affects.Expired) {
 		victim := cmd.LookupByCharacterID(sessions, ev.CharacterID)
 		if victim == nil {
 			return
 		}
-		for _, n := range ev.Names {
-			msg := "{{Your " + n + " fades.}}::cyan\r\n"
+		for _, e := range ev.Entries {
+			var msg string
+			if e.Message != "" {
+				msg = "{{" + e.Message + "}}::cyan\r\n"
+			} else {
+				msg = "{{Your " + e.Name + " fades.}}::cyan\r\n"
+			}
 			if err := victim.WriteAsync(msg); err != nil {
 				slog.Debug("affects: expired notify failed",
-					"char", ev.CharacterID, "name", n, "error", err)
+					"char", ev.CharacterID, "name", e.Name, "error", err)
 			}
 		}
 	})

@@ -572,6 +572,64 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 			t.Fatalf("got %d items, want 0", len(got))
 		}
 	})
+
+	t.Run(name+"/update_stats_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		seeded, err := fix.items.Create(ctx, Item{
+			ExternalID: "potion", Name: "a potion", RoomID: roomID,
+			Type:  ItemTypeConsumable,
+			Stats: &ConsumableStats{Charges: 3, EffectID: 42},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := fix.items.UpdateStats(ctx, seeded.ID,
+			&ConsumableStats{Charges: 2, EffectID: 42},
+		); err != nil {
+			t.Fatalf("UpdateStats: %v", err)
+		}
+		got, err := fix.items.GetByID(ctx, seeded.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		cs, ok := got.Stats.(*ConsumableStats)
+		if !ok {
+			t.Fatalf("Stats type: %T", got.Stats)
+		}
+		if cs.Charges != 2 || cs.EffectID != 42 {
+			t.Fatalf("post-update stats: %+v", cs)
+		}
+	})
+
+	t.Run(name+"/update_stats_rejects_type_mismatch", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		seeded, err := fix.items.Create(ctx, Item{
+			ExternalID: "potion", Name: "a potion", RoomID: roomID,
+			Type:  ItemTypeConsumable,
+			Stats: &ConsumableStats{Charges: 1},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		err = fix.items.UpdateStats(ctx, seeded.ID, &KeyStats{KeyID: "wrong"})
+		if !errors.Is(err, ErrItemStatsTypeMismatch) {
+			t.Fatalf("err = %v, want ErrItemStatsTypeMismatch", err)
+		}
+	})
+
+	t.Run(name+"/update_stats_missing_returns_not_found", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.items.UpdateStats(context.Background(), 99999,
+			&ConsumableStats{Charges: 1},
+		)
+		if !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("err = %v, want ErrItemNotFound", err)
+		}
+	})
 }
 
 func TestMemoryItemRepo(t *testing.T) {

@@ -44,15 +44,17 @@ func TestIDForHash_Roundtrip(t *testing.T) {
 func TestEffect_ToAffect(t *testing.T) {
 	e := Effect{
 		ID: "test", Name: "Test", DurationTicks: 5,
-		Modifiers:     []creature.StatMod{{Field: "Defense", Delta: 2}},
-		ConditionMask: creature.CondBlinded,
-		TickEffect:    "poison", TickDamage: -3,
+		Modifiers:       []creature.StatMod{{Field: "Defense", Delta: 2}},
+		ConditionMask:   creature.CondBlinded,
+		TickEffect:      "poison", TickDamage: -3,
+		MessageOnExpire: "The test wears off.",
 	}
 	a := e.ToAffect(42)
 	if a.Source != 42 || a.Name != "Test" || a.DurationTicks != 5 ||
 		a.TickEffect != "poison" || a.TickDamage != -3 ||
 		a.ConditionMask != creature.CondBlinded ||
-		len(a.Modifiers) != 1 || a.Modifiers[0].Delta != 2 {
+		len(a.Modifiers) != 1 || a.Modifiers[0].Delta != 2 ||
+		a.ExpireMessage != "The test wears off." {
 		t.Fatalf("ToAffect: %+v", a)
 	}
 	// mutating result must not touch the source
