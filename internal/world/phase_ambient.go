@@ -17,7 +17,7 @@ import (
 var transitionStyles = [4]string{
 	TransitionDawn:      "cyan",
 	TransitionSunrise:   "yellow",
-	TransitionDusk:      "lightred",
+	TransitionDusk:      "lightRed",
 	TransitionNightfall: "blue",
 }
 
