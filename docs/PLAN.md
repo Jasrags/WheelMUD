@@ -695,11 +695,25 @@ Content multiplier. Without this the world is static.
       authoring examples. Release wipe-list extended to cover
       `apply_affect`, `give_item`, `target` so per-call state
       can't leak across pool borrows.
-    - Slice 4 (sketch): combat mutations (deal_damage / heal —
-      blocked on §D crit polish), inventory take/transfer, room
-      state iterators (room.players / room.mobs), `wait(seconds,
-      fn)` async scripts, `on_login` / `on_logout` events.
-    - Slice 5: OLC `tedit` (depends on Phase G).
+    - **Slice 4 — landed 2026-05-10**: polish bundle. Read APIs:
+      `room.players()` / `room.mobs()` (resolved from EventCtx.RoomID
+      at bind time so scripts can't snoop on other rooms),
+      `clock.hour()` / `clock.day()` (new `Clock.Day()` method on
+      `internal/world/dayclock.go`), `target.classes(id)` returning
+      multiclass map keyed by chargen catalog class id (e.g.
+      `{ armsman = 3, initiate = 2 }`). Mutation surface:
+      `apply_affect` gained an optional 3rd arg (durationOverride
+      int32; 0 means "use catalog default") so scripts can override
+      the catalog's authored DurationTicks per call. APIBindings
+      .ApplyAffect signature changed (3 args); LuaHooks struct
+      extended with 5 new fields; release wipe-list now covers
+      `room` + `clock`. Two demo scripts added: `check_alone.lua`
+      (room.players + apply_affect) and `night_warning.lua`
+      (clock.hour gate).
+    - Slice 5 (sketch): combat mutations (deal_damage / heal —
+      blocked on §D crit polish), inventory take/transfer,
+      `wait(seconds, fn)` async, `on_login` / `on_logout` events.
+    - Slice 6: OLC `tedit` (depends on Phase G).
 
 ---
 

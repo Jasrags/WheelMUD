@@ -130,7 +130,7 @@ func TestLuaAction_ApplyAffect_DispatchesToHook(t *testing.T) {
 	var seenTarget int64
 	var seenEffect string
 	hooks := LuaHooks{
-		ApplyAffect: func(_ context.Context, target int64, effect string) error {
+		ApplyAffect: func(_ context.Context, target int64, effect string, _ int32) error {
 			seenTarget = target
 			seenEffect = effect
 			return nil
@@ -156,7 +156,7 @@ func TestLuaAction_ApplyAffect_NoCharacterActor_Faults(t *testing.T) {
 	defer runner.Stop()
 
 	hooks := LuaHooks{
-		ApplyAffect: func(context.Context, int64, string) error {
+		ApplyAffect: func(context.Context, int64, string, int32) error {
 			t.Fatal("hook should not fire for non-character actor")
 			return nil
 		},
@@ -307,6 +307,139 @@ func TestLuaAction_TargetReads_NoActorGuard(t *testing.T) {
 		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
 	if err != nil {
 		t.Fatalf("read APIs should not be guarded; got %v", err)
+	}
+}
+
+// V4 surface (Phase F #32 slice 4) — room.players / room.mobs /
+// clock / target.classes / apply_affect duration-override
+// dispatched through the trigger handler.
+
+func TestLuaAction_RoomPlayers_ResolvesRoomFromEvent(t *testing.T) {
+	cat := loadCatalog(t, "rp", `
+local players = room.players()
+if #players ~= 1 or players[1] ~= 99 then error("ids") end
+`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var seenRoom int64
+	hooks := LuaHooks{
+		RoomPlayers: func(_ context.Context, roomID int64) ([]int64, error) {
+			seenRoom = roomID
+			return []int64{99}, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "rp"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnEnter, RoomID: 555, ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seenRoom != 555 {
+		t.Fatalf("hook should resolve roomID from EventCtx; got %d, want 555", seenRoom)
+	}
+}
+
+func TestLuaAction_RoomMobs_ResolvesRoomFromEvent(t *testing.T) {
+	cat := loadCatalog(t, "rm", `local m = room.mobs(); if #m ~= 1 or m[1] ~= 7 then error("ids") end`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var seenRoom int64
+	hooks := LuaHooks{
+		RoomMobs: func(_ context.Context, roomID int64) ([]int64, error) {
+			seenRoom = roomID
+			return []int64{7}, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "rm"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{RoomID: 200, ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seenRoom != 200 {
+		t.Fatalf("hook should resolve roomID from EventCtx; got %d, want 200", seenRoom)
+	}
+}
+
+func TestLuaAction_Clock_DispatchesToHooks(t *testing.T) {
+	cat := loadCatalog(t, "ck", `
+if clock.hour() ~= 17 then error("hour") end
+if clock.day() ~= 9 then error("day") end
+`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		ClockHour: func() int { return 17 },
+		ClockDay:  func() int64 { return 9 },
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "ck"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+}
+
+func TestLuaAction_TargetClasses_NoActorGuard(t *testing.T) {
+	// Read APIs unguarded — fires on on_tick (no character actor).
+	cat := loadCatalog(t, "tc_tick", `
+local m = target.classes(7)
+if m.warrior ~= 5 then error("warrior") end
+`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		TargetClasses: func(context.Context, int64) (map[string]int, error) {
+			return map[string]int{"warrior": 5}, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "tc_tick"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if err != nil {
+		t.Fatalf("read API should not be guarded; got %v", err)
+	}
+}
+
+func TestLuaAction_ApplyAffect_DurationOverridePropagates(t *testing.T) {
+	cat := loadCatalog(t, "aa_dur", `apply_affect(7, "weak_poison", 50)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var seenDur int32
+	hooks := LuaHooks{
+		ApplyAffect: func(_ context.Context, _ int64, _ string, dur int32) error {
+			seenDur = dur
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "aa_dur"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seenDur != 50 {
+		t.Fatalf("duration override not propagated: got %d, want 50", seenDur)
 	}
 }
 

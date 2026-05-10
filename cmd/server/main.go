@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -577,10 +578,15 @@ func main() {
 
 	triggerActions := trigger.DefaultActions()
 	luaHooks := trigger.LuaHooks{
-		ApplyAffect: makeLuaApplyAffect(characters, effectsCatalog),
-		GiveItem:    makeLuaGiveItem(items),
-		TargetHP:    makeLuaTargetHP(characters),
-		TargetLevel: makeLuaTargetLevel(characters),
+		ApplyAffect:   makeLuaApplyAffect(characters, effectsCatalog),
+		GiveItem:      makeLuaGiveItem(items),
+		TargetHP:      makeLuaTargetHP(characters),
+		TargetLevel:   makeLuaTargetLevel(characters),
+		TargetClasses: makeLuaTargetClasses(characters, chargenCatalog),
+		RoomPlayers:   makeLuaRoomPlayers(sessions),
+		RoomMobs:      makeLuaRoomMobs(mobs),
+		ClockHour:     clock.HourOfDay,
+		ClockDay:      clock.Day,
 	}
 	if questEngine != nil {
 		luaHooks.Accept = questEngine.AcceptQuest
@@ -1230,8 +1236,11 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			giveItem := makeLuaGiveItem(items)
 			targetHP := makeLuaTargetHP(characters)
 			targetLevel := makeLuaTargetLevel(characters)
-			bindings.ApplyAffect = func(targetID int64, effectID string) error {
-				return applyAffect(ctx, targetID, effectID)
+			targetClasses := makeLuaTargetClasses(characters, chargenCatalog)
+			roomPlayers := makeLuaRoomPlayers(sessions)
+			roomMobs := makeLuaRoomMobs(mobs)
+			bindings.ApplyAffect = func(targetID int64, effectID string, durationOverride int32) error {
+				return applyAffect(ctx, targetID, effectID, durationOverride)
 			}
 			// Per-invocation give_item cap (mirrors trigger path).
 			// Counter is captured per RunScript call so each
@@ -1250,6 +1259,20 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			bindings.TargetLevel = func(targetID int64) (int, error) {
 				return targetLevel(ctx, targetID)
 			}
+			bindings.TargetClasses = func(targetID int64) (map[string]int, error) {
+				return targetClasses(ctx, targetID)
+			}
+			// V4 surface (Phase F #32 slice 4) — room queries
+			// resolve from the dialogue session's CurrentRoomID,
+			// not a Lua-side argument.
+			bindings.RoomPlayers = func() ([]int64, error) {
+				return roomPlayers(ctx, s.CurrentRoomID)
+			}
+			bindings.RoomMobs = func() ([]int64, error) {
+				return roomMobs(ctx, s.CurrentRoomID)
+			}
+			bindings.ClockHour = clock.HourOfDay
+			bindings.ClockDay = clock.Day
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
 			// classified Lua error makes the unbound state visible
@@ -1450,8 +1473,11 @@ func (srv *server) runCountdown(verb, reason string, delay time.Duration, cancel
 // creature.Affect via Effect.ToAffect (sentinel Source =
 // cmd.LuaAffectSource → "script" label in the inspect verb), and
 // persists via affects.Apply + RecordAffects.
-func makeLuaApplyAffect(characters repo.CharacterRepo, eff *effects.Catalog) func(context.Context, int64, string) error {
-	return func(ctx context.Context, targetID int64, effectID string) error {
+//
+// Slice 4: durationOverride > 0 overrides the catalog's authored
+// DurationTicks; 0 means "use catalog default".
+func makeLuaApplyAffect(characters repo.CharacterRepo, eff *effects.Catalog) func(context.Context, int64, string, int32) error {
+	return func(ctx context.Context, targetID int64, effectID string, durationOverride int32) error {
 		e, ok := eff.Get(effectID)
 		if !ok {
 			return fmt.Errorf("unknown effect %q", effectID)
@@ -1460,7 +1486,11 @@ func makeLuaApplyAffect(characters repo.CharacterRepo, eff *effects.Catalog) fun
 		if err != nil {
 			return err
 		}
-		next := affects.Apply(ch.Core.Affects, e.ToAffect(cmd.LuaAffectSource))
+		affect := e.ToAffect(cmd.LuaAffectSource)
+		if durationOverride > 0 {
+			affect.DurationTicks = durationOverride
+		}
+		next := affects.Apply(ch.Core.Affects, affect)
 		return characters.RecordAffects(ctx, targetID, next)
 	}
 }
@@ -1528,6 +1558,72 @@ func makeLuaTargetLevel(characters repo.CharacterRepo) func(context.Context, int
 			total += int(lvl)
 		}
 		return total, nil
+	}
+}
+
+// makeLuaTargetClasses returns the multiclass map keyed by the
+// chargen catalog's canonical class id (e.g. "armsman", "initiate").
+// Phase F #32 slice 4 — companion to target.level which sums into
+// a single int. Empty map for a character with no class levels
+// (defensive — chargen always stamps at least one). Falls back to
+// "class_<int>" when a catalog row is missing for a given enum
+// value (shouldn't happen in practice; defensive only).
+func makeLuaTargetClasses(characters repo.CharacterRepo, cat *chargen.Catalog) func(context.Context, int64) (map[string]int, error) {
+	enumToID := make(map[creature.Class]string)
+	for _, c := range cat.Classes() {
+		enumToID[c.Enum] = c.ID
+	}
+	return func(ctx context.Context, targetID int64) (map[string]int, error) {
+		ch, err := characters.GetByID(ctx, targetID)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]int, len(ch.ClassLevels))
+		for cls, lvl := range ch.ClassLevels {
+			id, ok := enumToID[cls]
+			if !ok {
+				id = fmt.Sprintf("class_%d", int(cls))
+			}
+			out[id] = int(lvl)
+		}
+		return out, nil
+	}
+}
+
+// makeLuaRoomPlayers returns the bound character ids in roomID,
+// sorted ascending. Phase F #32 slice 4 — feeds room.players() in
+// Lua. Returns an empty slice (never nil) so the Lua-side ipairs
+// always sees a valid table.
+func makeLuaRoomPlayers(sessions *session.Registry) func(context.Context, int64) ([]int64, error) {
+	return func(_ context.Context, roomID int64) ([]int64, error) {
+		out := make([]int64, 0, 4)
+		for charID, s := range sessions.Snapshot() {
+			if s == nil {
+				continue
+			}
+			_, _, sRoom := s.InWorld()
+			if sRoom == roomID {
+				out = append(out, charID)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+		return out, nil
+	}
+}
+
+// makeLuaRoomMobs returns mob_instance ids in roomID via
+// MobInstanceRepo.ListInRoom. Phase F #32 slice 4.
+func makeLuaRoomMobs(mobs repo.MobInstanceRepo) func(context.Context, int64) ([]int64, error) {
+	return func(ctx context.Context, roomID int64) ([]int64, error) {
+		list, err := mobs.ListInRoom(ctx, roomID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]int64, 0, len(list))
+		for _, m := range list {
+			out = append(out, m.ID)
+		}
+		return out, nil
 	}
 }
 

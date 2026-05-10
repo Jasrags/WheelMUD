@@ -44,10 +44,24 @@ type LuaHooks struct {
 	// they take a targetID directly rather than a charID-from-ctx.
 	// Mutations (ApplyAffect, GiveItem) are character-bound; the
 	// handler still requires a character actor on the firing event.
-	ApplyAffect func(ctx context.Context, targetID int64, effectID string) error
+	//
+	// ApplyAffect's third arg (durationOverride) is a slice-4
+	// addition; > 0 overrides the catalog's authored duration, 0
+	// means "use catalog default".
+	ApplyAffect func(ctx context.Context, targetID int64, effectID string, durationOverride int32) error
 	GiveItem    func(ctx context.Context, targetID int64, externalID string) error
 	TargetHP    func(ctx context.Context, targetID int64) (cur, max int32, err error)
 	TargetLevel func(ctx context.Context, targetID int64) (int, error)
+
+	// V4 (Phase F #32 slice 4) — world read APIs. Room hooks take
+	// the roomID resolved from the firing EventCtx so a script
+	// can't snoop on rooms it doesn't own. Clock hooks are pure
+	// (no args). TargetClasses returns the multiclass map.
+	RoomPlayers   func(ctx context.Context, roomID int64) ([]int64, error)
+	RoomMobs      func(ctx context.Context, roomID int64) ([]int64, error)
+	ClockHour     func() int
+	ClockDay      func() int64
+	TargetClasses func(ctx context.Context, targetID int64) (map[string]int, error)
 }
 
 // LuaQuestHooks is the legacy slice-2 alias. Kept as a type alias
@@ -100,6 +114,11 @@ func luaActionHandler(runner *intlua.Runner, hooks LuaHooks) ActionHandler {
 			GiveItem:       makeGiveItemHook(ctx, ev, hooks.GiveItem),
 			TargetHP:       makeTargetHPHook(ctx, hooks.TargetHP),
 			TargetLevel:    makeTargetLevelHook(ctx, hooks.TargetLevel),
+			TargetClasses:  makeTargetClassesHook(ctx, hooks.TargetClasses),
+			RoomPlayers:    makeRoomPlayersHook(ctx, ev, hooks.RoomPlayers),
+			RoomMobs:       makeRoomMobsHook(ctx, ev, hooks.RoomMobs),
+			ClockHour:      hooks.ClockHour,
+			ClockDay:       hooks.ClockDay,
 		}
 		// PushMode stays unbound on triggers — there's no surrounding
 		// session to push a mode onto. The classified Lua error is
@@ -131,22 +150,24 @@ func makeQuestHook(ctx context.Context, ev EventCtx, name string, hook func(cont
 	}
 }
 
-// makeApplyAffectHook adapts a (ctx, charID, effectID) hook onto the
-// Lua-side (targetID, effectID) closure. Mob-fired triggers (no
-// character actor) get a closure that errors with a classified
-// message so misuse trips the fault budget. The targetID arg is
-// taken from Lua, NOT from the EventCtx — scripts can apply affects
-// to any character, not just the actor — but a non-character
-// actor still indicates a misconfigured trigger and is refused.
-func makeApplyAffectHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, string) error) func(int64, string) error {
+// makeApplyAffectHook adapts a (ctx, charID, effectID, durationOverride)
+// hook onto the Lua-side (targetID, effectID, durationOverride) closure.
+// Mob-fired triggers (no character actor) get a closure that errors
+// with a classified message so misuse trips the fault budget. The
+// targetID arg is taken from Lua, NOT from the EventCtx — scripts
+// can apply affects to any character, not just the actor — but a
+// non-character actor still indicates a misconfigured trigger and is
+// refused. durationOverride > 0 overrides the catalog's authored
+// duration; 0 means "use catalog default".
+func makeApplyAffectHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, string, int32) error) func(int64, string, int32) error {
 	if hook == nil {
 		return nil
 	}
-	return func(targetID int64, effectID string) error {
+	return func(targetID int64, effectID string, durationOverride int32) error {
 		if ev.ActorKind != "character" || ev.ActorID == 0 {
 			return fmt.Errorf("apply_affect requires a character actor (got %q)", ev.ActorKind)
 		}
-		return hook(ctx, targetID, effectID)
+		return hook(ctx, targetID, effectID, durationOverride)
 	}
 }
 
@@ -196,6 +217,41 @@ func makeTargetLevelHook(ctx context.Context, hook func(context.Context, int64) 
 	}
 	return func(targetID int64) (int, error) {
 		return hook(ctx, targetID)
+	}
+}
+
+// V4 adapters (Phase F #32 slice 4).
+//
+// makeTargetClassesHook is read-only — no actor-kind guard. Mirrors
+// makeTargetHPHook / makeTargetLevelHook.
+func makeTargetClassesHook(ctx context.Context, hook func(context.Context, int64) (map[string]int, error)) func(int64) (map[string]int, error) {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64) (map[string]int, error) {
+		return hook(ctx, targetID)
+	}
+}
+
+// makeRoomPlayersHook resolves the room from the firing EventCtx,
+// NOT from a Lua-side argument, so scripts can't snoop on rooms
+// they don't own. Read-only — no actor-kind guard. The Lua-side
+// `room.players()` call is no-arg in the V4 surface.
+func makeRoomPlayersHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64) ([]int64, error)) func() ([]int64, error) {
+	if hook == nil {
+		return nil
+	}
+	return func() ([]int64, error) {
+		return hook(ctx, ev.RoomID)
+	}
+}
+
+func makeRoomMobsHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64) ([]int64, error)) func() ([]int64, error) {
+	if hook == nil {
+		return nil
+	}
+	return func() ([]int64, error) {
+		return hook(ctx, ev.RoomID)
 	}
 }
 

@@ -25,7 +25,7 @@ func TestAPIv3_ApplyAffect_HappyPath(t *testing.T) {
 	}
 	var seen call
 	bindings := APIBindings{
-		ApplyAffect: func(target int64, effect string) error {
+		ApplyAffect: func(target int64, effect string, _ int32) error {
 			seen = call{Target: target, Effect: effect}
 			return nil
 		},
@@ -45,7 +45,7 @@ func TestAPIv3_ApplyAffect_HookErrorSurfaces(t *testing.T) {
 
 	hookErr := errors.New("unknown effect")
 	bindings := APIBindings{
-		ApplyAffect: func(int64, string) error { return hookErr },
+		ApplyAffect: func(int64, string, int32) error { return hookErr },
 	}
 	err := r.Run(context.Background(), "aa_err", func(l *gluua.LState) { bindings.Bind(l) })
 	if !errors.Is(err, ErrLuaError) {
@@ -202,7 +202,7 @@ if type(target) ~= "nil" then error("target should be nil, got " .. type(target)
 	defer r.Stop()
 
 	bindings := APIBindings{
-		ApplyAffect: func(int64, string) error { return nil },
+		ApplyAffect: func(int64, string, int32) error { return nil },
 		GiveItem:    func(int64, string) error { return nil },
 		TargetHP:    func(int64) (int32, int32, error) { return 1, 2, nil },
 		TargetLevel: func(int64) (int, error) { return 1, nil },

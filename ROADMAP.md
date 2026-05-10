@@ -1434,8 +1434,30 @@ will need on top of those tables.
       consecutive-fault auto-disable deferred until §32 ships
       the Lua action surface (deterministic V1 builtins don't
       need fault budgets).
-- [~] Embedded scripting language — Phase F #32 slice 3 landed
-      2026-05-10. Slice 3 broadens the API surface for content
+- [~] Embedded scripting language — Phase F #32 slice 4 landed
+      2026-05-10. Polish bundle: `room.players()` and `room.mobs()`
+      return a 1-indexed Lua array of character / mob_instance IDs
+      in the actor's current room (resolved at bind time from
+      `b.Ctx.RoomID` so scripts can't snoop on other rooms).
+      `clock.hour() → 0..23` and `clock.day() → int` expose the
+      world clock (new `Clock.Day()` method on `internal/world/
+      dayclock.go`). `target.classes(id)` returns the multiclass
+      map keyed by chargen catalog class id (e.g.
+      `{ armsman = 3, initiate = 2 }`); companion to
+      `target.level(id)` which sums into a single int.
+      `apply_affect` gained an optional 3rd arg (durationOverride
+      int32; 0 means "use catalog default") so scripts can apply
+      shorter/longer affects without authoring sibling catalog
+      entries. APIBindings.ApplyAffect signature changed (3 args);
+      LuaHooks struct extended; release wipe-list now covers
+      `room` + `clock`. Two demo scripts added: `check_alone.lua`
+      (room.players + apply_affect) and `night_warning.lua`
+      (clock.hour gate). Slice 5+ defers combat mutations
+      (deal_damage, blocked on §D crit polish), inventory
+      take/transfer, async `wait()`, and `on_login`/`on_logout`
+      events.
+
+      Phase F #32 slice 3 landed 2026-05-10. Slice 3 broadens the API surface for content
       authors with three composing closures: `apply_affect(target_id,
       effect_id)` (resolves through the effects catalog + the §E
       #25 producer pipeline; sentinel Source = -3 renders as

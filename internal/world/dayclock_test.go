@@ -17,6 +17,27 @@ func fixedClock(t *testing.T, ticks int64) *Clock {
 	return NewClock(ticks, WithNow(func() time.Time { return frozen }))
 }
 
+func TestClock_Day(t *testing.T) {
+	// Default Clock has tpd=1800 ticks/day. Day is the integer
+	// floor-divide of Ticks() by TicksPerDay().
+	const tpd = 1800
+	cases := []struct {
+		ticks int64
+		want  int64
+	}{
+		{0, 0},
+		{tpd - 1, 0},
+		{tpd, 1},
+		{tpd*5 + 100, 5},
+	}
+	for _, tc := range cases {
+		c := fixedClock(t, tc.ticks)
+		if got := c.Day(); got != tc.want {
+			t.Errorf("Day(ticks=%d) = %d, want %d", tc.ticks, got, tc.want)
+		}
+	}
+}
+
 func TestApplyCurve(t *testing.T) {
 	const baseline int = 100
 	const tpd int64 = 1800 // matches default day length at 1 Hz

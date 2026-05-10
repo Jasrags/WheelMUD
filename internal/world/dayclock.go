@@ -133,6 +133,18 @@ func (c *Clock) HourOfDay() int {
 	return int((p * 24) / tpd)
 }
 
+// Day returns the integer day index since the world clock's epoch
+// (Ticks() / TicksPerDay()). Phase F #32 slice 4 — exposed to Lua
+// via clock.day(). Returns 0 when ticksPerDay is non-positive
+// (defensive; mirrors HourOfDay's tpd<=0 guard).
+func (c *Clock) Day() int64 {
+	tpd := c.ticksPerDay()
+	if tpd <= 0 {
+		return 0
+	}
+	return c.Ticks() / tpd
+}
+
 // Phase returns the current day-phase bucket.
 func (c *Clock) Phase() Phase {
 	tpd := c.ticksPerDay()
