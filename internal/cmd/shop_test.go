@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -281,6 +282,45 @@ func TestShop_SellTradeGoodFullPrice(t *testing.T) {
 	c, _ := f.characters.FindByName(context.Background(), "Alice")
 	if int64(c.Coin) != 20 {
 		t.Fatalf("coin = %d cp, want 20", int64(c.Coin))
+	}
+}
+
+func TestShop_SellRollsBackCreditOnDeleteFailure(t *testing.T) {
+	// Same shape as the get-side coin-pile rollback: if items.Delete
+	// fails after RecordCoin succeeds, the credit must be rolled back
+	// or the player keeps both the item and the coin (revenue
+	// duplication).
+	f := newShopFixture(t)
+	wrapped := &deleteFailItemRepo{
+		MemoryItemRepo: f.items,
+		deleteErr:      errors.New("simulated storage failure"),
+	}
+	f.items.Insert(repo.Item{
+		ExternalID:       "potion", Name: "a healing potion", NameLower: "a healing potion",
+		OwnerCharacterID: f.alice.CharacterID, Type: repo.ItemTypeConsumable, Value: 10, Weight: 1,
+	})
+
+	sell := NewSell(wrapped, f.characters, f.mobs, f.templates, f.shops, f.hour, f.sessions)
+	runCmd(t, sell, f.alice, "potion")
+
+	out := f.aOut.String()
+	if !strings.Contains(out, "hands the item back") {
+		t.Fatalf("missing rollback refusal echo; got %q", out)
+	}
+
+	// Critical invariant: coin must NOT have been credited.
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if int64(c.Coin) != 0 {
+		t.Fatalf("rollback failed: purse should be 0 cp; got %d cp", int64(c.Coin))
+	}
+	// CoinVersion bumped twice: credit + rollback.
+	if c.CoinVersion != 2 {
+		t.Errorf("coin_version after credit + rollback = %d, want 2", c.CoinVersion)
+	}
+	// Item still in inventory (Delete failed, so it never left).
+	held, _ := f.items.ListInInventory(context.Background(), f.alice.CharacterID)
+	if len(held) != 1 || held[0].Name != "a healing potion" {
+		t.Fatalf("item should remain in inventory after rollback; got %+v", held)
 	}
 }
 

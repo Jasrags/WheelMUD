@@ -388,14 +388,24 @@ func NewSell(items repo.ItemRepo, characters repo.CharacterRepo,
 				return s.WriteString("{{The shopkeeper fumbles the change.}}::red\r\n")
 			}
 			if err := items.Delete(c.Ctx, it.ID); err != nil {
-				// Coin already credited; player got paid and kept the
-				// item. Loud log — this is real revenue created from
-				// nothing — but accept rather than try to claw back
-				// coin (RecordCoin failure is unlikely so close to
-				// success, but the rollback can't be guaranteed).
-				slog.Error("sell: delete item AFTER coin credited — duplicated value",
+				slog.Warn("sell: delete item failed; rolling back credit",
 					"char", char.ID, "item", it.ID, "amount_cp", int64(price), "error", err)
-				return s.WriteString("{{You sell " + it.Name + " for " + price.Format() + ".}}::cyan\r\n")
+				// Compensating rollback must NOT use c.Ctx — a
+				// mid-command disconnect would silently skip the
+				// rollback and leave the actor credited AND still
+				// holding the item, which is real revenue
+				// duplication. Rollback uses CoinVersion+1 because
+				// the first RecordCoin succeeded and bumped the
+				// version.
+				rbCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				if rbErr := characters.RecordCoin(rbCtx, char.ID, char.Coin, char.BankBalance, char.CoinVersion+1); rbErr != nil {
+					slog.Error("sell: ROLLBACK FAILED — item retained AND coin credited (revenue duplication)",
+						"char", char.ID, "item", it.ID, "amount_cp", int64(price),
+						"original_error", err, "rollback_error", rbErr)
+					return s.WriteString("{{Something went badly wrong. Find an admin.}}::red\r\n")
+				}
+				return s.WriteString("{{The shopkeeper hands the item back and pockets the coin.}}::yellow\r\n")
 			}
 			// Remove from inventory ordering JSON best-effort.
 			_ = characters.RecordInventory(c.Ctx, char.ID, removeID(char.Inventory, it.ID))
