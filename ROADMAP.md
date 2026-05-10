@@ -1148,9 +1148,14 @@ will need on top of those tables.
       pool, cap, duplicate, miss-affinity, unknown id) do not
       mutate or audit; success writes one `feat` / `bump` /
       `learn` audit row.
-- [~] Affects / buffs / debuffs with durations — `creature_affects`
+- [x] Affects / buffs / debuffs with durations — `creature_affects`
       list `(source_id, name, modifiers []StatMod, duration_ticks,
-      tick_effect)`. Phase E #25 slice 1 landed 2026-05-09: player
+      tick_effect)`. **#25 closed 2026-05-10** across three slices.
+      Remaining producer threads (combat-on-hit, weave-cast, healer
+      NPC, light fuel, player dispel) live in
+      `affects_followups.md` and are blocked on §D crit polish or
+      Phase F/G surfaces; they don't gate #25 closure.
+      Phase E #25 slice 1 landed 2026-05-09: player
       `affects` inspect verb + admin `affect` / `dispel` producer
       verbs. `affects.Apply` now has live callers (admin sentinel
       Source = -1); the existing `SessionTicker` decrements
@@ -1429,8 +1434,32 @@ will need on top of those tables.
       consecutive-fault auto-disable deferred until §32 ships
       the Lua action surface (deterministic V1 builtins don't
       need fault budgets).
-- [~] Embedded scripting language — Phase F #32 slice 2 landed
-      2026-05-09. `gopher-lua` is the chosen runtime. Slice 1
+- [~] Embedded scripting language — Phase F #32 slice 3 landed
+      2026-05-10. Slice 3 broadens the API surface for content
+      authors with three composing closures: `apply_affect(target_id,
+      effect_id)` (resolves through the effects catalog + the §E
+      #25 producer pipeline; sentinel Source = -3 renders as
+      "script" in the affects inspect verb), `give_item(target_id,
+      external_id)` (clones a YAML-seeded item template into the
+      target's inventory; mirrors the admin spawn path), and
+      `target.hp(id)` / `target.level(id)` read APIs (multiclass
+      level sums ClassLevels). Trigger handler guards mutations
+      with the same actor-kind check as the V2 quest API
+      (mob-fired triggers refused with classified fault); read
+      APIs are unguarded. Dialogue's RunScript closure binds the
+      same hooks, no extra guard (the dialogue actor is always
+      the calling character). `LuaQuestHooks` renamed to
+      `LuaHooks` (legacy alias kept). Two demo scripts added
+      to the catalog: `bless_actor.lua` (apply_affect) and
+      `gift_potion.lua` (give_item). Release wipe-list extended
+      to cover `apply_affect`, `give_item`, `target` so per-call
+      state can't leak across pool borrows. Slice 4+ defers
+      combat mutations (deal_damage, blocked on §D crit polish),
+      inventory mutations beyond give (take/transfer), room state
+      iterators (room.players / room.mobs), and `wait()` async.
+
+      Phase F #32 slice 2 landed 2026-05-09. `gopher-lua` is the
+      chosen runtime. Slice 1
       shipped the foundation: an embedded
       `internal/scripts/default/<name>.lua` catalog (with
       `SCRIPT_DIR` env override), a sandboxed

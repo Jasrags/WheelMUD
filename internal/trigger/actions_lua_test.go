@@ -117,6 +117,136 @@ func TestLuaAction_QuestAdvance_NilHook_Faults(t *testing.T) {
 	}
 }
 
+// V3 surface (Phase F #32 slice 3) — apply_affect / give_item /
+// target.* dispatched through the trigger handler. Same fault
+// budget contract as V2.
+
+func TestLuaAction_ApplyAffect_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "aa", `apply_affect(42, "bull_strength")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var seenTarget int64
+	var seenEffect string
+	hooks := LuaHooks{
+		ApplyAffect: func(_ context.Context, target int64, effect string) error {
+			seenTarget = target
+			seenEffect = effect
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "aa"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{Kind: OwnerMobTemplate, RoomID: 100},
+		EventCtx{Event: EventOnEnter, ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seenTarget != 42 || seenEffect != "bull_strength" {
+		t.Fatalf("hook captured (%d, %q); want (42, bull_strength)", seenTarget, seenEffect)
+	}
+}
+
+func TestLuaAction_ApplyAffect_NoCharacterActor_Faults(t *testing.T) {
+	cat := loadCatalog(t, "aa_tick", `apply_affect(1, "x")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		ApplyAffect: func(context.Context, int64, string) error {
+			t.Fatal("hook should not fire for non-character actor")
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "aa_tick"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if !errors.Is(err, ErrActionFaulted) {
+		t.Fatalf("err = %v, want ErrActionFaulted", err)
+	}
+	if !strings.Contains(err.Error(), "apply_affect requires a character actor") {
+		t.Fatalf("err = %v; want 'character actor' in chain", err)
+	}
+}
+
+func TestLuaAction_GiveItem_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "gi", `give_item(7, "tr.potion")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var seenTarget int64
+	var seenExt string
+	hooks := LuaHooks{
+		GiveItem: func(_ context.Context, target int64, ext string) error {
+			seenTarget = target
+			seenExt = ext
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "gi"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seenTarget != 7 || seenExt != "tr.potion" {
+		t.Fatalf("hook captured (%d, %q); want (7, tr.potion)", seenTarget, seenExt)
+	}
+}
+
+func TestLuaAction_GiveItem_NoCharacterActor_Faults(t *testing.T) {
+	cat := loadCatalog(t, "gi_tick", `give_item(1, "x")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		GiveItem: func(context.Context, int64, string) error {
+			t.Fatal("hook should not fire for non-character actor")
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "gi_tick"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if !errors.Is(err, ErrActionFaulted) ||
+		!strings.Contains(err.Error(), "give_item requires a character actor") {
+		t.Fatalf("err = %v; want give_item character-actor refusal", err)
+	}
+}
+
+func TestLuaAction_TargetReads_NoActorGuard(t *testing.T) {
+	// Read APIs intentionally have no actor-kind guard — a script
+	// firing from on_tick can still query a character's HP/level.
+	cat := loadCatalog(t, "th_tick", `local cur, max = target.hp(7); local lvl = target.level(7)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		TargetHP:    func(context.Context, int64) (int32, int32, error) { return 1, 2, nil },
+		TargetLevel: func(context.Context, int64) (int, error) { return 3, nil },
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "th_tick"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if err != nil {
+		t.Fatalf("read APIs should not be guarded; got %v", err)
+	}
+}
+
 // Hook errors propagate as classified faults. The Lua-side closure
 // raises with the error message; runner classifies as ErrLuaError;
 // handler wraps as ErrActionFaulted.

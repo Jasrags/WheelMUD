@@ -437,9 +437,12 @@ catalogs.
 24. **Mid-game skill rank investment** (§12). Per-character
     `character_skills` writes; respects class-skill / cross-class
     caps from the chargen catalog.
-25. **Affects / buffs / debuffs with durations** (§12).
-    `creature_affects` table. Combat reads it for poison/bleed; weaves
-    and consumables write it. **Slice 1 landed 2026-05-09:** the
+25. ~~**Affects / buffs / debuffs with durations** (§12).~~
+    **#25 closed 2026-05-10.** Remaining producer threads
+    (combat-on-hit, weave-cast, healer NPC, light fuel, player
+    dispel) live in `affects_followups.md` and are blocked on §D
+    crit polish or Phase F/G surfaces; they don't gate #25
+    closure. **Slice 1 landed 2026-05-09:** the
     `affects` inspect verb (Player) + `affect` / `dispel` admin verbs
     fill the no-callers gap on `affects.Apply` and give builders an
     end-to-end producer to test the existing tick / Effective /
@@ -673,10 +676,30 @@ Content multiplier. Without this the world is static.
       against the script catalog (in main.go's
       `validateDialogueScriptRefs`); quest `StepScript` cross-
       refs via the new `quest.RefSets.Scripts` set.
-    - Slice 3 (sketch): `wait(seconds, fn)` async scripts + richer
-      mutation API (`player.give`, `mob.damage`, `on_login` /
-      `on_logout` events).
-    - Slice 4: OLC `tedit` (depends on Phase G).
+    - **Slice 3 — landed 2026-05-10**: API surface broadened for
+      content authors. Three composing closures wired through both
+      trigger and dialogue paths: `apply_affect(target_id,
+      effect_id)` (resolves the effects catalog and feeds the §E
+      #25 producer pipeline; sentinel Source = -3 → "script"
+      label in the affects inspect verb), `give_item(target_id,
+      external_id)` (clones a YAML-seeded template into the
+      target's inventory; mirrors the admin spawn path), and a
+      read-only `target` table with `target.hp(id) → cur,max` and
+      `target.level(id) → int` (multiclass sums ClassLevels).
+      Trigger handler guards mutations with the same actor-kind
+      check the V2 quest API uses (mob-fired triggers refused
+      with classified faults); read APIs are unguarded by design.
+      `LuaQuestHooks` renamed to `LuaHooks` (legacy alias kept).
+      Two demo scripts (`bless_actor.lua`, `gift_potion.lua`)
+      shipped in the catalog so the API has live exercise +
+      authoring examples. Release wipe-list extended to cover
+      `apply_affect`, `give_item`, `target` so per-call state
+      can't leak across pool borrows.
+    - Slice 4 (sketch): combat mutations (deal_damage / heal —
+      blocked on §D crit polish), inventory take/transfer, room
+      state iterators (room.players / room.mobs), `wait(seconds,
+      fn)` async scripts, `on_login` / `on_logout` events.
+    - Slice 5: OLC `tedit` (depends on Phase G).
 
 ---
 

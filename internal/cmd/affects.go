@@ -39,6 +39,14 @@ const adminAffectSource int64 = -1
 // adminAffectSource; renders as "potion" in the inspect verb.
 const consumableAffectSource int64 = -2
 
+// LuaAffectSource is the sentinel Source stamped on affects applied
+// by Lua scripts via the `apply_affect` binding (Phase F #32 slice
+// 3). Sibling to adminAffectSource / consumableAffectSource;
+// renders as "script" in the inspect verb. Exported so the
+// cmd/server/main.go closure that wires the binding can stamp it
+// without re-importing this package's internals.
+const LuaAffectSource int64 = -3
+
 // NewAffects builds the `affects` player verb. Lists the caller's
 // live affects with name, modifiers, source, and remaining duration.
 func NewAffects(characters repo.CharacterRepo) *telnet.Command {
@@ -293,6 +301,8 @@ func resolveAffectSource(c *telnet.Context, characters repo.CharacterRepo, src i
 		return "admin"
 	case src == consumableAffectSource:
 		return "potion"
+	case src == LuaAffectSource:
+		return "script"
 	case src == 0:
 		return "unknown"
 	default:

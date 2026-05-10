@@ -58,6 +58,15 @@ type APIBindings struct {
 	QuestAccept  func(questID string) error
 	QuestAdvance func(questID string) error
 	PushMode     func(mode string) error
+
+	// V3 surface (Phase F #32 slice 3) — content-author hooks that
+	// compose existing producer pipelines. All take explicit
+	// targetID / externalID args; the consumer-injection pattern
+	// (cmd/server/main.go closures) bakes context.Context + repos.
+	ApplyAffect func(targetID int64, effectID string) error
+	GiveItem    func(targetID int64, externalID string) error
+	TargetHP    func(targetID int64) (cur, max int32, err error)
+	TargetLevel func(targetID int64) (int, error)
 }
 
 // Bind registers the V1 API globals on l. Call this from the bind
@@ -122,6 +131,67 @@ func (b APIBindings) Bind(l *gluua.LState) {
 		}
 		return 0
 	}))
+
+	// V3 surface (Phase F #32 slice 3).
+	l.SetGlobal("apply_affect", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		effectID := L.CheckString(2)
+		if b.ApplyAffect == nil {
+			L.RaiseError("apply_affect not bound in this context")
+			return 0
+		}
+		if err := b.ApplyAffect(targetID, effectID); err != nil {
+			L.RaiseError("apply_affect(%d, %q) failed: %s", targetID, effectID, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("give_item", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		externalID := L.CheckString(2)
+		if b.GiveItem == nil {
+			L.RaiseError("give_item not bound in this context")
+			return 0
+		}
+		if err := b.GiveItem(targetID, externalID); err != nil {
+			L.RaiseError("give_item(%d, %q) failed: %s", targetID, externalID, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	targetTbl := l.NewTable()
+	targetTbl.RawSetString("hp", l.NewFunction(func(L *gluua.LState) int {
+		id := L.CheckInt64(1)
+		if b.TargetHP == nil {
+			L.RaiseError("target.hp not bound in this context")
+			return 0
+		}
+		cur, max, err := b.TargetHP(id)
+		if err != nil {
+			L.RaiseError("target.hp(%d) failed: %s", id, err.Error())
+			return 0
+		}
+		L.Push(gluua.LNumber(cur))
+		L.Push(gluua.LNumber(max))
+		return 2
+	}))
+	targetTbl.RawSetString("level", l.NewFunction(func(L *gluua.LState) int {
+		id := L.CheckInt64(1)
+		if b.TargetLevel == nil {
+			L.RaiseError("target.level not bound in this context")
+			return 0
+		}
+		lvl, err := b.TargetLevel(id)
+		if err != nil {
+			L.RaiseError("target.level(%d) failed: %s", id, err.Error())
+			return 0
+		}
+		L.Push(gluua.LNumber(lvl))
+		return 1
+	}))
+	l.SetGlobal("target", targetTbl)
 }
 
 // makeQuestFn produces the Lua-callable closure for quest.accept /

@@ -21,21 +21,39 @@ type LuaPayload struct {
 	Script string `json:"script"`
 }
 
-// LuaQuestHooks bundles the optional V2 mutation closures the cmd-
-// layer wires when a trigger script needs to drive quest state. nil
-// hooks register the corresponding Lua-side stub that raises a
-// classified error — the trigger fault budget catches misuse and
-// auto-disables the offending row after FaultThreshold strikes.
+// LuaHooks bundles the optional mutation + read closures the
+// cmd-layer wires when a trigger script needs to drive quest state
+// (V2, slice 2) or compose the producer pipelines (V3, slice 3 —
+// apply_affect / give_item / target reads). nil hooks register the
+// corresponding Lua-side stub that raises a classified error — the
+// trigger fault budget catches misuse and auto-disables the
+// offending row after FaultThreshold strikes.
 //
 // The closures resolve the calling character from the EventCtx
 // passed to each invocation; that's why they take a CharacterID
-// rather than capturing one. The handler refuses to fire a quest
-// API if ev.ActorKind != "character" so a misconfigured `on_tick`
-// trigger doesn't silently no-op a quest.advance call.
-type LuaQuestHooks struct {
+// rather than capturing one. The handler refuses to fire a
+// character-bound API if ev.ActorKind != "character" so a
+// misconfigured `on_tick` trigger doesn't silently no-op a
+// quest.advance call or stash an item on a mob.
+type LuaHooks struct {
+	// V2 (Phase F #32 slice 2)
 	Accept  func(ctx context.Context, charID int64, questID string) error
 	Advance func(ctx context.Context, charID int64, questID string) error
+
+	// V3 (Phase F #32 slice 3) — read APIs are character-bound, so
+	// they take a targetID directly rather than a charID-from-ctx.
+	// Mutations (ApplyAffect, GiveItem) are character-bound; the
+	// handler still requires a character actor on the firing event.
+	ApplyAffect func(ctx context.Context, targetID int64, effectID string) error
+	GiveItem    func(ctx context.Context, targetID int64, externalID string) error
+	TargetHP    func(ctx context.Context, targetID int64) (cur, max int32, err error)
+	TargetLevel func(ctx context.Context, targetID int64) (int, error)
 }
+
+// LuaQuestHooks is the legacy slice-2 alias. Kept as a type alias
+// so existing call sites compile; new code should use LuaHooks
+// directly.
+type LuaQuestHooks = LuaHooks
 
 // RegisterLuaAction installs the `lua` action kind on reg, wired to
 // runner. The handler resolves the script name from the payload,
@@ -51,14 +69,14 @@ type LuaQuestHooks struct {
 // Pass an empty LuaQuestHooks to register the stubs that raise
 // classified errors — handy for tests / boots that disable quest
 // scripting.
-func RegisterLuaAction(reg *ActionRegistry, runner *intlua.Runner, _ *scripts.Catalog, hooks LuaQuestHooks) {
+func RegisterLuaAction(reg *ActionRegistry, runner *intlua.Runner, _ *scripts.Catalog, hooks LuaHooks) {
 	if reg == nil || runner == nil {
 		return
 	}
 	reg.Register("lua", luaActionHandler(runner, hooks))
 }
 
-func luaActionHandler(runner *intlua.Runner, hooks LuaQuestHooks) ActionHandler {
+func luaActionHandler(runner *intlua.Runner, hooks LuaHooks) ActionHandler {
 	return func(ctx context.Context, deps ActionDeps, owner OwnerRef, ev EventCtx, payload json.RawMessage) error {
 		var p LuaPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
@@ -78,6 +96,10 @@ func luaActionHandler(runner *intlua.Runner, hooks LuaQuestHooks) ActionHandler 
 			EmoteBroadcast: makeEmoteBroadcaster(ctx, deps, owner),
 			QuestAccept:    makeQuestHook(ctx, ev, "quest.accept", hooks.Accept),
 			QuestAdvance:   makeQuestHook(ctx, ev, "quest.advance", hooks.Advance),
+			ApplyAffect:    makeApplyAffectHook(ctx, ev, hooks.ApplyAffect),
+			GiveItem:       makeGiveItemHook(ctx, ev, hooks.GiveItem),
+			TargetHP:       makeTargetHPHook(ctx, hooks.TargetHP),
+			TargetLevel:    makeTargetLevelHook(ctx, hooks.TargetLevel),
 		}
 		// PushMode stays unbound on triggers — there's no surrounding
 		// session to push a mode onto. The classified Lua error is
@@ -106,6 +128,59 @@ func makeQuestHook(ctx context.Context, ev EventCtx, name string, hook func(cont
 			return fmt.Errorf("%s requires a character actor (got %q)", name, ev.ActorKind)
 		}
 		return hook(ctx, ev.ActorID, questID)
+	}
+}
+
+// makeApplyAffectHook adapts a (ctx, charID, effectID) hook onto the
+// Lua-side (targetID, effectID) closure. Mob-fired triggers (no
+// character actor) get a closure that errors with a classified
+// message so misuse trips the fault budget. The targetID arg is
+// taken from Lua, NOT from the EventCtx — scripts can apply affects
+// to any character, not just the actor — but a non-character
+// actor still indicates a misconfigured trigger and is refused.
+func makeApplyAffectHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, string) error) func(int64, string) error {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64, effectID string) error {
+		if ev.ActorKind != "character" || ev.ActorID == 0 {
+			return fmt.Errorf("apply_affect requires a character actor (got %q)", ev.ActorKind)
+		}
+		return hook(ctx, targetID, effectID)
+	}
+}
+
+// makeGiveItemHook mirrors makeApplyAffectHook for give_item.
+func makeGiveItemHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, string) error) func(int64, string) error {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64, externalID string) error {
+		if ev.ActorKind != "character" || ev.ActorID == 0 {
+			return fmt.Errorf("give_item requires a character actor (got %q)", ev.ActorKind)
+		}
+		return hook(ctx, targetID, externalID)
+	}
+}
+
+// makeTargetHPHook + makeTargetLevelHook are read-only — no
+// actor-kind guard needed; a script firing from any owner can
+// query a character's HP / level.
+func makeTargetHPHook(ctx context.Context, hook func(context.Context, int64) (int32, int32, error)) func(int64) (int32, int32, error) {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64) (int32, int32, error) {
+		return hook(ctx, targetID)
+	}
+}
+
+func makeTargetLevelHook(ctx context.Context, hook func(context.Context, int64) (int, error)) func(int64) (int, error) {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64) (int, error) {
+		return hook(ctx, targetID)
 	}
 }
 

@@ -576,12 +576,17 @@ func main() {
 	questEngine := quest.NewEngine(questCatalog, characters, rooms, audits, bus, sessions)
 
 	triggerActions := trigger.DefaultActions()
-	luaQuestHooks := trigger.LuaQuestHooks{}
-	if questEngine != nil {
-		luaQuestHooks.Accept = questEngine.AcceptQuest
-		luaQuestHooks.Advance = questEngine.Advance
+	luaHooks := trigger.LuaHooks{
+		ApplyAffect: makeLuaApplyAffect(characters, effectsCatalog),
+		GiveItem:    makeLuaGiveItem(items),
+		TargetHP:    makeLuaTargetHP(characters),
+		TargetLevel: makeLuaTargetLevel(characters),
 	}
-	trigger.RegisterLuaAction(triggerActions, luaRunner, scriptCatalog, luaQuestHooks)
+	if questEngine != nil {
+		luaHooks.Accept = questEngine.AcceptQuest
+		luaHooks.Advance = questEngine.Advance
+	}
+	trigger.RegisterLuaAction(triggerActions, luaRunner, scriptCatalog, luaHooks)
 	triggerRunner := trigger.NewRunner(triggerRegistry, triggerActions, trigger.ActionDeps{
 		Rooms:    rooms,
 		Mobs:     mobs,
@@ -1217,6 +1222,26 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 					return questEngine.Advance(ctx, s.CharacterID, id)
 				}
 			}
+			// V3 surface (Phase F #32 slice 3). Reuse the same
+			// closure constructors the trigger path uses; the
+			// dialogue actor is always the calling character so no
+			// extra actor-kind guard is needed here.
+			applyAffect := makeLuaApplyAffect(characters, effectsCatalog)
+			giveItem := makeLuaGiveItem(items)
+			targetHP := makeLuaTargetHP(characters)
+			targetLevel := makeLuaTargetLevel(characters)
+			bindings.ApplyAffect = func(targetID int64, effectID string) error {
+				return applyAffect(ctx, targetID, effectID)
+			}
+			bindings.GiveItem = func(targetID int64, externalID string) error {
+				return giveItem(ctx, targetID, externalID)
+			}
+			bindings.TargetHP = func(targetID int64) (int32, int32, error) {
+				return targetHP(ctx, targetID)
+			}
+			bindings.TargetLevel = func(targetID int64) (int, error) {
+				return targetLevel(ctx, targetID)
+			}
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
 			// classified Lua error makes the unbound state visible
@@ -1409,6 +1434,84 @@ func (srv *server) runCountdown(verb, reason string, delay time.Duration, cancel
 
 	if srv.stopSignal != nil {
 		srv.stopSignal()
+	}
+}
+
+// makeLuaApplyAffect builds the Phase F #32 slice 3 apply_affect
+// closure. Resolves effectID through the catalog, builds a
+// creature.Affect via Effect.ToAffect (sentinel Source =
+// cmd.LuaAffectSource → "script" label in the inspect verb), and
+// persists via affects.Apply + RecordAffects.
+func makeLuaApplyAffect(characters repo.CharacterRepo, eff *effects.Catalog) func(context.Context, int64, string) error {
+	return func(ctx context.Context, targetID int64, effectID string) error {
+		e, ok := eff.Get(effectID)
+		if !ok {
+			return fmt.Errorf("unknown effect %q", effectID)
+		}
+		ch, err := characters.GetByID(ctx, targetID)
+		if err != nil {
+			return err
+		}
+		next := affects.Apply(ch.Core.Affects, e.ToAffect(cmd.LuaAffectSource))
+		return characters.RecordAffects(ctx, targetID, next)
+	}
+}
+
+// makeLuaGiveItem clones the YAML-seeded template at externalID and
+// places the fresh row directly into the target's inventory. Mirrors
+// the admin spawn path (internal/cmd/spawn.go::spawnItems) but skips
+// admin auditing — Lua-driven spawns are content-author tools, not
+// privileged operator actions.
+func makeLuaGiveItem(items repo.ItemRepo) func(context.Context, int64, string) error {
+	return func(ctx context.Context, targetID int64, externalID string) error {
+		template, err := items.FindByExternalID(ctx, externalID)
+		if err != nil {
+			return err
+		}
+		spawn := repo.Item{
+			ExternalID:       fmt.Sprintf("%s#lua-%d-%d", externalID, time.Now().UnixNano(), targetID),
+			Name:             template.Name,
+			NameLower:        template.NameLower,
+			ShortDesc:        template.ShortDesc,
+			OwnerCharacterID: targetID,
+			Type:             template.Type,
+			Weight:           template.Weight,
+			Value:            template.Value,
+			Quality:          template.Quality,
+			Flags:            template.Flags,
+			Stats:            repo.CloneItemStats(template.Stats),
+		}
+		_, err = items.Create(ctx, spawn)
+		return err
+	}
+}
+
+// makeLuaTargetHP returns a closure exposing a character's
+// HPCurrent / HPMax via target.hp(id) in Lua scripts.
+func makeLuaTargetHP(characters repo.CharacterRepo) func(context.Context, int64) (int32, int32, error) {
+	return func(ctx context.Context, targetID int64) (int32, int32, error) {
+		ch, err := characters.GetByID(ctx, targetID)
+		if err != nil {
+			return 0, 0, err
+		}
+		return ch.Core.HPCurrent, ch.Core.HPMax, nil
+	}
+}
+
+// makeLuaTargetLevel sums ClassLevels into a single integer for
+// target.level(id). Multiclassed characters return the sum of
+// every class's level.
+func makeLuaTargetLevel(characters repo.CharacterRepo) func(context.Context, int64) (int, error) {
+	return func(ctx context.Context, targetID int64) (int, error) {
+		ch, err := characters.GetByID(ctx, targetID)
+		if err != nil {
+			return 0, err
+		}
+		total := 0
+		for _, lvl := range ch.ClassLevels {
+			total += int(lvl)
+		}
+		return total, nil
 	}
 }
 
