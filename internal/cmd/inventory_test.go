@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -272,6 +273,67 @@ func TestDrop_CoinRoundTripsThroughGet(t *testing.T) {
 	floor, _ := f.items.ListInRoom(context.Background(), 1)
 	if len(floor) != 0 {
 		t.Fatalf("floor should be empty after re-pickup; got %+v", floor)
+	}
+}
+
+// deleteFailItemRepo wraps a MemoryItemRepo and forces Delete to
+// return a synthetic error. Used to exercise absorbCoinPile's
+// post-credit rollback path — the bug we'd hit without it is real
+// money creation if a pile lingers on the floor after coin is
+// credited.
+type deleteFailItemRepo struct {
+	*repo.MemoryItemRepo
+	deleteErr error
+}
+
+func (r *deleteFailItemRepo) Delete(ctx context.Context, id int64) error {
+	return r.deleteErr
+}
+
+func TestGet_AbsorbCoinPile_DeleteFailureRollsBackCredit(t *testing.T) {
+	f := newInvFixture(t)
+	wrapped := &deleteFailItemRepo{
+		MemoryItemRepo: f.items,
+		deleteErr:      errors.New("simulated storage failure"),
+	}
+	pile := wrapped.Insert(repo.Item{
+		ExternalID: "coin-pile-rolltest-1",
+		Name:       "a small pile of coins",
+		ShortDesc:  "A small pile of coins lies here.",
+		RoomID:     1,
+		Type:       repo.ItemTypeTradeGood,
+		Value:      currency.MustNew(1, 0, 0, 0), // 1gc
+		Flags:      repo.FlagTradeGood,
+	})
+
+	char, err := f.characters.FindByName(context.Background(), "Alice")
+	if err != nil {
+		t.Fatalf("find Alice: %v", err)
+	}
+
+	amt, msg, err := absorbCoinPile(context.Background(), wrapped, f.characters, &char, pile)
+	if err != nil {
+		t.Fatalf("rollback path should refuse cleanly, got err: %v", err)
+	}
+	if amt != 0 {
+		t.Errorf("on rollback success, returned amount should be 0; got %d cp", int64(amt))
+	}
+	if !strings.Contains(msg, "slip from your fingers") {
+		t.Errorf("missing rollback refusal message; got %q", msg)
+	}
+
+	// The critical invariant: coin must NOT have been credited (the
+	// rollback restored it). Otherwise the lingering pile becomes a
+	// money-creation vector.
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	if int64(got.Coin) != 0 {
+		t.Fatalf("rollback failed: purse should be 0 cp after credit-then-rollback; got %d cp", int64(got.Coin))
+	}
+	// CoinVersion is bumped twice: once on the credit, once on the
+	// rollback. The post-rollback version is what subsequent writes
+	// must use as expectedVersion.
+	if got.CoinVersion != 2 {
+		t.Errorf("coin_version after credit + rollback = %d, want 2", got.CoinVersion)
 	}
 }
 

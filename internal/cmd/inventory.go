@@ -99,15 +99,20 @@ func isCoinPile(it repo.Item) bool {
 
 // absorbCoinPile credits `it.Value` to the actor's purse via
 // RecordCoin and deletes the item, completing the pickup without ever
-// transferring ownership. Order: credit-then-delete (mirrors shop
-// sell). On RecordCoin failure the item is left in place; on Delete
-// failure after a successful credit, log loudly and accept the
-// duplicated value (admin must clean up the stranded item).
+// transferring ownership. Order: credit-then-delete. On RecordCoin
+// failure the item is left in place. On Delete failure AFTER a
+// successful credit, the credit is rolled back via a compensating
+// RecordCoin (mirrors dropCoin / giveCoin) — otherwise a transient
+// storage hiccup would leave the pile pickup-able by anyone *and* the
+// original taker credited, which is real money creation. A failed
+// rollback is logged at ERROR with full context; the pile then sits
+// on the floor with no clean recovery.
 //
 // Returns the credited amount on success and a player-facing message
-// on refusable failures (capacity overflow, optimistic-lock
-// conflict). On unexpected errors, the message is empty and `err` is
-// non-nil so the caller can echo a generic failure line.
+// on refusable failures (capacity overflow, optimistic-lock conflict,
+// Delete-then-rollback success). On unexpected errors, the message
+// is empty and `err` is non-nil so the caller can echo a generic
+// failure line.
 func absorbCoinPile(ctx context.Context, items repo.ItemRepo, characters repo.CharacterRepo, char *repo.Character, it repo.Item) (currency.Amount, string, error) {
 	newCoin, err := char.Coin.Add(it.Value)
 	if err != nil {
@@ -120,12 +125,24 @@ func absorbCoinPile(ctx context.Context, items repo.ItemRepo, characters repo.Ch
 		return 0, "", fmt.Errorf("record coin: %w", err)
 	}
 	if err := items.Delete(ctx, it.ID); err != nil {
-		// Coin already credited; the pile lingers in the world.
-		// Loud log — this is real value created from nothing — but
-		// accept rather than try to claw back coin (RecordCoin
-		// rollback isn't guaranteed and the player has the credit).
-		slog.Error("get: delete coin pile AFTER credit — duplicated value",
+		slog.Warn("get: delete coin pile failed; rolling back credit",
 			"char", char.ID, "item", it.ID, "amount_cp", int64(it.Value), "error", err)
+		// Compensating rollback must NOT use ctx — the player may have
+		// disconnected mid-command, and a cancelled ctx would silently
+		// skip the rollback and leave both the credit AND the pile in
+		// place (money creation). Rollback uses CoinVersion+1 because
+		// the first RecordCoin succeeded and bumped the version.
+		rbCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if rbErr := characters.RecordCoin(rbCtx, char.ID, char.Coin, char.BankBalance, char.CoinVersion+1); rbErr != nil {
+			slog.Error("get: ROLLBACK FAILED — pile retained, coin credited (money creation risk)",
+				"char", char.ID, "item", it.ID, "amount_cp", int64(it.Value),
+				"original_error", err, "rollback_error", rbErr)
+			// Surface a generic error; the credit has stuck and the
+			// pile is still there. Operator intervention required.
+			return 0, "", fmt.Errorf("delete after credit, rollback failed: %w", rbErr)
+		}
+		return 0, "{{The coins slip from your fingers and stay where they were.}}::yellow\r\n", nil
 	}
 	char.Coin = newCoin
 	char.CoinVersion++
