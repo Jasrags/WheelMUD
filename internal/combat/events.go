@@ -101,6 +101,14 @@ type CombatDeath struct {
 	// instance row after combat cleanup deletes it.
 	MobTemplateID         int64
 	MobTemplateExternalID string
+
+	// VictimName is the dying mob's display name at publish time.
+	// Stamped here because handleMobDeath deletes the mob_instance
+	// row before this event fires, so subscribers can't fall back to
+	// the live repo lookup the way combatActorName does for live
+	// participants. Empty for character victims (CharacterDied
+	// carries the equivalent).
+	VictimName string
 }
 
 // CombatXPAwarded fires once per attacker that earns a share of the

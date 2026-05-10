@@ -28,9 +28,12 @@ const corpseDecayDuration = 5 * time.Minute
 //  3. Despawn the mob (clear room → delete).
 //  4. Snapshot the per-attacker damage tally and mark the mob dead so
 //     the next tickRoom call prunes it from Order.
-//  5. Award XP weighted by damage to character attackers (group-aware,
-//     debt-draining); publish CombatXPAwarded per share.
-//  6. Publish CombatDeath last so subscribers see the corpse id.
+//  5. Publish CombatDeath with the snapshotted name so subscribers
+//     see the corpse id AND a name the live repo can no longer
+//     resolve (the mob_instance row was deleted in step 3).
+//  6. Award XP weighted by damage to character attackers (group-aware,
+//     debt-draining); publish CombatXPAwarded per share. Last so the
+//     player's render order reads "you killed X / you gain N xp."
 //
 // Failures inside any step are logged via slog but never abort the
 // pipeline. The contract: once HP ≤ 0 lands, the mob is gone from
@@ -98,8 +101,6 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 	}
 	m.mu.Unlock()
 
-	m.awardKillXP(ctx, roomID, killer, victim, tallySnap, tmpl)
-
 	if m.bus != nil {
 		m.bus.Publish(ctx, CombatDeath{
 			RoomID:                roomID,
@@ -108,8 +109,11 @@ func (m *Manager) handleMobDeath(ctx context.Context, killer, victim ActorRef) {
 			CorpseID:              corpseID,
 			MobTemplateID:         tmpl.ID,
 			MobTemplateExternalID: tmpl.ExternalID,
+			VictimName:            mob.Core.Name,
 		})
 	}
+
+	m.awardKillXP(ctx, roomID, killer, victim, tallySnap, tmpl)
 }
 
 // transferLootIntoCorpse moves the mob's inventory into the freshly

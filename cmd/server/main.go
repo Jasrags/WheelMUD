@@ -468,7 +468,13 @@ func main() {
 		if ev.Victim.Kind != combat.ActorKindMob {
 			return
 		}
-		victimName := combatActorName(ctx, ev.Victim, characters, mobs)
+		// Prefer the publish-time snapshot since the mob_instance row
+		// is already gone by the time this fires; combatActorName
+		// would fall back to "A creature" otherwise.
+		victimName := ev.VictimName
+		if victimName == "" {
+			victimName = combatActorName(ctx, ev.Victim, characters, mobs)
+		}
 		var killerSess *telnet.Session
 		if ev.Killer.Kind == combat.ActorKindCharacter {
 			killerSess = cmd.LookupByCharacterID(sessions, ev.Killer.ID)
