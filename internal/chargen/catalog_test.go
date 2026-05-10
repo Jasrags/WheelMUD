@@ -244,6 +244,38 @@ func TestLoad_RejectsUnknownSkill(t *testing.T) {
 	}
 }
 
+func TestLoad_RejectsBadStartingCoin(t *testing.T) {
+	c := strings.Replace(minimalClasses,
+		"channeler: false\n  description: ok",
+		"channeler: false\n  starting_coin: garbage\n  description: ok", 1)
+	_, err := Load(mapFS(minimalBackgrounds, c, minimalFeats, minimalSkills, minimalWeaves))
+	if err == nil || !strings.Contains(err.Error(), "starting_coin") {
+		t.Errorf("want starting_coin error, got %v", err)
+	}
+}
+
+func TestLoad_AcceptsEmptyStartingCoin(t *testing.T) {
+	// Empty (omitted) starting_coin must round-trip without error —
+	// minimalClasses has no starting_coin field set.
+	if _, err := Load(mapFS(minimalBackgrounds, minimalClasses, minimalFeats, minimalSkills, minimalWeaves)); err != nil {
+		t.Errorf("empty starting_coin should be valid, got %v", err)
+	}
+}
+
+func TestLoad_AcceptsValidStartingCoin(t *testing.T) {
+	c := strings.Replace(minimalClasses,
+		"channeler: false\n  description: ok",
+		"channeler: false\n  starting_coin: \"1mk 50sp\"\n  description: ok", 1)
+	cat, err := Load(mapFS(minimalBackgrounds, c, minimalFeats, minimalSkills, minimalWeaves))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cl, _ := cat.Class("armsman")
+	if cl.StartingCoin != "1mk 50sp" {
+		t.Errorf("StartingCoin = %q, want %q", cl.StartingCoin, "1mk 50sp")
+	}
+}
+
 func TestLoad_RejectsBadHitDie(t *testing.T) {
 	c := strings.Replace(minimalClasses, "hit_die: 10", "hit_die: 7", 1)
 	_, err := Load(mapFS(minimalBackgrounds, c, minimalFeats, minimalSkills, minimalWeaves))

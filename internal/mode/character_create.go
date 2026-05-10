@@ -14,6 +14,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -1446,6 +1447,27 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 		if err := m.applyStartingEquipment(ctx, &c); err != nil {
 			slog.Warn("chargen: starting-equipment spawn failed",
 				"char", c.ID, "bg", bg.ID, "error", err)
+		}
+	}
+
+	// Credit the picked class's starting purse. Empty starting_coin is
+	// a no-op (defaults to 0). Best-effort, mirroring the equipment
+	// path: a parse or RecordCoin failure logs and continues so the
+	// character row stays committed. expectedVersion=0 is safe — the
+	// character was just created in this same finalize call and no
+	// other writer can race us before promoteToGame.
+	if m.repo != nil && m.catalog != nil {
+		if cl, ok := m.catalog.Class(m.draft.ClassID); ok && cl.StartingCoin != "" {
+			if amt, err := currency.Parse(cl.StartingCoin); err != nil {
+				slog.Warn("chargen: starting_coin parse failed",
+					"char", c.ID, "class", cl.ID, "raw", cl.StartingCoin, "error", err)
+			} else if err := m.repo.RecordCoin(ctx, c.ID, amt, 0, 0); err != nil {
+				slog.Warn("chargen: starting_coin record failed",
+					"char", c.ID, "class", cl.ID, "amount", amt.Format(), "error", err)
+			} else {
+				c.Coin = amt
+				c.CoinVersion++
+			}
 		}
 	}
 

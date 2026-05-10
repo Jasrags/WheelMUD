@@ -220,6 +220,46 @@ func TestStartingEquipment_SpawnsAndAutoEquips(t *testing.T) {
 	}
 }
 
+// TestStartingCoin_CreditedFromClass drives the same midlander/armsman
+// flow as TestStartingEquipment_SpawnsAndAutoEquips and asserts that
+// finalize credits the armsman class's authored starting purse to
+// Character.Coin via RecordCoin. The seeded amount lives in
+// internal/chargen/default/classes.yaml; the test asserts > 0 instead
+// of an exact value so a future tuning pass doesn't force a test edit.
+func TestStartingCoin_CreditedFromClass(t *testing.T) {
+	f := pushCharacterCreateMultiWithItems(t)
+	f.feed("Hero")
+	f.feed("human")
+	f.feed("1")
+	f.feed("midlander")
+	f.feed("2")
+	f.feed("armsman")
+	f.feed("3")
+	f.feed("done")
+	f.feed("4")
+	f.feed("done")
+	f.feed("5")
+	f.feed("pick 1")
+	f.feed("done")
+	f.feed("6")
+	f.feed("done")
+	f.feed("7")
+	f.feed("2")
+	f.feed("done")
+	f.feed("yes")
+
+	got, err := f.chars.FindByName(context.Background(), "Hero")
+	if err != nil {
+		t.Fatalf("find Hero: %v", err)
+	}
+	if int64(got.Coin) <= 0 {
+		t.Fatalf("armsman should start with a positive purse; got %d cp", int64(got.Coin))
+	}
+	if got.CoinVersion != 1 {
+		t.Errorf("coin_version after first credit = %d, want 1", got.CoinVersion)
+	}
+}
+
 // TestStartingEquipment_NilItemsRepoSkipsSilently asserts that the
 // finalize path with no item repo wired (legacy fixture) still
 // commits the character — equipment spawn is best-effort, not gating.

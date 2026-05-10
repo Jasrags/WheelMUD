@@ -302,12 +302,28 @@ characteristics,feats,equipment,the-one-power}.md`.
     AccountMenu → CharacterCreate` via a new `SetItems` setter.
     No migration — items + equipment_json + inventory_json
     already round-trip.
+    **Slice 3 polish — landed 2026-05-10:** per-class starting
+    coin. New `Class.StartingCoin` field (validated at boot via
+    `currency.Parse`) seeded across all 7 classes
+    (`internal/chargen/default/classes.yaml`); finalize calls
+    `RecordCoin(ctx, c.ID, parsed, 0, 0)` after
+    `applyStartingEquipment`. Closes the day-zero economy gap
+    where fresh characters had `Coin = 0` and couldn't reach a
+    shop without farming a mob first. Background `coin_pouch`
+    items still land as trade-good items on the 2 bundles that
+    grant them (deferred follow-up to convert pouch→purse so
+    players don't eat the 50% sell hit).
     **Stubbed for follow-ups** (see
     `chargen_features_followups.md`):
     - Two-handed / off-hand / light / quiver auto-equip — slice
       1/2 follow-ups already track these.
     - Cross-class skill picks (half-rate, double cost) — defer
       until level-up needs the same plumbing in §12.
+    - Dice-expression starting wealth (e.g. `5d4*10sp`) — V1
+      uses fixed averages; defer until a public dice utility
+      exists.
+    - Background coin pouch → purse conversion — gambler /
+      innkeeper bundles still drop the pouch as an item.
 
 After C: a freshly-created character is mechanically *complete* —
 abilities, class, race, background, feats, skills, gear, and (for

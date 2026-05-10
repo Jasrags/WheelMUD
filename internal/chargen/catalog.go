@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"gopkg.in/yaml.v3"
 )
 
@@ -281,6 +282,11 @@ func (c *Catalog) validate() error {
 			cl.Enum = enum
 		} else {
 			errs = append(errs, fmt.Sprintf("class %q: no creature.Class enum mapping", cl.ID))
+		}
+		if cl.StartingCoin != "" {
+			if _, err := currency.Parse(cl.StartingCoin); err != nil {
+				errs = append(errs, fmt.Sprintf("class %q: invalid starting_coin %q: %v", cl.ID, cl.StartingCoin, err))
+			}
 		}
 	}
 

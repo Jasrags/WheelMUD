@@ -105,6 +105,13 @@ type Class struct {
 	KeyAbilities  []string        `yaml:"key_abilities"`
 	Channeler     bool            `yaml:"channeler"`
 	ChannelSource string          `yaml:"channel_source,omitempty"` // "saidin"|"saidar"|"either"
+	// StartingCoin is the per-class starting purse credited to
+	// Character.Coin at chargen finalize. Authored as a fixed
+	// currency.Parse string ("1mk 50sp", "75sp", "15gc"). Empty
+	// means no starting coin (the chargen finalize path skips the
+	// RecordCoin write entirely). The validator rejects malformed
+	// strings at boot.
+	StartingCoin  string          `yaml:"starting_coin,omitempty"`
 	Description   string          `yaml:"description"`
 
 	// Enum maps to creature.Class. Loader fills it.

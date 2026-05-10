@@ -32,6 +32,7 @@
     - wilderness_lore
   key_abilities: [Str, Dex, Con, Wis]
   channeler: false
+  starting_coin: 50mk
   description: |-
     Aiel desert warriors. Fast movement, Weapon Focus (shortspear),
     Dance the Spears, Uncanny Dodge. Cannot wear armor; cannot use
@@ -57,6 +58,7 @@
     - swim
   key_abilities: [Str, Con, Dex]
   channeler: false
+  starting_coin: "1mk 50sp"
   description: |-
     Heavy-arms specialists; bonus combat feats every two levels.
     All armor and shields, all simple and martial weapons.
@@ -83,6 +85,7 @@
   key_abilities: [Int, Wis, Cha]
   channeler: true
   channel_source: either
+  starting_coin: 75sp
   description: |-
     Trained channeler of the One Power. Aes Sedai, Asha'man, and
     similar disciplines. Initiates use Int + Wis to channel.
@@ -112,6 +115,7 @@
     - spot
   key_abilities: [Cha, Int, Wis]
   channeler: false
+  starting_coin: 15gc
   description: |-
     Status, education, and influence. Bonus class skills, retinue,
     favors, and command-presence abilities.
@@ -153,6 +157,7 @@
     - use_rope
   key_abilities: [Dex, Int, Cha]
   channeler: false
+  starting_coin: "1mk 25sp"
   description: |-
     Stealth, wits, skills, and luck. Sneak attack, evasion, uncanny
     dodge, and the deepest skill list of any class.
@@ -181,6 +186,7 @@
   key_abilities: [Cha, Wis]
   channeler: true
   channel_source: either
+  starting_coin: 75sp
   description: |-
     Untrained natural channeler. Wilders use Wis + Cha to channel,
     block their own potential, and learn weaves through instinct.
@@ -214,6 +220,7 @@
     - wilderness_lore
   key_abilities: [Str, Dex, Con, Wis]
   channeler: false
+  starting_coin: 50sp
   description: |-
     Hunter and warrior of the wilderness. Tracking, animal empathy
     (exclusive class skill), favored enemy.
