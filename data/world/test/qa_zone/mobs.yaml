@@ -1,0 +1,154 @@
+# QA Test Zone — Phase A #7. One-of-each NPC for exercising every
+# shipped role block. All mobs default to HP=1 / Defense=10 / unarmed
+# via insertMobs (loader.go); combat dummies die in one hit and the
+# zone's reset_mode=always + reset_interval_s=60 respawns them
+# quickly.
+
+# ─── Shopkeeper. Stock spans every ItemType the shop will buy back. ─
+
+- id: test.qa.shopkeep
+  room: test.qa.shop
+  name: the QA Shopkeeper
+  short: a clerk in a leather apron stands behind the counter
+  shop:
+    buy_types:
+      - weapon
+      - armor
+      - consumable
+      - food
+      - light
+      - trade_good
+    sell_markup: 1.0
+    buy_markdown: 0.5
+    open_hour: 0
+    close_hour: 0
+    restock_interval_s: 60
+    stock:
+      - item: test.qa.weapon_shortsword
+        qty: -1
+        qty_max: -1
+      - item: test.qa.armor_jerkin
+        qty: -1
+        qty_max: -1
+      - item: test.qa.consumable_heal
+        qty: -1
+        qty_max: -1
+      - item: test.qa.consumable_one_dose
+        qty: -1
+        qty_max: -1
+      - item: test.qa.food_loaf
+        qty: -1
+        qty_max: -1
+      - item: test.qa.trade_token
+        qty: -1
+        qty_max: -1
+      - item: test.qa.light_torch
+        qty: -1
+        qty_max: -1
+
+# ─── Banker. 24h hours so QA never has to wait. ───────────────────
+
+- id: test.qa.banker
+  room: test.qa.bank
+  name: the QA Banker
+  short: a banker in plain robes waits behind a polished desk
+  banker:
+    open_hour: 0
+    close_hour: 0
+
+# ─── Trainer + weave teacher (one-room pair). ─────────────────────
+
+- id: test.qa.trainer
+  room: test.qa.train
+  name: the QA Class Trainer
+  short: a stern trainer in chainmail leans on a practice sword
+  trainer:
+    class: armsman
+
+- id: test.qa.weave_teacher
+  room: test.qa.train
+  name: the QA Weave Teacher
+  short: a robed teacher with channeler's eyes watches the centre of the room
+  weave_teacher:
+    max_level_taught: 9
+
+# ─── Combat dummies. HP=1 default; xp_value tuned to make level-up
+# observable without farming. wander_chance=0 anchors the static
+# dummy to its room.
+
+- id: test.qa.dummy_static
+  room: test.qa.combat_static
+  name: a straw practice dummy
+  short: a straw-stuffed dummy stands propped against a wooden post
+  wander_chance: 0.0
+  xp_value: 10
+  gold_dice: ""
+
+- id: test.qa.dummy_wander
+  room: test.qa.combat_wander
+  name: a wandering practice dummy
+  short: a wandering practice dummy strolls between the painted lanes
+  wander_chance: 0.5
+  xp_value: 10
+  gold_dice: ""
+
+# ─── Quest target dummy. Distinct mob_template so the kill_n step's
+# `mob:` reference doesn't collide with the static-room dummy.
+
+- id: test.qa.training_dummy_quest
+  room: test.qa.combat_static
+  name: a marked practice dummy
+  short: a practice dummy marked with a red sash for QA quest drills
+  wander_chance: 0.0
+  xp_value: 5
+  gold_dice: "1d4+2"
+
+# ─── Quest steward + dialogue tree. The accept_quest / advance_quest
+# effects fire against the test_qa quest in internal/quest/default/.
+
+- id: test.qa.steward
+  room: test.qa.quest
+  name: the QA Steward
+  short: a clerk with a clipboard glances up as you enter
+  dialogue:
+    root: greet
+    nodes:
+      - id: greet
+        prompt: |
+          The Steward looks up from the clipboard. "QA roster.
+          Need a smoke-test quest, or reporting back?"
+        responses:
+          - match: [accept, quest, smoke, start]
+            label: ask for the smoke-test quest
+            reply: |
+              "Three steps: walk to the Sparring Floor, defeat one
+              marked dummy, then come back and tell me. Off you go."
+            effects:
+              - kind: accept_quest
+                args:
+                  quest_id: test_qa
+              - kind: end
+          - match: [report, done, finish, back]
+            label: report back on the smoke-test quest
+            reply: |
+              "Smoke test complete. Marking it on the roster."
+            effects:
+              - kind: advance_quest
+                args:
+                  quest_id: test_qa
+              - kind: end
+          - match: [bye, leave, nevermind]
+            label: leave
+            reply: |
+              The Steward nods and returns to the clipboard.
+            effects:
+              - kind: end
+
+# ─── Lua trigger target. The on_enter trigger is on the room
+# (test.qa.lua), not the mob; this NPC is just a flavour anchor so
+# the room isn't empty when an admin walks in.
+
+- id: test.qa.lua_warden
+  room: test.qa.lua
+  name: the QA Trigger Warden
+  short: a warden in plain robes stands at the edge of the brass rune

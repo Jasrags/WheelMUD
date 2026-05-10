@@ -57,6 +57,28 @@ Cheap, low-risk, makes every later phase faster to test.
    alias-expansion-introduces-`;` is bounded at depth 3. First Run
    error is returned but later segments still run.
 
+7. ~~**QA test zone** (tooling). A dedicated `data/world/test/`
+   zone wired up only for exercising shipped systems: a few
+   rooms, a shopkeeper + banker NPC, a trainer, a stationary
+   combat dummy, a wandering combat dummy, sample items spanning
+   every taxonomy, a quest-giver mob with a
+   `talk_to`+`kill_n`+`reach_room` quest, a Lua-trigger room, a
+   dark cellar paired with a torch.~~ **Landed 2026-05-10.**
+   Zone `test.qa` lives at `data/world/test/qa_zone/` (4 YAML
+   files: zone / rooms / items / mobs) plus the smoke quest at
+   `internal/quest/default/test_qa.yaml`. 10 rooms, all
+   `nomap: true`, `level_range: 95-99` so players can't
+   stumble in. Hub is `test.qa.hub`; admins reach it via
+   `teleport test.qa.hub`. Reset cadence
+   `reset_interval_s: 60` + `reset_mode: always` so destructive
+   tests recover quickly. Mobs default to HP=1 / Defense=10 /
+   unarmed via `insertMobs`, so combat dummies die in one hit
+   and respawn within 60s — no new schema needed. Lua trigger
+   reuses the existing `bless_actor.lua` script. Zero Go code
+   changed; pure content. **Convention going forward:** every
+   feature added from Phase B onward should land a one-room
+   repro fixture in this zone in the same PR.
+
 After A: meaningfully nicer to live in for ops and builders.
 
 ---
@@ -478,6 +500,20 @@ catalogs.
     `potion_healing_draught` bumped to `charges: 3`. Slice 4+:
     weave/combat-hit producers, healer NPC service, player
     dispel, light/torch fuel burn-down.
+
+    **Tracked deferred producers** (do not lose):
+    - **Healer NPC service** — banker-style mob entry (1:1 to
+      `mob_template`) that applies a healing affect or instant
+      heal for coin. Pairs naturally with the test-zone setup.
+    - **Light / torch fuel burn-down** — needs a per-tick
+      `Buckets.Light` ticker decrementing `LightStats.FuelTicks`
+      on every lit torch in active rooms. `ItemRepo.UpdateStats`
+      (slice 3) is the existing write path.
+    - **Player-driven `dispel` weave** — admin verb already
+      ships; player-facing dispel waits for the weave-cast
+      surface (Phase F mechanics, after #32 producer slices).
+
+    See `affects_followups.md` for full context.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
     integrates with the §4 cooldown infrastructure. **Landed 2026-05-09**
     — both slices in one PR. Slice A (§4): `Command.Lag time.Duration`
@@ -715,6 +751,26 @@ Content multiplier. Without this the world is static.
       `wait(seconds, fn)` async, `on_login` / `on_logout` events.
     - Slice 6: OLC `tedit` (depends on Phase G).
 
+32a. **Authored mob paths + pathfinding** (§15 / §10). Today
+    `mob_templates.wander_chance` drives unweighted random
+    movement into any open exit. Two upgrades:
+    - **Strict path** — optional `path: [room_ext, room_ext, ...]`
+      block on the mob YAML (closed loop or ping-pong). Mob
+      advances one step per wander tick along the authored
+      sequence, ignoring `wander_chance`. Cheap; one new column
+      on `mob_templates` + a small index into the path on
+      `mob_instances`.
+    - **Pathfinding wander** — when a mob picks a destination
+      (e.g. authored `home_zone` plus an authored `wander_radius`,
+      or a trigger-set goal room), use BFS over the existing room
+      graph (same data feeding the §10 minimap) to step toward it
+      one room per tick. Patrols, "return-home" mobs, and quest
+      escorts all collapse onto this. Builds on `mob_trails` so
+      backtracking and stuck-detection are observable.
+    No new event-bus surface needed; both ride the existing
+    wander tick. Order: strict path first (smaller scope, unblocks
+    most authored content), pathfinding second.
+
 ---
 
 ## Phase G — OLC
@@ -785,6 +841,46 @@ Never gate gameplay but the cost compounds if you wait.
 57. **Telnet integration test driving the protocol** (§21).
 58. **Fuzz tests on IAC parser + tokenizer** (§21).
 59. **`goreleaser` + systemd unit + healthcheck** (§22).
+
+---
+
+## Phase K — Crafting (future, high-level)
+
+Not on the near-term path; documented here so design-affecting
+decisions in earlier phases (item taxonomy, shop economy, skill
+ranks) keep this surface in mind.
+
+Common needs once we sit down to design it:
+
+- **Recipe catalog** — YAML-authored, mirrors the chargen / news
+  embed-with-override pattern. Each recipe: id, skill + min rank,
+  required tool item ids, station / room flag (forge / workbench /
+  alchemy table), input items + counts, output item id + count,
+  practice/skill check, time cost.
+- **Material taxonomy** — extends §9 item taxonomy. New
+  `ItemTypeMaterial` (or sub-flag on TradeGood) with stackable
+  semantics. Drops from mobs and gathered from sector-typed
+  rooms (e.g. mining, herbalism).
+- **Stations** — room flag (`flag_forge` etc.) gates which
+  recipes run there. Slots into existing room flag plumbing.
+- **Skill integration** — reuses §12 skill ranks + §26 cooldown
+  infra. Failure consumes inputs (or partial inputs) and grants
+  practice. Success grants XP via existing `RecordXP`.
+- **Quality tiers** — masterwork / common / inferior on the
+  output item. Composition with §9 masterwork follow-up: same
+  tier enum, same stat modifiers.
+- **Verbs** — `craft <recipe>`, `recipes` (list known),
+  `learn recipe <id>` (from a teacher NPC, mirrors weave-teacher
+  pattern), `gather` for sector-driven harvest.
+- **Persistence** — new `character_recipes` table (id +
+  characters_id, mirrors `character_skills`). One row per
+  recipe-known.
+- **Economy hook** — shopkeepers should buy crafted goods at
+  reduced markdown vs. trade goods to avoid trivial money loops.
+
+Blocked on: nothing structural. Best paired with a `gather`
+sector pass and a §9 masterwork follow-up so the output stat
+tier has somewhere to land.
 
 ---
 

@@ -1,0 +1,155 @@
+# QA Test Zone — Phase A #7. One example item per ItemType, plus
+# nested-container fixtures and a torch paired with the dark cellar.
+#
+# Naming convention: test.qa.<kind>[_<variant>]. Stays out of the
+# tr.* namespace so production world content can't collide.
+
+# ─── Shop stock samples (referenced by mobs.yaml shop block) ──────
+
+- id: test.qa.weapon_shortsword
+  room: test.qa.shop
+  name: a practice shortsword
+  short: a notched practice shortsword leans against the counter
+  type: weapon
+  weight: 3.0
+  value: 1sp
+  quality: masterwork
+  stats:
+    proficiency: martial
+    size: medium
+    range: melee
+    damage: "1d6"
+    damage_type:
+      - P
+      - S
+
+- id: test.qa.armor_jerkin
+  room: test.qa.shop
+  name: a leather jerkin
+  short: a plain leather jerkin hangs on a wooden peg
+  type: armor
+  weight: 15.0
+  value: 1sp
+  quality: normal
+  stats:
+    weight_class: light
+    bonus: 2
+    max_dex: 6
+    check_penalty: 0
+    speed_ft: 30
+
+- id: test.qa.consumable_heal
+  room: test.qa.shop
+  name: a vial of healing draught
+  short: a clay vial of warm, ruby-red healing draught sits on the counter
+  type: consumable
+  weight: 0.5
+  value: 2sp
+  quality: normal
+  stats:
+    charges: 3
+    effect_id_string: healing_draught
+
+- id: test.qa.consumable_one_dose
+  room: test.qa.shop
+  name: a single-dose tonic
+  short: a single-dose tonic in a wax-sealed phial
+  type: consumable
+  weight: 0.5
+  value: 1sp
+  quality: normal
+  stats:
+    charges: 1
+    effect_id_string: bull_strength
+
+- id: test.qa.food_loaf
+  room: test.qa.shop
+  name: a loaf of trail bread
+  short: a dense loaf of trail bread, wrapped in waxed cloth
+  type: food
+  weight: 1.5
+  value: 2cp
+  quality: normal
+
+- id: test.qa.trade_token
+  room: test.qa.shop
+  name: a copper merchant's token
+  short: a copper merchant's token stamped with the QA seal
+  type: trade_good
+  weight: 0.1
+  value: 5cp
+  quality: normal
+  flags:
+    - trade_good
+
+- id: test.qa.light_torch
+  room: test.qa.shop
+  name: a pitch-pine torch
+  short: a fresh pitch-pine torch leans in a barrel by the door
+  type: light
+  weight: 1.0
+  value: 1cp
+  quality: normal
+  stats:
+    radius_ft: 20
+    fuel_ticks: 60
+
+# ─── Item-shelves fixture: nested container + odds-and-ends ───────
+
+- id: test.qa.shelf_chest
+  room: test.qa.items
+  name: a cedar chest
+  short: a cedar chest sits open at the end of the workbench, lid latched but unlocked
+  type: container
+  weight: 12.0
+  value: 4sp
+  quality: normal
+  stats:
+    capacity_lbs: 30.0
+    capacity_cuft: 2.0
+    weight_mult: 1.0
+
+- id: test.qa.shelf_apple
+  room: test.qa.items
+  name: a red apple
+  short: a polished red apple rests on the bench beside the chest
+  type: food
+  weight: 0.5
+  value: 1cp
+  quality: normal
+
+- id: test.qa.shelf_quill
+  room: test.qa.items
+  name: a goose-quill pen
+  short: a goose-quill pen, nib stained black, lies on the bench
+  type: trash
+  weight: 0.1
+  value: 2cp
+  quality: normal
+  flags:
+    - notake
+
+- id: test.qa.shelf_token
+  room: test.qa.items
+  name: a brass marker
+  short: a brass marker engraved with the QA test seal
+  type: trade_good
+  weight: 0.1
+  value: 8cp
+  quality: normal
+  flags:
+    - trade_good
+
+# ─── Cellar torch: pair with the dark room. ────────────────────────
+
+- id: test.qa.cellar_torch
+  room: test.qa.dark
+  name: an unlit cellar torch
+  short: an unlit pitch-pine torch leans in an iron sconce by the stairs
+  type: light
+  weight: 1.0
+  value: 1cp
+  quality: normal
+  stats:
+    radius_ft: 20
+    fuel_ticks: 60

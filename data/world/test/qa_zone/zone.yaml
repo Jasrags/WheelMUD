@@ -1,0 +1,11 @@
+id: test.qa
+name: QA Test Zone
+builder: jrags
+level_range: { min: 95, max: 99 }
+reset_interval_s: 60
+reset_mode: always
+climate: indoor
+ambient:
+  - The hum of testing apparatus fills the air.
+  - A clipboard lies forgotten on a workbench.
+  - Somewhere, a respawn timer ticks softly.

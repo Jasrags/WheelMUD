@@ -575,6 +575,35 @@ area is built out — the room IDs do not need to remain.
 6. Validation errors print as `<file>:<line>: <message>` so you can
    jump straight to the YAML.
 
+## QA test zone
+
+`test/qa_zone/` is the operator-only smoke-test zone for shipped
+subsystems. 10 rooms, all `nomap: true`, `level_range: 95-99`, and
+`reset_mode: always` with a 60s cadence so destructive tests recover
+quickly. Each room is a one-shot fixture for one subsystem:
+
+| Room | Subsystem |
+|---|---|
+| `test.qa.hub` | Entry pad. `teleport test.qa.hub` from any admin character. |
+| `test.qa.shop` | Shopkeeper + stock spanning every `buy_types` ItemType. |
+| `test.qa.bank` | Banker, 24h hours. |
+| `test.qa.train` | Class trainer (armsman) + weave teacher (any affinity, lvl 0-9). |
+| `test.qa.combat_static` | Stationary practice dummy + the quest's kill target. |
+| `test.qa.combat_wander` | Wandering practice dummy; exits all loop back to the hub. |
+| `test.qa.items` | One item per ItemType + a container with nested items. |
+| `test.qa.quest` | Quest steward; the `test_qa` smoke-test quest. |
+| `test.qa.lua` | `on_enter` Lua trigger firing `bless_actor.lua`. |
+| `test.qa.dark` | Pitch-black underground cellar paired with a torch. |
+
+Mobs default to HP=1 / Defense=10 / unarmed via `insertMobs`, so the
+combat dummies die in one hit and respawn within 60s. The smoke quest
+lives in `internal/quest/default/test_qa.yaml` and exercises all
+three V1 step kinds (`reach_room`, `kill_n`, `talk_to`).
+
+**Convention:** every new feature from Phase B onward should land a
+one-room repro fixture in this zone in the same PR that ships the
+feature.
+
 ## Reference template
 
 `westlands/andor/two_rivers/emonds_field/` is the worked example:

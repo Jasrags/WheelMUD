@@ -1,0 +1,195 @@
+# QA Test Zone — Phase A #7.
+#
+# A single zone that hosts a one-room repro for every shipped
+# subsystem. Hidden from players via per-room nomap=true plus the
+# zone's level_range 95-99. Admins reach the hub via:
+#
+#   teleport test.qa.hub
+#
+# Star topology: every room links back to the hub. The wandering
+# combat dummy room (drill_yard) loops back to the hub on every
+# direction so the dummy never escapes the zone.
+
+- id: test.qa.hub
+  name: The QA Atrium
+  short: a bare, well-lit atrium with numbered doors on every wall
+  long: |
+    Numbered doors line every wall, each labeled with a single phrase
+    in clipped builder shorthand: BAZAAR, VAULT, TRAINING, SPARRING,
+    DRILL, SHELVES, STEWARD, TRIGGER, CELLAR. The floor is bare
+    flagstone scrubbed clean for the next test pass. A small placard
+    on the central pedestal reads, "Admin only — please reset before
+    you leave."
+  exits:
+    n: test.qa.shop
+    s: test.qa.bank
+    e: test.qa.train
+    w: test.qa.combat_static
+    ne: test.qa.combat_wander
+    nw: test.qa.items
+    se: test.qa.quest
+    sw: test.qa.lua
+    d: test.qa.dark
+  flags:
+    indoors: true
+    nopvp: true
+    noteleport: false
+    nomap: true
+  sector: city
+
+- id: test.qa.shop
+  name: The QA Bazaar
+  short: a sparse stall with a clerk behind a polished counter
+  long: |
+    A single counter runs the length of the room. Stock samples sit
+    in tidy rows, each tagged with an external_id. A laminated card
+    pinned to the wall reads, "Verbs to test: list / buy / sell /
+    value."
+  exits:
+    s: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.bank
+  name: The QA Vault
+  short: a small clerk's office with an iron-bound coffer
+  long: |
+    A clerk's desk sits opposite an iron-bound coffer set into the
+    far wall. A laminated card on the desk reads, "Verbs to test:
+    balance / deposit / withdraw."
+  exits:
+    n: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.train
+  name: The QA Training Hall
+  short: a sparring hall with mismatched practice gear stacked along the walls
+  long: |
+    Practice swords, padded jerkins, and a row of weighted dummies
+    lean against the walls. Two instructors stand idle near the
+    centre — one in chainmail, the other in plain robes — waiting
+    for trainees. A laminated card by the door reads, "Verbs to
+    test: train / learn weave info / learn weave."
+  exits:
+    w: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.combat_static
+  name: The QA Sparring Floor
+  short: a chalk-circled floor with a single straw dummy at its centre
+  long: |
+    A wide chalk circle is drawn on the flagstones. A straw-stuffed
+    dummy stands at the centre, propped against a wooden post. A
+    laminated card on the wall reads, "Verbs to test: attack / kill
+    / score. Dummy respawns every 60s."
+  exits:
+    e: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.combat_wander
+  name: The QA Drill Yard
+  short: an open drill yard with a single moving target
+  long: |
+    A drill yard with painted lanes for tracking movement. A second
+    practice dummy strolls aimlessly between the lanes — when struck,
+    it returns to its starting square within a minute. A laminated
+    card by the door reads, "Verbs to test: track / attack on a
+    moving target."
+  exits:
+    sw: test.qa.hub
+    n: test.qa.hub
+    s: test.qa.hub
+    e: test.qa.hub
+    w: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.items
+  name: The QA Shelves
+  short: a long workshop room with item samples laid out on shelves
+  long: |
+    Samples of every item taxonomy entry are laid out on a long
+    workbench, each labeled with its external_id. A cedar chest sits
+    open at the end of the bench, holding a few stowable items. A
+    laminated card on the wall reads, "Verbs to test: get / drop /
+    put / look in / inventory / equipment / wear / wield / quaff."
+  exits:
+    se: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.quest
+  name: The QA Steward's Office
+  short: a tidy office with a laminated quest log on the desk
+  long: |
+    A clerk's office, neat to the point of obsession. A laminated
+    quest log lies open on the desk; checkboxes mark off each step
+    kind: reach_room, kill_n, talk_to. A card pinned above the
+    inkwell reads, "Verbs to test: talk / quest / quest info /
+    quest abandon."
+  exits:
+    nw: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.lua
+  name: The QA Trigger Pad
+  short: a circular pad inscribed with a single brass rune
+  long: |
+    A circular flagstone pad inscribed with a single brass rune
+    glows faintly when stepped on. A small placard reads, "On enter:
+    Lua trigger fires bless_actor.lua. Verbs to test: affects."
+  exits:
+    ne: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+  triggers:
+    - event: on_enter
+      action: lua
+      payload:
+        script: bless_actor
+
+- id: test.qa.dark
+  name: The QA Cellar
+  short: a pitch-black cellar with cold flagstones underfoot
+  long: |
+    The cellar is utterly dark — the stairwell behind blocks the
+    only natural light. A faint draft suggests the room is larger
+    than it feels. A torch sconce by the entry waits to be lit.
+    Verbs to test: light / look in the dark.
+  exits:
+    u: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
+    dark: true
+    nomap: true
+  sector: underground
+  light_level: 0

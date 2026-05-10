@@ -1,0 +1,20 @@
+id: test_qa
+name: QA Smoke Test
+summary: |
+  Walk the QA test zone end-to-end so the operator can confirm
+  reach_room, kill_n, and talk_to step kinds all advance correctly.
+giver_mob: test.qa.steward
+steps:
+  - kind: reach_room
+    room: test.qa.combat_static
+    prompt: Walk to the QA Sparring Floor.
+  - kind: kill_n
+    mob: test.qa.training_dummy_quest
+    count: 1
+    prompt: Defeat the marked practice dummy.
+  - kind: talk_to
+    mob: test.qa.steward
+    prompt: Report back to the QA Steward.
+rewards:
+  xp: 50
+  copper: 100
