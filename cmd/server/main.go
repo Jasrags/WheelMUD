@@ -1233,7 +1233,15 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			bindings.ApplyAffect = func(targetID int64, effectID string) error {
 				return applyAffect(ctx, targetID, effectID)
 			}
+			// Per-invocation give_item cap (mirrors trigger path).
+			// Counter is captured per RunScript call so each
+			// dialogue script fire gets a fresh budget.
+			giveCount := 0
 			bindings.GiveItem = func(targetID int64, externalID string) error {
+				giveCount++
+				if giveCount > trigger.MaxGiveItemsPerInvocation {
+					return fmt.Errorf("give_item exceeded per-invocation cap of %d", trigger.MaxGiveItemsPerInvocation)
+				}
 				return giveItem(ctx, targetID, externalID)
 			}
 			bindings.TargetHP = func(targetID int64) (int32, int32, error) {
@@ -1457,6 +1465,13 @@ func makeLuaApplyAffect(characters repo.CharacterRepo, eff *effects.Catalog) fun
 	}
 }
 
+// luaGiveItemSeq breaks ties when two give_item calls land in the
+// same nanosecond on the same target — without it, the generated
+// external_id collides on the items.external_id UNIQUE index and
+// the second call trips the trigger fault budget. Process-global,
+// monotonic, never reset.
+var luaGiveItemSeq int64
+
 // makeLuaGiveItem clones the YAML-seeded template at externalID and
 // places the fresh row directly into the target's inventory. Mirrors
 // the admin spawn path (internal/cmd/spawn.go::spawnItems) but skips
@@ -1468,8 +1483,9 @@ func makeLuaGiveItem(items repo.ItemRepo) func(context.Context, int64, string) e
 		if err != nil {
 			return err
 		}
+		seq := atomic.AddInt64(&luaGiveItemSeq, 1)
 		spawn := repo.Item{
-			ExternalID:       fmt.Sprintf("%s#lua-%d-%d", externalID, time.Now().UnixNano(), targetID),
+			ExternalID:       fmt.Sprintf("%s#lua-%d-%d-%d", externalID, time.Now().UnixNano(), targetID, seq),
 			Name:             template.Name,
 			NameLower:        template.NameLower,
 			ShortDesc:        template.ShortDesc,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -199,6 +200,68 @@ func TestLuaAction_GiveItem_DispatchesToHook(t *testing.T) {
 	}
 	if seenTarget != 7 || seenExt != "tr.potion" {
 		t.Fatalf("hook captured (%d, %q); want (7, tr.potion)", seenTarget, seenExt)
+	}
+}
+
+func TestLuaAction_GiveItem_PerInvocationCap(t *testing.T) {
+	// Script calls give_item MaxGiveItemsPerInvocation+1 times in a
+	// loop. The first MaxGiveItemsPerInvocation succeed; the next
+	// one raises a Lua error that classifies as ErrActionFaulted.
+	src := `for i=1,` + fmt.Sprintf("%d", MaxGiveItemsPerInvocation+1) + ` do give_item(1, "tr.potion") end`
+	cat := loadCatalog(t, "gi_cap", src)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	calls := 0
+	hooks := LuaHooks{
+		GiveItem: func(context.Context, int64, string) error {
+			calls++
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "gi_cap"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1}, payload)
+	if !errors.Is(err, ErrActionFaulted) ||
+		!strings.Contains(err.Error(), "exceeded per-invocation cap") {
+		t.Fatalf("err = %v; want cap-exceeded fault", err)
+	}
+	if calls != MaxGiveItemsPerInvocation {
+		t.Fatalf("hook should have been invoked exactly %d times before cap; got %d",
+			MaxGiveItemsPerInvocation, calls)
+	}
+}
+
+func TestLuaAction_GiveItem_CapResetsBetweenInvocations(t *testing.T) {
+	// Two separate script invocations each get a fresh budget.
+	cat := loadCatalog(t, "gi_one", `give_item(1, "tr.potion")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	calls := 0
+	hooks := LuaHooks{
+		GiveItem: func(context.Context, int64, string) error {
+			calls++
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+
+	payload, _ := json.Marshal(LuaPayload{Script: "gi_one"})
+	for i := 0; i < MaxGiveItemsPerInvocation+5; i++ {
+		err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+			EventCtx{ActorKind: "character", ActorID: 1}, payload)
+		if err != nil {
+			t.Fatalf("invocation %d failed: %v", i, err)
+		}
+	}
+	if calls != MaxGiveItemsPerInvocation+5 {
+		t.Fatalf("each invocation should reset cap; got %d hook calls, want %d",
+			calls, MaxGiveItemsPerInvocation+5)
 	}
 }
 

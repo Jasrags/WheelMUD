@@ -150,14 +150,29 @@ func makeApplyAffectHook(ctx context.Context, ev EventCtx, hook func(context.Con
 	}
 }
 
-// makeGiveItemHook mirrors makeApplyAffectHook for give_item.
+// MaxGiveItemsPerInvocation caps the number of items a single
+// script invocation can spawn via give_item. Without a cap, a tight
+// loop could spawn dozens of items inside the 50ms ctx timeout.
+// The wrapper closure resets the counter implicitly on each new
+// trigger fire (a fresh closure is built per APIBindings construction).
+const MaxGiveItemsPerInvocation = 8
+
+// makeGiveItemHook mirrors makeApplyAffectHook for give_item, with
+// a per-invocation spawn cap (MaxGiveItemsPerInvocation). The cap
+// counter is captured by the returned closure, so each trigger
+// fire gets its own fresh budget.
 func makeGiveItemHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, string) error) func(int64, string) error {
 	if hook == nil {
 		return nil
 	}
+	count := 0
 	return func(targetID int64, externalID string) error {
 		if ev.ActorKind != "character" || ev.ActorID == 0 {
 			return fmt.Errorf("give_item requires a character actor (got %q)", ev.ActorKind)
+		}
+		count++
+		if count > MaxGiveItemsPerInvocation {
+			return fmt.Errorf("give_item exceeded per-invocation cap of %d", MaxGiveItemsPerInvocation)
 		}
 		return hook(ctx, targetID, externalID)
 	}
