@@ -336,11 +336,12 @@ func main() {
 	// time-seeded; tests override.
 	combatMgr.SetFleeMover(cmd.NewFleeMover(rooms, exits, items, mobs, characters, sessions, bus, clock, nil))
 
-	// Phase D #18 follow-up: combat broadcasts for parry / stance /
-	// flee. CombatHit / CombatMiss subscribers landed in #18 slice 1;
-	// these three add the new room-visible lines. Each subscriber
-	// snapshots names via best-effort repo lookups so a despawned
-	// participant still produces readable output.
+	// Phase D #18 combat-render subscribers. Each one snapshots names
+	// via best-effort repo lookups so a despawned participant still
+	// produces readable output. The "skip-N-sessions" broadcasts use
+	// inline Snapshot loops rather than chaining combatBroadcastExcept
+	// — for Hit/Miss the attacker AND defender both need second-person
+	// echoes, so the third-person broadcast must skip both.
 	combatBroadcast := func(roomID int64, msg string) {
 		for _, peer := range sessions.Snapshot() {
 			if peer == nil || peer.CurrentRoomID != roomID {
@@ -389,6 +390,113 @@ func main() {
 		}
 		name := combatActorName(ctx, ev.Actor, characters, mobs)
 		combatBroadcast(ev.RoomID, "{{"+name+" tries to flee but is cut off!}}::yellow\r\n")
+	})
+
+	// combatBroadcastSkip is a two-exclude variant of combatBroadcast.
+	// Inline so the closure can capture sessions without forcing every
+	// per-event subscriber to thread an extra arg.
+	combatBroadcastSkip := func(roomID int64, msg string, a, b *telnet.Session) {
+		for _, peer := range sessions.Snapshot() {
+			if peer == nil || peer == a || peer == b || peer.CurrentRoomID != roomID {
+				continue
+			}
+			if err := peer.WriteAsync(msg); err != nil {
+				slog.Debug("combat: broadcast write failed", "error", err)
+			}
+		}
+	}
+
+	// CombatHit: per-attacker echo, per-defender echo (if player),
+	// third-person line to room peers excluding both. Crit adds a
+	// suffix so the player sees the dice-result of their roll.
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatHit) {
+		atkName := combatActorName(ctx, ev.Attacker, characters, mobs)
+		defName := combatActorName(ctx, ev.Defender, characters, mobs)
+		critTail := ""
+		if ev.IsCrit {
+			critTail = " {{(critical!)}}::yellow|bold"
+		}
+		var atkSess, defSess *telnet.Session
+		if ev.Attacker.Kind == combat.ActorKindCharacter {
+			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
+			if atkSess != nil {
+				_ = atkSess.WriteAsync(fmt.Sprintf("{{You hit %s for %d damage.}}::cyan%s",
+					defName, ev.Damage, critTail))
+			}
+		}
+		if ev.Defender.Kind == combat.ActorKindCharacter {
+			defSess = cmd.LookupByCharacterID(sessions, ev.Defender.ID)
+			if defSess != nil {
+				_ = defSess.WriteAsync(fmt.Sprintf("{{%s hits you for %d damage.}}::red%s",
+					atkName, ev.Damage, critTail))
+			}
+		}
+		combatBroadcastSkip(ev.RoomID,
+			fmt.Sprintf("{{%s hits %s for %d damage.}}::yellow%s\r\n",
+				atkName, defName, ev.Damage, critTail),
+			atkSess, defSess)
+	})
+
+	// CombatMiss: symmetric to Hit but no damage line; both
+	// participants and the room see the swing-and-miss beat.
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatMiss) {
+		atkName := combatActorName(ctx, ev.Attacker, characters, mobs)
+		defName := combatActorName(ctx, ev.Defender, characters, mobs)
+		var atkSess, defSess *telnet.Session
+		if ev.Attacker.Kind == combat.ActorKindCharacter {
+			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
+			if atkSess != nil {
+				_ = atkSess.WriteAsync(fmt.Sprintf("{{You swing at %s and miss.}}::gray", defName))
+			}
+		}
+		if ev.Defender.Kind == combat.ActorKindCharacter {
+			defSess = cmd.LookupByCharacterID(sessions, ev.Defender.ID)
+			if defSess != nil {
+				_ = defSess.WriteAsync(fmt.Sprintf("{{%s swings at you and misses.}}::gray", atkName))
+			}
+		}
+		combatBroadcastSkip(ev.RoomID,
+			fmt.Sprintf("{{%s swings at %s and misses.}}::gray\r\n", atkName, defName),
+			atkSess, defSess)
+	})
+
+	// CombatDeath for mob victims: "You killed X" to the killer (if
+	// a player) and "X falls dead!" to room peers excluding the
+	// killer. Player victims are handled by the CharacterDied
+	// subscriber below — gate on Victim.Kind to avoid double-render.
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatDeath) {
+		if ev.Victim.Kind != combat.ActorKindMob {
+			return
+		}
+		victimName := combatActorName(ctx, ev.Victim, characters, mobs)
+		var killerSess *telnet.Session
+		if ev.Killer.Kind == combat.ActorKindCharacter {
+			killerSess = cmd.LookupByCharacterID(sessions, ev.Killer.ID)
+			if killerSess != nil {
+				_ = killerSess.WriteAsync("{{You killed " + victimName + "!}}::green|bold")
+			}
+		}
+		combatBroadcastExcept(ev.RoomID,
+			"{{"+victimName+" falls dead!}}::red|bold\r\n", killerSess)
+	})
+
+	// CombatXPAwarded: private "You gain N XP." to the awardee, with
+	// an optional XP-debt-drain suffix when DebtTaken > 0 so the
+	// player understands why their gain looks smaller than the
+	// gross share.
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatXPAwarded) {
+		if ev.Awardee.Kind != combat.ActorKindCharacter {
+			return
+		}
+		sess := cmd.LookupByCharacterID(sessions, ev.Awardee.ID)
+		if sess == nil {
+			return
+		}
+		msg := fmt.Sprintf("{{You gain %d xp.}}::cyan", ev.Amount)
+		if ev.DebtTaken > 0 {
+			msg += fmt.Sprintf("  {{(%d xp went to clearing your xp debt)}}::gray", ev.DebtTaken)
+		}
+		_ = sess.WriteAsync(msg)
 	})
 
 	// Phase D §19 player-death subscribers. CharacterDied broadcasts
