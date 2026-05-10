@@ -17,9 +17,11 @@ import (
 )
 
 // LoadAndSync reads YAML zone folders from src, validates the world,
-// and populates the rooms / exits / items / mobs tables. It is a no-op
-// if the world tables already have rows (boot-time only — pick up YAML
-// changes by wiping the DB).
+// and populates the rooms / exits / items / mobs tables. The insert
+// path short-circuits when the world tables already have rows (boot-
+// time only — pick up YAML changes by wiping the DB), but the YAML
+// is always parsed + validated so the returned LoadedWorld carries
+// the in-memory recipes ZoneResetter consumes.
 //
 // All inserts happen in a single transaction so a partial failure
 // rolls back to an empty world rather than leaving the DB half-loaded.
@@ -31,33 +33,41 @@ import (
 // run from two boot paths against a shared DB) it must be wrapped in
 // an application-level mutex or rewritten to do the probe + load
 // inside one transaction.
-func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) error {
-	already, err := worldAlreadyLoaded(ctx, db)
-	if err != nil {
-		return fmt.Errorf("world: probe existing rows: %w", err)
-	}
-	if already {
-		slog.Info("world: already loaded, skipping")
-		return nil
-	}
-
+func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) (LoadedWorld, error) {
 	world, err := parseWorld(src)
 	if err != nil {
-		return fmt.Errorf("world: parse: %w", err)
+		return LoadedWorld{}, fmt.Errorf("world: parse: %w", err)
 	}
 	if err := validate(world); err != nil {
-		return fmt.Errorf("world: validate: %w", err)
+		return LoadedWorld{}, fmt.Errorf("world: validate: %w", err)
 	}
 
-	if err := insertWorld(ctx, db, world); err != nil {
-		return fmt.Errorf("world: insert: %w", err)
+	already, err := worldAlreadyLoaded(ctx, db)
+	if err != nil {
+		return LoadedWorld{}, fmt.Errorf("world: probe existing rows: %w", err)
 	}
-	slog.Info("world: load complete",
-		"zones", len(world.Zones),
-		"rooms", len(world.Rooms),
-		"items", len(world.Items),
-		"mobs", len(world.Mobs))
-	return nil
+	if !already {
+		if err := insertWorld(ctx, db, world); err != nil {
+			return LoadedWorld{}, fmt.Errorf("world: insert: %w", err)
+		}
+		slog.Info("world: load complete",
+			"zones", len(world.Zones),
+			"rooms", len(world.Rooms),
+			"items", len(world.Items),
+			"mobs", len(world.Mobs))
+	} else {
+		slog.Info("world: already loaded, skipping insert",
+			"zones", len(world.Zones),
+			"rooms", len(world.Rooms),
+			"items", len(world.Items),
+			"mobs", len(world.Mobs))
+	}
+
+	itemSpecs, err := buildItemSpecs(world)
+	if err != nil {
+		return LoadedWorld{}, fmt.Errorf("world: build item specs: %w", err)
+	}
+	return LoadedWorld{ItemSpecsByZone: itemSpecs}, nil
 }
 
 // worldAlreadyLoaded probes whether either of the two top-level world
@@ -432,13 +442,17 @@ func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[stri
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO exits(from_room_id, to_room_id, direction,
 					closed, locked, pickable, hidden, nopass,
-					key_external_id, lock_difficulty, description)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					key_external_id, lock_difficulty, description,
+					authored_closed, authored_locked)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				from, to, dir,
 				repo.BoolToInt(ex.Closed), repo.BoolToInt(ex.Locked),
 				repo.BoolToInt(pickable), repo.BoolToInt(ex.Hidden),
 				repo.BoolToInt(ex.NoPass),
 				ex.Key, ex.LockDifficulty, ex.Description,
+				// Authored values mirror the YAML closed/locked at load
+				// time. ZoneResetter reads these on each AreaReset pass.
+				repo.BoolToInt(ex.Closed), repo.BoolToInt(ex.Locked),
 			); err != nil {
 				return fmt.Errorf("insert exit %q->%q: %w", r.ID, dir, err)
 			}

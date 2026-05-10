@@ -112,6 +112,11 @@ type RoomRepo interface {
 	// Rooms inserted via in-memory test fixtures default to zone_id=0
 	// and are counted under that bucket like any other.
 	CountByZone(ctx context.Context, zoneID int64) (int, error)
+	// ListIDsByZone returns the int ids of every room whose
+	// rooms.zone_id matches. Order is unspecified — callers that
+	// need stability should sort. Used by the ZoneResetter to
+	// scope door-state restoration to a single zone.
+	ListIDsByZone(ctx context.Context, zoneID int64) ([]int64, error)
 	// ListAll returns every room in the database in id order. Used by
 	// the auto-coord BFS runner (internal/world/coords_derive) at boot
 	// to enumerate the world graph. Order is stable so anchor

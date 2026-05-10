@@ -39,6 +39,24 @@ func (r *SQLiteRoomRepo) CountByZone(ctx context.Context, zoneID int64) (int, er
 	return n, nil
 }
 
+func (r *SQLiteRoomRepo) ListIDsByZone(ctx context.Context, zoneID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM rooms WHERE zone_id = ?`, zoneID)
+	if err != nil {
+		return nil, fmt.Errorf("list room ids by zone: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan room id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (r *SQLiteRoomRepo) FindByExternalID(ctx context.Context, externalID string) (Room, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+roomSelectCols+` FROM rooms WHERE external_id = ?`, externalID)

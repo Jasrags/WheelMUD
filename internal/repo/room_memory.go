@@ -126,6 +126,18 @@ func (r *MemoryRoomRepo) CountByZone(_ context.Context, zoneID int64) (int, erro
 	return n, nil
 }
 
+func (r *MemoryRoomRepo) ListIDsByZone(_ context.Context, zoneID int64) ([]int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []int64
+	for id, room := range r.byID {
+		if room.ZoneID == zoneID {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func (r *MemoryRoomRepo) ListAll(_ context.Context) ([]Room, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

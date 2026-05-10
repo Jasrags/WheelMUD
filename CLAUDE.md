@@ -386,6 +386,23 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `ErrActionFaulted`. Action handlers gain optional access to
   `repo.TriggerRepo` via `ActionDeps.Triggers` — only the
   fault-budget plumbing uses it today.
+  0048 added `exits.authored_closed` and `exits.authored_locked`
+  (both INTEGER NOT NULL DEFAULT 0) backing §7 area/zone reset
+  extension — door state on AreaReset. The loader stamps both
+  columns from the YAML closed/locked at boot; `ZoneResetter`
+  (formerly `Respawner`, see `internal/world/respawn.go`) snaps
+  the runtime columns back to authored on every per-zone reset
+  via `ExitRepo.RestoreAuthored(ctx, fromRoomIDs)` (one zone-
+  scoped UPDATE in the SQLite impl). Backfill UPDATE on existing
+  rows copies the current runtime state into the new columns —
+  pre-0048 zones lose their original authoring data (it was never
+  recorded), so the first reset on an upgraded DB is a no-op until
+  a builder edits a door. Hidden / NoPass / Pickable have no
+  authored / runtime split today (they can't change at runtime).
+  Lock-step lists for the new columns: `exit_sqlite.go` keeps
+  `exitSelectCols` + the `Create` INSERT + `scanExitInto` in
+  sync; the loader's raw-SQL INSERT in `internal/world/loader.go::
+  insertExits` mirrors them.
   0047 added `characters.skill_cooldowns_json` (TEXT NOT NULL
   DEFAULT '{}') backing Phase E #26 slice B — per-skill cooldowns.
   Stores a JSON map of `chargen.HashID(skillID)` (int32 keys
@@ -566,11 +583,20 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   reset_interval_s, reset_mode, climate, ambient), the optional
   `shop:` and `banker:` mob sub-blocks (§14), and the room-id /
   currency-string / typed-item-stats conventions builders need to
-  know. Also hosts
+  know. `LoadAndSync` always parses + validates YAML on every boot
+  (even when the DB is already populated and the insert path
+  short-circuits) and returns a `LoadedWorld` whose
+  `ItemSpecsByZone` (keyed by zone external_id) feeds the
+  `ZoneResetter` — see `item_spec.go::buildItemSpec` for the
+  YAML→`repo.Item` translation shared with `insertItems`. Also hosts
   the `Restocker` (refills sub-max `shop_stock` lines older than
   `restock_interval_s`, wired to `tick.Buckets.AreaReset` —
-  5min default cadence) and the `Clock.HourOfDay()` helper backing
-  the shop hour gate.
+  5min default cadence), the `ZoneResetter` (formerly `Respawner`,
+  same bucket; per-zone gate runs three steps in order — mob
+  respawn from anchored templates, door restoration via
+  `ExitRepo.RestoreAuthored`, item respawn via
+  `ItemRepo.FindByExternalID` global presence check + `Create`),
+  and the `Clock.HourOfDay()` helper backing the shop hour gate.
 
 - **`internal/chargen/`** — YAML chargen content catalog
   (backgrounds, classes, feats, skills, weaves) loaded once at
@@ -740,6 +766,13 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `scanItemRow`, the `Create` INSERT, AND the loader-side INSERT in
   `internal/world/loader.go::insertItems` (raw SQL, single transaction).
   Same lock-step rule as rooms.
+- New columns on `exits` need to land in `exitSelectCols`,
+  `scanExitInto`, the `Create` INSERT in
+  `internal/repo/exit_sqlite.go`, AND the loader-side INSERT in
+  `internal/world/loader.go::insertExits` (raw SQL, same
+  single-transaction pattern as rooms/items). The most recent
+  example is the `authored_closed` / `authored_locked` pair
+  (0048).
 - Items live in exactly one of three locations: `room_id` (on the
   floor), `owner_character_id` (in someone's inventory), or
   `parent_item_id` (inside another item — i.e. a container).

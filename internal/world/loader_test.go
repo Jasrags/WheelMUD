@@ -58,7 +58,7 @@ func TestLoadAndSync_HappyPath(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	if err := LoadAndSync(ctx, conn, goodWorld); err != nil {
+	if _, err := LoadAndSync(ctx, conn, goodWorld); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -108,6 +108,48 @@ func TestLoadAndSync_HappyPath(t *testing.T) {
 	}
 }
 
+func TestLoadAndSync_ReturnsItemSpecsByZone(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	loaded, err := LoadAndSync(ctx, conn, goodWorld)
+	if err != nil {
+		t.Fatalf("LoadAndSync: %v", err)
+	}
+	specs := loaded.ItemSpecsByZone["starter"]
+	if len(specs) != 1 {
+		t.Fatalf("starter zone specs = %d, want 1", len(specs))
+	}
+	got := specs[0]
+	if got.RoomExternalID != "plaza.fountain" {
+		t.Errorf("RoomExternalID = %q, want plaza.fountain", got.RoomExternalID)
+	}
+	if got.ZoneExternalID != "starter" {
+		t.Errorf("ZoneExternalID = %q, want starter", got.ZoneExternalID)
+	}
+	if got.Item.ExternalID != "plaza.pebble" {
+		t.Errorf("Item.ExternalID = %q, want plaza.pebble", got.Item.ExternalID)
+	}
+	if got.Item.Name != "a small pebble" {
+		t.Errorf("Item.Name = %q", got.Item.Name)
+	}
+
+	// Second invocation against the now-populated DB still produces
+	// the spec map (the parse path is unconditional).
+	loaded2, err := LoadAndSync(ctx, conn, goodWorld)
+	if err != nil {
+		t.Fatalf("LoadAndSync (already loaded): %v", err)
+	}
+	if len(loaded2.ItemSpecsByZone["starter"]) != 1 {
+		t.Errorf("re-load specs = %+v, want 1 entry",
+			loaded2.ItemSpecsByZone["starter"])
+	}
+}
+
 func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")
@@ -145,7 +187,7 @@ func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 	exits := repo.NewSQLiteExitRepo(conn)
@@ -162,6 +204,11 @@ func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
 	if gateNorth.Description == "" {
 		t.Errorf("description dropped")
 	}
+	// Authored columns must mirror the YAML closed/locked at boot
+	// time so ZoneResetter can restore them on AreaReset.
+	if !gateNorth.Flags.AuthoredClosed || !gateNorth.Flags.AuthoredLocked {
+		t.Errorf("authored door state not stamped: %+v", gateNorth.Flags)
+	}
 	gateSouth, err := exits.FindByDirection(ctx, repo.StarterRoomID, repo.DirSouth)
 	if err != nil {
 		t.Fatalf("FindByDirection south: %v", err)
@@ -171,6 +218,10 @@ func TestLoadAndSync_ObjectFormExitsAttachDoorState(t *testing.T) {
 	}
 	if !gateSouth.Flags.Pickable {
 		t.Errorf("shorthand exit should default Pickable=true; got %+v", gateSouth.Flags)
+	}
+	// Shorthand exit should also have AuthoredClosed/AuthoredLocked = false.
+	if gateSouth.Flags.AuthoredClosed || gateSouth.Flags.AuthoredLocked {
+		t.Errorf("shorthand exit got authored door flags: %+v", gateSouth.Flags)
 	}
 }
 
@@ -217,7 +268,7 @@ func TestLoadAndSync_ItemTaxonomyRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -277,7 +328,7 @@ func TestLoadAndSync_RejectsUnknownItemType(t *testing.T) {
 		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
 		"z/items.yaml": &fstest.MapFile{Data: []byte("- id: z.bad\n  room: z.r\n  name: bad\n  type: floomf\n")},
 	}
-	if err := LoadAndSync(ctx, conn, worldFS); err == nil ||
+	if _, err := LoadAndSync(ctx, conn, worldFS); err == nil ||
 		!strings.Contains(err.Error(), "unknown type") {
 		t.Fatalf("want unknown-type error, got %v", err)
 	}
@@ -296,7 +347,7 @@ func TestLoadAndSync_RejectsUnknownItemFlag(t *testing.T) {
 		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
 		"z/items.yaml": &fstest.MapFile{Data: []byte("- id: z.bad\n  room: z.r\n  name: bad\n  flags: [unknownflag]\n")},
 	}
-	if err := LoadAndSync(ctx, conn, worldFS); err == nil ||
+	if _, err := LoadAndSync(ctx, conn, worldFS); err == nil ||
 		!strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("want unknown-flag error, got %v", err)
 	}
@@ -345,7 +396,7 @@ ambient:
 		"region/beta/rooms.yaml": &fstest.MapFile{Data: []byte("- id: beta.r\n  name: BR\n  long: x\n")},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -444,7 +495,7 @@ func TestLoadAndSync_DuplicateZoneIDRejected(t *testing.T) {
 		"b/zone.yaml":  &fstest.MapFile{Data: []byte("id: dup\nname: B\n")},
 		"b/rooms.yaml": &fstest.MapFile{Data: []byte("- id: b.r\n  name: B\n  long: x\n")},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil || !strings.Contains(err.Error(), "duplicate zone id") {
 		t.Fatalf("err = %v, want duplicate-zone-id error", err)
 	}
@@ -462,7 +513,7 @@ func TestLoadAndSync_InvalidResetModeRejected(t *testing.T) {
 		"z/zone.yaml":  &fstest.MapFile{Data: []byte("id: z\nname: Z\nreset_mode: blah\n")},
 		"z/rooms.yaml": &fstest.MapFile{Data: []byte("- id: z.r\n  starter: true\n  name: R\n  long: x\n")},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil || !strings.Contains(err.Error(), "invalid reset_mode") {
 		t.Fatalf("err = %v, want invalid-reset-mode error", err)
 	}
@@ -476,7 +527,7 @@ func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	if err := LoadAndSync(ctx, conn, goodWorld); err != nil {
+	if _, err := LoadAndSync(ctx, conn, goodWorld); err != nil {
 		t.Fatalf("first load: %v", err)
 	}
 	// Second load with a *different* world should still be a no-op.
@@ -490,7 +541,7 @@ func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
   long: x
 `)},
 	}
-	if err := LoadAndSync(ctx, conn, other); err != nil {
+	if _, err := LoadAndSync(ctx, conn, other); err != nil {
 		t.Fatalf("second load: %v", err)
 	}
 
@@ -655,7 +706,7 @@ func TestLoadAndSync_ValidationFailures(t *testing.T) {
 			}
 			t.Cleanup(func() { conn.Close() })
 
-			err = LoadAndSync(ctx, conn, tc.fs)
+			_, err = LoadAndSync(ctx, conn, tc.fs)
 			if err == nil {
 				t.Fatalf("want error; got nil")
 			}
@@ -721,7 +772,7 @@ func TestLoadAndSync_ShopRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -789,7 +840,7 @@ func TestLoadAndSync_BankerRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -829,7 +880,7 @@ func TestLoadAndSync_BankerRejectsBadHour(t *testing.T) {
     close_hour: 9
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on out-of-range open_hour")
 	}
@@ -859,7 +910,7 @@ func TestLoadAndSync_TrainerRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -898,7 +949,7 @@ func TestLoadAndSync_TrainerRejectsEmptyClass(t *testing.T) {
     class: ""
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on empty trainer.class")
 	}
@@ -929,7 +980,7 @@ func TestLoadAndSync_WeaveTeacherRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -972,7 +1023,7 @@ func TestLoadAndSync_WeaveTeacherRejectsBadPower(t *testing.T) {
     affinity_filter: [chaos]
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on bad Power name")
 	}
@@ -1004,7 +1055,7 @@ func TestLoadAndSync_ShopRejectsUnknownItem(t *testing.T) {
         qty_max: 1
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on unknown stock item")
 	}
@@ -1052,7 +1103,7 @@ func TestLoadAndSync_TriggersRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -1126,7 +1177,7 @@ func TestLoadAndSync_TriggerRejectsBadEvent(t *testing.T) {
       action: noop
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on unknown event")
 	}
@@ -1158,7 +1209,7 @@ func TestLoadAndSync_TriggerRejectsScalarPayload(t *testing.T) {
       payload: "hello"
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on scalar payload")
 	}
@@ -1207,7 +1258,7 @@ func TestLoadAndSync_DialogueRoundTrip(t *testing.T) {
 `)},
 	}
 
-	if err := LoadAndSync(ctx, conn, worldFS); err != nil {
+	if _, err := LoadAndSync(ctx, conn, worldFS); err != nil {
 		t.Fatalf("LoadAndSync: %v", err)
 	}
 
@@ -1269,7 +1320,7 @@ func TestLoadAndSync_DialogueRejectsDanglingNext(t *testing.T) {
 `)},
 	}
 
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on dangling next")
 	}
@@ -1308,7 +1359,7 @@ func TestLoadAndSync_DialogueRejectsDuplicateNodeID(t *testing.T) {
 `)},
 	}
 
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on duplicate node id")
 	}
@@ -1337,7 +1388,7 @@ func TestLoadAndSync_TriggerRejectsEmptyAction(t *testing.T) {
       action: ""
 `)},
 	}
-	err = LoadAndSync(ctx, conn, worldFS)
+	_, err = LoadAndSync(ctx, conn, worldFS)
 	if err == nil {
 		t.Fatal("want error on empty action")
 	}

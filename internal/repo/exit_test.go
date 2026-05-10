@@ -180,6 +180,167 @@ func runExitRepoTests(t *testing.T, name string, newFix func(t *testing.T) exitR
 			t.Fatalf("err = %v, want ErrExitNotFound", err)
 		}
 	})
+
+	t.Run(name+"/authored_door_state_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		_, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true,
+				AuthoredClosed: true, AuthoredLocked: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if !got.Flags.AuthoredClosed || !got.Flags.AuthoredLocked {
+			t.Errorf("authored cols lost: %+v", got.Flags)
+		}
+	})
+
+	t.Run(name+"/update_flags_does_not_touch_authored", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		created, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true,
+				AuthoredClosed: true, AuthoredLocked: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Player opens + unlocks the door.
+		if err := fix.exits.UpdateFlags(ctx, created.ID, false, false); err != nil {
+			t.Fatalf("UpdateFlags: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if got.Flags.Closed || got.Flags.Locked {
+			t.Errorf("runtime not cleared: %+v", got.Flags)
+		}
+		// Authored values must survive UpdateFlags.
+		if !got.Flags.AuthoredClosed || !got.Flags.AuthoredLocked {
+			t.Errorf("UpdateFlags touched authored cols: %+v", got.Flags)
+		}
+	})
+
+	t.Run(name+"/restore_authored_flips_back", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		created, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true,
+				AuthoredClosed: true, AuthoredLocked: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Player opens the door.
+		if err := fix.exits.UpdateFlags(ctx, created.ID, false, false); err != nil {
+			t.Fatalf("UpdateFlags: %v", err)
+		}
+		// Reset restores authored state.
+		n, err := fix.exits.RestoreAuthored(ctx, []int64{a})
+		if err != nil {
+			t.Fatalf("RestoreAuthored: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("RestoreAuthored returned %d, want 1", n)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if !got.Flags.Closed || !got.Flags.Locked {
+			t.Errorf("authored state not restored: %+v", got.Flags)
+		}
+	})
+
+	t.Run(name+"/restore_authored_noop_when_in_sync", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		_, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true,
+				AuthoredClosed: true, AuthoredLocked: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		n, err := fix.exits.RestoreAuthored(ctx, []int64{a})
+		if err != nil {
+			t.Fatalf("RestoreAuthored: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("RestoreAuthored returned %d, want 0", n)
+		}
+	})
+
+	t.Run(name+"/restore_authored_empty_room_ids_is_noop", func(t *testing.T) {
+		fix := newFix(t)
+		n, err := fix.exits.RestoreAuthored(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("RestoreAuthored: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("RestoreAuthored returned %d, want 0", n)
+		}
+	})
+
+	t.Run(name+"/restore_authored_scoped_to_room_ids", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		_, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, AuthoredClosed: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create A→B: %v", err)
+		}
+		// Door at a is currently open; would need restoration.
+		exA, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if err := fix.exits.UpdateFlags(ctx, exA.ID, false, false); err != nil {
+			t.Fatalf("UpdateFlags: %v", err)
+		}
+		// Restoring with a different room id leaves it open.
+		n, err := fix.exits.RestoreAuthored(ctx, []int64{b})
+		if err != nil {
+			t.Fatalf("RestoreAuthored: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("RestoreAuthored returned %d, want 0", n)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if got.Flags.Closed {
+			t.Errorf("scope leak: door at A restored when only B was passed: %+v", got.Flags)
+		}
+	})
 }
 
 func TestMemoryExitRepo(t *testing.T) {

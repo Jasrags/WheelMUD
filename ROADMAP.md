@@ -510,7 +510,7 @@ will need on top of those tables.
       `rooms.ambient_phase_json` for hand-built set-piece rooms, and
       zone-`climate` variants for sector-by-climate text tuples once
       overrides exist).
-- [~] **Exit** — `repo.Exit` covers `from_room_id`, `direction`,
+- [x] **Exit** — `repo.Exit` covers `from_room_id`, `direction`,
       `to_room_id`, `ExitFlags` (`Closed` / `Locked` / `Pickable` /
       `Hidden` / `NoPass`), `KeyExternalID`, `LockDifficulty`, and
       `Description` (migration 0014). YAML accepts both shorthand
@@ -521,13 +521,14 @@ will need on top of those tables.
       gray; `move` refuses Hidden as "you can't go that way",
       Closed as "the door is closed", and NoPass with an
       unseen-force message. One-way exits already supported via
-      single-direction authoring. Pending: `open` / `close` /
-      `lock` / `unlock` / `pick` commands (§16) to mutate Closed
-      and Locked at runtime — needs an `ExitRepo.UpdateFlags`
-      method and key/skill resolution against §14 inventory + §12
-      skill checks. Diagonal directions (ne/nw/se/sw) shipped via
-      migration 0007.
-- [~] **Area / zone** — `zones` table landed (migration 0016): id,
+      single-direction authoring. Diagonal directions (ne/nw/se/sw)
+      shipped via migration 0007. Runtime mutation verbs
+      (`open` / `close` / `lock` / `unlock` / `pick`) shipped in
+      §16 against `ExitRepo.UpdateFlags`, with key resolution
+      against §14 inventory and lock-difficulty gating for
+      `pick`. See `door_commands_followups.md` for deferred
+      polish (inventory-key swap, pick skill check, etc.).
+- [x] **Area / zone** — `zones` table landed (migration 0016): id,
       external_id, name, builder, min/max_level, reset_interval_s,
       reset_mode (`always`/`empty`/`never` enforced via CHECK),
       climate, ambient_json. `rooms.zone_id` joins rooms to their
@@ -545,12 +546,24 @@ will need on top of those tables.
       non-negative reset interval with builder-friendly file:line
       errors. `zones` admin command (AuthAdmin) lists zones and
       shows per-zone metadata + room count via
-      `RoomRepo.CountByZone`. Pending: `zone_resets` sibling table
-      (load mob X into room Y up to count Z; load item into
-      room/container; set door state; equip mob) wired into the §8
-      `areaReset` bucket; admin edit (`zedit`) lands with §16;
-      promote `rooms.zone_id` to a hard FK via table rebuild once
-      §16 admin room-create reliably supplies a zone id.
+      `RoomRepo.CountByZone`. Reset pipeline shipped end-to-end:
+      `internal/world/respawn.go::ZoneResetter` (renamed from
+      `Respawner`) walks every zone on each `AreaReset` tick and
+      runs three steps in order under one per-zone gate (honors
+      `ResetMode` always/empty/never + `ResetIntervalS` +
+      occupancy): mob respawn from anchored templates (0042);
+      door state restoration from `exits.authored_closed` /
+      `authored_locked` columns (0048) via
+      `ExitRepo.RestoreAuthored`; item respawn from the loader's
+      in-memory `LoadedWorld.ItemSpecsByZone` map via
+      `ItemRepo.FindByExternalID` global presence check (a player
+      who keeps the item suppresses respawn — even after carrying
+      it into another zone). Mob equipment on reset is deferred
+      until MobTemplate gains equipment fields + persistence +
+      auto-equip on `NewInstanceFromTemplate`. Admin edit
+      (`zedit`) lands with §16 (Phase G #34). Promotion of
+      `rooms.zone_id` to a hard FK via table rebuild also lands
+      with §16, once admin room-create reliably supplies a zone id.
 - [~] **Item / object** — taxonomy schema landed (migration 0015).
       `repo.Item` carries `Type` enum (`weapon` / `armor` / `shield` /
       `container` / `consumable` / `light` / `key` / `tool` /

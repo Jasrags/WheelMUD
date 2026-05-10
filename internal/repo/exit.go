@@ -55,12 +55,19 @@ func DirLong(code string) string {
 // ExitFlags groups the door-state and gating tags on a single exit.
 // Closed and locked are runtime-mutable (open/close/lock/unlock — §16);
 // hidden / nopass / pickable are immutable authoring choices.
+//
+// AuthoredClosed / AuthoredLocked snapshot the YAML-load values of
+// Closed / Locked (migration 0048). They never mutate after the
+// loader writes them. ZoneResetter reads them on each AreaReset
+// pass and restores the runtime columns to match.
 type ExitFlags struct {
-	Closed   bool
-	Locked   bool
-	Pickable bool // false = lock can never be picked, only unlocked with the key
-	Hidden   bool // never listed in look/exits; move treats as ErrExitNotFound
-	NoPass   bool // even when "open", the way is barred (force field, etc.)
+	Closed         bool
+	Locked         bool
+	Pickable       bool // false = lock can never be picked, only unlocked with the key
+	Hidden         bool // never listed in look/exits; move treats as ErrExitNotFound
+	NoPass         bool // even when "open", the way is barred (force field, etc.)
+	AuthoredClosed bool // YAML-authored Closed value; never changes after insert
+	AuthoredLocked bool // YAML-authored Locked value; never changes after insert
 }
 
 // Exit is a one-way connection between two rooms. Bidirectional travel
@@ -99,10 +106,17 @@ type ExitRepo interface {
 	// (from_room_id, direction) is already taken.
 	Create(ctx context.Context, e Exit) (Exit, error)
 	// UpdateFlags persists the runtime-mutable subset of an exit's
-	// state (Closed / Locked) keyed by ID. Hidden / NoPass / Pickable
-	// are authoring choices and are not touched here. Returns
-	// ErrExitNotFound when no row matches.
+	// state (Closed / Locked) keyed by ID. Hidden / NoPass / Pickable /
+	// AuthoredClosed / AuthoredLocked are authoring choices and are
+	// not touched here. Returns ErrExitNotFound when no row matches.
 	UpdateFlags(ctx context.Context, exitID int64, closed, locked bool) error
+	// RestoreAuthored resets the runtime Closed / Locked columns of
+	// every exit whose from_room_id is in fromRoomIDs back to their
+	// authored_closed / authored_locked values. Used by ZoneResetter
+	// to re-establish authored door state on each AreaReset pass.
+	// Returns the number of rows changed for telemetry. Empty
+	// fromRoomIDs is a no-op (returns 0, nil).
+	RestoreAuthored(ctx context.Context, fromRoomIDs []int64) (int, error)
 }
 
 var (

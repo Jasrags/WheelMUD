@@ -81,3 +81,32 @@ func (r *MemoryExitRepo) FindByDirection(_ context.Context, fromRoomID int64, di
 	}
 	return Exit{}, ErrExitNotFound
 }
+
+// RestoreAuthored mirrors the SQLite implementation: snap each
+// matching exit's runtime closed/locked back to its authored value
+// when divergent. Returns the count of rows it actually changed.
+func (r *MemoryExitRepo) RestoreAuthored(_ context.Context, fromRoomIDs []int64) (int, error) {
+	if len(fromRoomIDs) == 0 {
+		return 0, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wanted := make(map[int64]struct{}, len(fromRoomIDs))
+	for _, id := range fromRoomIDs {
+		wanted[id] = struct{}{}
+	}
+	n := 0
+	for i := range r.exits {
+		e := &r.exits[i]
+		if _, ok := wanted[e.FromRoomID]; !ok {
+			continue
+		}
+		if e.Flags.Closed == e.Flags.AuthoredClosed && e.Flags.Locked == e.Flags.AuthoredLocked {
+			continue
+		}
+		e.Flags.Closed = e.Flags.AuthoredClosed
+		e.Flags.Locked = e.Flags.AuthoredLocked
+		n++
+	}
+	return n, nil
+}

@@ -150,7 +150,8 @@ func main() {
 	trainers := repo.NewSQLiteTrainerRepo(conn)
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(conn)
 
-	if err := world.LoadAndSync(context.Background(), conn, world.SourceFS()); err != nil {
+	loaded, err := world.LoadAndSync(context.Background(), conn, world.SourceFS())
+	if err != nil {
 		slog.Error("World load failed", "error", err)
 		os.Exit(1)
 	}
@@ -248,11 +249,14 @@ func main() {
 	restocker := world.NewRestocker(shops)
 	buckets.AreaReset.Subscribe(restocker.Tick)
 
-	// Phase D §19 mob respawner: tops up zones whose YAML-seeded
-	// populations have died off. Empty-mode zones consult the
-	// session registry via zoneOccupied so a respawn can't tick on
-	// a fight in progress.
-	respawner := world.NewRespawner(zones, mobTemplates, mobs,
+	// §7 Area/zone reset pipeline: per-zone tick that respawns
+	// missing mob populations, restores authored door state, and
+	// recreates any authored items that have left the world (sold,
+	// destroyed). Empty-mode zones consult the session registry via
+	// zoneOccupied so a reset can't tick on a fight in progress.
+	zoneResetter := world.NewZoneResetter(
+		zones, mobTemplates, mobs, rooms, exits, items,
+		loaded.ItemSpecsByZone,
 		world.OccupancyCheckerFunc(func(ctx context.Context, zoneID int64) bool {
 			for _, sess := range sessions.Snapshot() {
 				roomID := sess.CurrentRoomID
@@ -269,7 +273,7 @@ func main() {
 			}
 			return false
 		}))
-	buckets.AreaReset.Subscribe(respawner.Tick)
+	buckets.AreaReset.Subscribe(zoneResetter.Tick)
 
 	// §11 / Phase D #16 combat tick spine. Manager owns per-room
 	// Fight aggregates, advances Round on every Combat-bucket pulse,

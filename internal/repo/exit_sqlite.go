@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type SQLiteExitRepo struct {
@@ -17,7 +18,8 @@ func NewSQLiteExitRepo(db *sql.DB) *SQLiteExitRepo {
 
 const exitSelectCols = `id, from_room_id, to_room_id, direction, ` +
 	`closed, locked, pickable, hidden, nopass, ` +
-	`key_external_id, lock_difficulty, description`
+	`key_external_id, lock_difficulty, description, ` +
+	`authored_closed, authored_locked`
 
 func (r *SQLiteExitRepo) ListFrom(ctx context.Context, fromRoomID int64) ([]Exit, error) {
 	rows, err := r.db.QueryContext(ctx,
@@ -43,13 +45,15 @@ func (r *SQLiteExitRepo) Create(ctx context.Context, e Exit) (Exit, error) {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO exits(from_room_id, to_room_id, direction,
 			closed, locked, pickable, hidden, nopass,
-			key_external_id, lock_difficulty, description)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			key_external_id, lock_difficulty, description,
+			authored_closed, authored_locked)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.FromRoomID, e.ToRoomID, e.Direction,
 		boolToInt(e.Flags.Closed), boolToInt(e.Flags.Locked),
 		boolToInt(e.Flags.Pickable), boolToInt(e.Flags.Hidden),
 		boolToInt(e.Flags.NoPass),
 		e.KeyExternalID, e.LockDifficulty, e.Description,
+		boolToInt(e.Flags.AuthoredClosed), boolToInt(e.Flags.AuthoredLocked),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -110,19 +114,59 @@ type rowScanner interface {
 // the right domain error themselves.
 func scanExitInto(s rowScanner, e *Exit) error {
 	var closed, locked, pickable, hidden, nopassFlag int
+	var authoredClosed, authoredLocked int
 	if err := s.Scan(
 		&e.ID, &e.FromRoomID, &e.ToRoomID, &e.Direction,
 		&closed, &locked, &pickable, &hidden, &nopassFlag,
 		&e.KeyExternalID, &e.LockDifficulty, &e.Description,
+		&authoredClosed, &authoredLocked,
 	); err != nil {
 		return err
 	}
 	e.Flags = ExitFlags{
-		Closed:   closed != 0,
-		Locked:   locked != 0,
-		Pickable: pickable != 0,
-		Hidden:   hidden != 0,
-		NoPass:   nopassFlag != 0,
+		Closed:         closed != 0,
+		Locked:         locked != 0,
+		Pickable:       pickable != 0,
+		Hidden:         hidden != 0,
+		NoPass:         nopassFlag != 0,
+		AuthoredClosed: authoredClosed != 0,
+		AuthoredLocked: authoredLocked != 0,
 	}
 	return nil
+}
+
+// RestoreAuthored issues one zone-scoped UPDATE that snaps every
+// exit's runtime closed/locked back to its authored value, but only
+// for rows currently divergent — keeps the row count returned to
+// callers honest for telemetry.
+//
+// fromRoomIDs are DB-internal int64 keys (typically from
+// RoomRepo.ListIDsByZone), never user input — the IN-clause below
+// uses parameterised placeholders for them anyway, so no SQL
+// injection surface exists either way.
+func (r *SQLiteExitRepo) RestoreAuthored(ctx context.Context, fromRoomIDs []int64) (int, error) {
+	if len(fromRoomIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(fromRoomIDs))
+	args := make([]any, len(fromRoomIDs))
+	for i, id := range fromRoomIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE exits
+		 SET closed = authored_closed, locked = authored_locked
+		 WHERE from_room_id IN (`+strings.Join(placeholders, ",")+`)
+		   AND (closed != authored_closed OR locked != authored_locked)`,
+		args...,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("restore authored exits: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("restore authored exits rows: %w", err)
+	}
+	return int(n), nil
 }
