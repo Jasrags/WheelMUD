@@ -98,6 +98,54 @@ func TestGet_PicksUpAndBroadcasts(t *testing.T) {
 	}
 }
 
+func TestGet_CoinPileFoldsIntoPurse(t *testing.T) {
+	f := newInvFixture(t)
+	pile := repo.Item{
+		ExternalID: "coin-pile-spawn-1234-0",
+		Name:       "a small pile of coins",
+		ShortDesc:  "A small pile of coins lies here.",
+		RoomID:     1,
+		Type:       repo.ItemTypeTradeGood,
+		Value:      currency.MustNew(1, 0, 0, 0), // 1gc = 1000cp
+		Flags:      repo.FlagTradeGood,
+	}
+	f.items.Insert(pile)
+
+	runCmd(t, NewGet(f.items, f.characters, f.sessions), f.alice, "coins")
+
+	out := f.aOut.String()
+	if !strings.Contains(out, "add it to your purse") {
+		t.Fatalf("missing purse-credit echo; got %q", out)
+	}
+	if !strings.Contains(out, "1gc") {
+		t.Fatalf("echo missing formatted amount; got %q", out)
+	}
+
+	// Item must be deleted, not transferred.
+	held, _ := f.items.ListInInventory(context.Background(), f.alice.CharacterID)
+	if len(held) != 0 {
+		t.Fatalf("coin pile should not enter inventory; got %+v", held)
+	}
+	floor, _ := f.items.ListInRoom(context.Background(), 1)
+	if len(floor) != 0 {
+		t.Fatalf("coin pile should be deleted from room; got %+v", floor)
+	}
+
+	// Coin must be credited.
+	c, _ := f.characters.FindByName(context.Background(), "Alice")
+	if int64(c.Coin) != 1000 {
+		t.Fatalf("purse: got %d cp, want 1000 (1gc)", int64(c.Coin))
+	}
+	if c.CoinVersion != 1 {
+		t.Errorf("coin_version after credit = %d, want 1", c.CoinVersion)
+	}
+
+	// Room broadcast still fires (peer sees the pickup line).
+	if !strings.Contains(f.bOut.String(), "Alice picks up a small pile of coins") {
+		t.Fatalf("bob: missing room broadcast; got %q", f.bOut.String())
+	}
+}
+
 func TestGet_NoTakeRefuses(t *testing.T) {
 	f := newInvFixture(t)
 	f.items.Insert(repo.Item{ExternalID: "altar", Name: "a granite altar", RoomID: 1, Flags: repo.FlagNoTake})

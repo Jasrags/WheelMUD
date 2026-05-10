@@ -83,6 +83,55 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 	}
 }
 
+// coinPilePrefix marks an item as a coin pile (combat mob-death drop
+// or admin spawn). Items with this prefix on their ExternalID are
+// folded into the actor's purse on `get` instead of materializing in
+// inventory — see absorbCoinPile.
+const coinPilePrefix = "coin-pile-"
+
+// isCoinPile reports whether `it` is a coin-pile item that should be
+// auto-credited to the actor's purse on pickup. The naming convention
+// is shared by combat.spawnCoinPile (mob death) and cmd.spawnCoins
+// (admin verb); both stamp ExternalIDs starting with "coin-pile-".
+func isCoinPile(it repo.Item) bool {
+	return strings.HasPrefix(it.ExternalID, coinPilePrefix)
+}
+
+// absorbCoinPile credits `it.Value` to the actor's purse via
+// RecordCoin and deletes the item, completing the pickup without ever
+// transferring ownership. Order: credit-then-delete (mirrors shop
+// sell). On RecordCoin failure the item is left in place; on Delete
+// failure after a successful credit, log loudly and accept the
+// duplicated value (admin must clean up the stranded item).
+//
+// Returns the credited amount on success and a player-facing message
+// on refusable failures (capacity overflow, optimistic-lock
+// conflict). On unexpected errors, the message is empty and `err` is
+// non-nil so the caller can echo a generic failure line.
+func absorbCoinPile(ctx context.Context, items repo.ItemRepo, characters repo.CharacterRepo, char *repo.Character, it repo.Item) (currency.Amount, string, error) {
+	newCoin, err := char.Coin.Add(it.Value)
+	if err != nil {
+		return 0, "{{You can't carry any more coin.}}::yellow\r\n", nil
+	}
+	if err := characters.RecordCoin(ctx, char.ID, newCoin, char.BankBalance, char.CoinVersion); err != nil {
+		if errors.Is(err, repo.ErrCoinConflict) {
+			return 0, "{{Your purse just changed — try again.}}::yellow\r\n", nil
+		}
+		return 0, "", fmt.Errorf("record coin: %w", err)
+	}
+	if err := items.Delete(ctx, it.ID); err != nil {
+		// Coin already credited; the pile lingers in the world.
+		// Loud log — this is real value created from nothing — but
+		// accept rather than try to claw back coin (RecordCoin
+		// rollback isn't guaranteed and the player has the credit).
+		slog.Error("get: delete coin pile AFTER credit — duplicated value",
+			"char", char.ID, "item", it.ID, "amount_cp", int64(it.Value), "error", err)
+	}
+	char.Coin = newCoin
+	char.CoinVersion++
+	return it.Value, "", nil
+}
+
 // NewGet builds the `get <item>` command. Picks an item up off the
 // floor of the actor's room, blocks for NoTake / weight cap, then
 // flips ownership and persists.
@@ -125,6 +174,26 @@ func NewGet(items repo.ItemRepo, characters repo.CharacterRepo, sessions *sessio
 				slog.Error("get: char lookup failed", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You feel disoriented.}}::red\r\n")
 			}
+
+			// Coin piles fold into the actor's purse on pickup —
+			// short-circuit before the weight check (piles are
+			// effectively weightless) and before TransferRoomToOwner
+			// (the pile is deleted, never owned).
+			if isCoinPile(it) {
+				amt, msg, err := absorbCoinPile(c.Ctx, items, characters, &char, it)
+				if msg != "" {
+					return s.WriteString(msg)
+				}
+				if err != nil {
+					slog.Error("get: absorb coin pile", "char", s.CharacterID, "item", it.ID, "error", err)
+					return s.WriteString("{{The coins slip from your fingers.}}::red\r\n")
+				}
+				actor := safeActor(s)
+				broadcastRoom(sessions, s.CurrentRoomID, s,
+					"{{"+actor+" picks up "+it.Name+".}}::cyan\r\n")
+				return s.WriteString("{{You pick up " + it.Name + " (" + amt.Format() + ") and add it to your purse.}}::cyan\r\n")
+			}
+
 			carried, err := carriedWeight(c.Ctx, items, s.CharacterID)
 			if err != nil {
 				slog.Error("get: list inv failed", "char", s.CharacterID, "error", err)
@@ -666,6 +735,27 @@ func getFromContainer(c *telnet.Context, items repo.ItemRepo, characters repo.Ch
 		slog.Error("get-from: char lookup failed", "char", s.CharacterID, "error", err)
 		return s.WriteString("{{You feel disoriented.}}::red\r\n")
 	}
+
+	// Coin piles fold into the actor's purse on pickup, even from a
+	// container (mob-death loot path). Skip the weight check + the
+	// TransferContainerToOwner — absorbCoinPile deletes the item.
+	if isCoinPile(it) {
+		amt, msg, err := absorbCoinPile(c.Ctx, items, characters, &char, it)
+		if msg != "" {
+			return s.WriteString(msg)
+		}
+		if err != nil {
+			slog.Error("get-from: absorb coin pile", "char", s.CharacterID, "item", it.ID, "error", err)
+			return s.WriteString("{{The coins slip from your fingers.}}::red\r\n")
+		}
+		actor := safeActor(s)
+		if s.CurrentRoomID != 0 {
+			broadcastRoom(sessions, s.CurrentRoomID, s,
+				"{{"+actor+" takes "+it.Name+" from "+container.Name+".}}::cyan\r\n")
+		}
+		return s.WriteString("{{You take " + it.Name + " (" + amt.Format() + ") from " + container.Name + " and add it to your purse.}}::cyan\r\n")
+	}
+
 	carried, err := carriedWeight(c.Ctx, items, s.CharacterID)
 	if err != nil {
 		slog.Error("get-from: weight failed", "char", s.CharacterID, "error", err)
