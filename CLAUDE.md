@@ -157,7 +157,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0046. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0047. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -386,6 +386,21 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `ErrActionFaulted`. Action handlers gain optional access to
   `repo.TriggerRepo` via `ActionDeps.Triggers` — only the
   fault-budget plumbing uses it today.
+  0047 added `characters.skill_cooldowns_json` (TEXT NOT NULL
+  DEFAULT '{}') backing Phase E #26 slice B — per-skill cooldowns.
+  Stores a JSON map of `chargen.HashID(skillID)` (int32 keys
+  encoded as JSON strings) → absolute deadline. Missing or
+  past-`time.Now()` entries are treated as cleared by readers;
+  `CharacterRepo.RecordSkillCooldown` (read-modify-write) prunes
+  past-deadline entries on every write so the map stays bounded.
+  Slot strictly between `xp_debt` (0041) and `auth_level` —
+  `auth_level` MUST stay the trailing column for the SQLite
+  first-character bootstrap CASE in `CharacterRepo.Create`. V1
+  producer is the admin `cooldown <player> <skill> <seconds>`
+  verb (mirrors affects #25 slice 1); the player `cooldowns` verb
+  is the only reader. Real player skill-check verbs (track / hide
+  / lockpick) will stamp at success when those gain skill-check
+  gates.
   0045 added `mob_templates.dialogue_json` (nullable TEXT)
   backing §15 / Phase F #30 — NPC dialogue trees authored inline
   on the mob YAML entry (sibling to `shop:` / `trainer:` /
@@ -634,6 +649,17 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - `Registry.Dispatch` enforces `Command.Auth` against `Session.AuthLevel`.
   Privilege-denied lookups return the same `Unknown command` text as a
   missing verb so the prompt can't enumerate privileged commands.
+- `Command.Lag` (Phase E #26) is the per-verb global cooldown stamped
+  on `Session.nextReady` via `s.StampLag(cmd.Lag)` after a successful
+  `cmd.Run`. The gate lives in `Registry.dispatchOne` (per-segment,
+  NOT in `Dispatch`) so chained `;` inputs gate independently —
+  `look; attack bob` runs `look` even when a prior segment lagged.
+  Refuse-with-message V1 (`{{You're too busy. (~Ns)}}::yellow`);
+  promotion to a bounded queue is a single dispatcher swap on the
+  same wire shape. Stamp on success only — failing `cmd.Run`
+  leaves the session unlagged. Wired V1 verbs: combat
+  (`attack`/`kill`=3s, `flee`=2s, `parry`=1s), zone broadcast
+  (`shout`/`yell`=2s). Movement and say/tell lag deferred.
 - `Registry.Dispatch` is segment-aware: a top-level `;` outside quotes
   splits the input into multiple commands run in order via
   `dispatchOne`. `telnet.SplitOnSemicolon` mirrors `Tokenize`'s
@@ -670,10 +696,12 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
 - New columns on `characters` need to land in BOTH `charPlayerColumns`
   AND `charPlayerValues` AND `charPlayerScanDest` in lock-step
   (`internal/repo/character_sql.go`); ordering is load-bearing.
-  The four `pending_*` int32 columns added in 0039 are the most
-  recent example (slotted between `pvp` and `auth_level`). JSON
-  columns also need a `characterJSON` field plus marshal/unmarshal
-  lines in `character_sqlite.go::marshalCharacterJSON` /
+  The most recent example is `skill_cooldowns_json` (0047, slotted
+  between `xp_debt` and `auth_level`); the four `pending_*` int32
+  columns (0039, between `pvp` and `auth_level`) were the previous
+  one. JSON columns also need a `characterJSON` field plus
+  marshal/unmarshal lines in
+  `character_sqlite.go::marshalCharacterJSON` /
   `(characterJSON).unmarshalInto`. The `auth_level` column MUST stay
   the very last entry in all three lists — the SQLite first-character
   bootstrap CASE expression in `Create` consumes it as the trailing

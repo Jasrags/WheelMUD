@@ -1105,6 +1105,12 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewCooldowns(characters, chargenCatalog)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(cmd.NewCooldown(characters, sessions, audits, chargenCatalog)); err != nil {
+		return nil, err
+	}
 	// Phase F #30: NPC dialogue trees. main.go is the only place that
 	// can hand cmd a closure that builds a *mode.Dialogue, since cmd
 	// can't import internal/mode without risking an import cycle

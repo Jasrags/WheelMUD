@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
@@ -18,6 +19,7 @@ func NewShout(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 		Help:    "shout <message> — broadcast to everyone in your zone",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
+		Lag:     2 * time.Second,
 		Run: func(c *telnet.Context) error {
 			return zoneBroadcast(c, sessions, rooms, "shout", "shouts", "yellow")
 		},
@@ -33,6 +35,7 @@ func NewYell(sessions *session.Registry, rooms repo.RoomRepo) *telnet.Command {
 		Help:    "yell <message> — alarmed broadcast across your zone",
 		MinArgs: 1,
 		Auth:    telnet.AuthPlayer,
+		Lag:     2 * time.Second,
 		Run: func(c *telnet.Context) error {
 			return zoneBroadcast(c, sessions, rooms, "yell", "yells", "red")
 		},

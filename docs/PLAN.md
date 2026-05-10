@@ -449,7 +449,21 @@ catalogs.
     (DoT/poison/bleed), the §9 condition enum, and stacking caps
     from different sources.
 26. **Cooldowns + global lag** (§12 / §4). Per-skill `cooldown_until`;
-    integrates with the §4 cooldown infrastructure.
+    integrates with the §4 cooldown infrastructure. **Landed 2026-05-09**
+    — both slices in one PR. Slice A (§4): `Command.Lag time.Duration`
+    + `Session.NextReady` (crossMu-guarded) + per-segment gate in
+    `Registry.dispatchOne`; refuse-with-message V1, stamp-on-success-
+    only; wired to `attack`/`kill`=3s, `flee`=2s, `parry`=1s,
+    `shout`/`yell`=2s. Slice B (§12): migration 0047 added
+    `skill_cooldowns_json`, new `Character.SkillCooldowns`,
+    `CharacterRepo.RecordSkillCooldown`, and the `cooldown` (Admin,
+    audited) + `cooldowns` (Player) verbs. Cooldowns are stored as
+    absolute deadlines, lazy-expired on read, and pruned on every
+    write. V1 producer is admin-only — real skill-check verbs stamp
+    when their gates land. Deferred: bounded queue (single dispatcher
+    swap on the same wire shape), movement lag (waits on §9 sector
+    cost table), say/tell lag (anti-RP), Skill.Family field for the
+    `cooldowns` spec's grouped display.
 27. ~~**Channeling slot refresh + madness tick** (§9). Schema half-
     landed (creature/channeling tables); chargen seeded affinities +
     starting weaves; this finishes the per-tick mechanics (slot

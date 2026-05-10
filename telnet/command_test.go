@@ -578,6 +578,112 @@ func names(cmds []*Command) []string {
 	return out
 }
 
+func withLag(d time.Duration) func(*Command) { return func(c *Command) { c.Lag = d } }
+
+// TestRegistry_Dispatch_LagStampedOnSuccess: a successful Run on a
+// verb with Lag>0 leaves the session lagged on the next dispatch.
+func TestRegistry_Dispatch_LagStampedOnSuccess(t *testing.T) {
+	var ran int
+	r := NewRegistry()
+	_ = r.Register(cmd("attack", func(_ *Context) error { ran++; return nil }, withLag(50*time.Millisecond)))
+	s, peer := newPipeSession(t)
+	var wg sync.WaitGroup
+	out := drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, "attack"); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if err := r.Dispatch(context.Background(), s, "attack"); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	_ = peer.Close()
+	wg.Wait()
+
+	if ran != 1 {
+		t.Fatalf("Run executions = %d, want 1 (second should be gated)", ran)
+	}
+	if !strings.Contains(out.String(), "too busy") {
+		t.Fatalf("output missing too-busy refusal: %q", out.String())
+	}
+}
+
+// TestRegistry_Dispatch_LagOnSuccessOnly: a Run that returns an error
+// must NOT stamp lag — failure path stays unrestricted.
+func TestRegistry_Dispatch_LagOnSuccessOnly(t *testing.T) {
+	var ran int
+	r := NewRegistry()
+	_ = r.Register(cmd("attack", func(_ *Context) error {
+		ran++
+		return errors.New("bad target")
+	}, withLag(50*time.Millisecond)))
+	s, peer := newPipeSession(t)
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	_ = r.Dispatch(context.Background(), s, "attack")
+	_ = r.Dispatch(context.Background(), s, "attack")
+	_ = peer.Close()
+	wg.Wait()
+
+	if ran != 2 {
+		t.Fatalf("Run executions = %d, want 2 (failed Run must not lag)", ran)
+	}
+}
+
+// TestRegistry_Dispatch_ZeroLagTransparent: an unstamped session
+// runs verbs with Lag==0 back-to-back without any gating.
+func TestRegistry_Dispatch_ZeroLagTransparent(t *testing.T) {
+	var ran int
+	r := NewRegistry()
+	_ = r.Register(cmd("look", func(_ *Context) error { ran++; return nil }))
+	s, peer := newPipeSession(t)
+	var wg sync.WaitGroup
+	_ = drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	for i := 0; i < 5; i++ {
+		_ = r.Dispatch(context.Background(), s, "look")
+	}
+	_ = peer.Close()
+	wg.Wait()
+
+	if ran != 5 {
+		t.Fatalf("Run executions = %d, want 5", ran)
+	}
+}
+
+// TestRegistry_Dispatch_LagPerSegment: chained input runs the
+// unlagged head, stamps lag, then refuses the lagged tail without
+// aborting the chain.
+func TestRegistry_Dispatch_LagPerSegment(t *testing.T) {
+	var calls []string
+	r := NewRegistry()
+	_ = r.Register(
+		cmd("look", func(c *Context) error { calls = append(calls, c.Name); return nil }),
+		cmd("attack", func(c *Context) error { calls = append(calls, c.Name); return nil }, withLag(50*time.Millisecond)),
+	)
+	s, peer := newPipeSession(t)
+	var wg sync.WaitGroup
+	out := drainPeer(peer, &wg)
+	defer wg.Wait()
+
+	if err := r.Dispatch(context.Background(), s, "look; attack; attack"); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	_ = peer.Close()
+	wg.Wait()
+
+	want := []string{"look", "attack"}
+	if !equalStrings(calls, want) {
+		t.Fatalf("calls = %v, want %v (third segment must be gated)", calls, want)
+	}
+	if !strings.Contains(out.String(), "too busy") {
+		t.Fatalf("output missing too-busy refusal: %q", out.String())
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

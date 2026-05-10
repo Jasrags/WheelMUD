@@ -44,7 +44,7 @@ func (r *SQLiteCharacterRepo) Create(ctx context.Context, c Character) (Characte
 	args = append(args, charPlayerValues(c,
 		jsons.classLevels, jsons.feats, jsons.skills, jsons.classFeatures,
 		jsons.questLog, jsons.dialogueState, jsons.equipment, jsons.inventory,
-		jsons.channelSettings, jsons.channeling)...)
+		jsons.channelSettings, jsons.channeling, jsons.skillCooldowns)...)
 
 	// Atomic first-character bootstrap: replace the trailing
 	// auth_level placeholder with a CASE expression that consults
@@ -558,6 +558,54 @@ func (r *SQLiteCharacterRepo) RecordPvP(ctx context.Context, id int64, on bool) 
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordSkillCooldown(ctx context.Context, id int64, skillID int32, deadline time.Time) error {
+	// Read-modify-write so we can prune past-deadline entries on every
+	// write (keeps the map bounded over time). Single-character ops
+	// at MUD scale don't need a tx.
+	row := r.db.QueryRowContext(ctx,
+		`SELECT skill_cooldowns_json FROM characters WHERE id = ?`, id)
+	var raw string
+	if err := row.Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCharacterNotFound
+		}
+		return fmt.Errorf("load skill_cooldowns_json: %w", err)
+	}
+	var cur map[int32]time.Time
+	if err := jsonUnmarshalString(raw, &cur); err != nil {
+		return fmt.Errorf("unmarshal skill_cooldowns_json: %w", err)
+	}
+	if cur == nil {
+		cur = make(map[int32]time.Time)
+	}
+	now := time.Now()
+	for k, v := range cur {
+		if !v.After(now) {
+			delete(cur, k)
+		}
+	}
+	if deadline.IsZero() {
+		delete(cur, skillID)
+	} else {
+		cur[skillID] = deadline
+	}
+	js, err := jsonMarshalString(cur)
+	if err != nil {
+		return fmt.Errorf("marshal skill_cooldowns_json: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET skill_cooldowns_json = ? WHERE id = ?`,
+		js, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record skill cooldown: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordAffects(ctx context.Context, id int64, affects []creature.Affect) error {
 	js, err := marshalJSONSlice(affects)
 	if err != nil {
@@ -705,7 +753,8 @@ func scanCharacter(s scanner) (Character, error) {
 		&j.channelSettings, &channelingNS,
 		&newsSeenSecs, &pvpInt,
 		&c.PendingFeats, &c.PendingSkillPoints, &c.PendingAbilityBumps, &c.PendingWeaves,
-		&c.XPDebt)...)
+		&c.XPDebt,
+		&j.skillCooldowns)...)
 
 	if err := s.Scan(dest...); err != nil {
 		return Character{}, err
@@ -753,6 +802,7 @@ type characterJSON struct {
 	questLog, dialogueState, equipment, inventory string
 	channelSettings                               string
 	channeling                                    string
+	skillCooldowns                                string
 }
 
 func marshalCharacterJSON(c Character) (characterJSON, error) {
@@ -797,6 +847,9 @@ func marshalCharacterJSON(c Character) (characterJSON, error) {
 	if j.channeling, err = jsonMarshalString(c.Channeling); err != nil {
 		return j, err
 	}
+	if j.skillCooldowns, err = jsonMarshalString(c.SkillCooldowns); err != nil {
+		return j, err
+	}
 	return j, nil
 }
 
@@ -838,6 +891,9 @@ func (j characterJSON) unmarshalInto(c *Character) error {
 		return err
 	}
 	if err := jsonUnmarshalString(j.channeling, &c.Channeling); err != nil {
+		return err
+	}
+	if err := jsonUnmarshalString(j.skillCooldowns, &c.SkillCooldowns); err != nil {
 		return err
 	}
 	return nil

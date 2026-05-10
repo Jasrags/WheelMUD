@@ -52,6 +52,7 @@ const charPlayerColumns = `race, background, class_levels_json,
 		pvp,
 		pending_feats, pending_skill_points, pending_ability_bumps, pending_weaves,
 		xp_debt,
+		skill_cooldowns_json,
 		auth_level`
 
 // charCoreValues returns the bound-parameter slice for the Core
@@ -106,7 +107,7 @@ func charCoreScanDest(c *Character, drJSON, resistsJSON, affectsJSON *string) []
 // the zero time.
 func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, classFeaturesJSON,
 	questLogJSON, dialogueStateJSON, equipmentJSON, inventoryJSON, channelSettingsJSON,
-	channelingJSON string,
+	channelingJSON, skillCooldownsJSON string,
 ) []any {
 	return []any{
 		c.Race, c.Background, classLevelsJSON,
@@ -123,6 +124,7 @@ func charPlayerValues(c Character, classLevelsJSON, featsJSON, skillsJSON, class
 		boolToInt(c.PvP),
 		c.PendingFeats, c.PendingSkillPoints, c.PendingAbilityBumps, c.PendingWeaves,
 		c.XPDebt,
+		skillCooldownsJSON,
 		c.AuthLevel,
 	}
 }
@@ -152,6 +154,7 @@ func charPlayerScanDest(c *Character,
 	pvpInt *int,
 	pendingFeats, pendingSkillPoints, pendingAbilityBumps, pendingWeaves *int32,
 	xpDebt *int64,
+	skillCooldownsJSON *string,
 ) []any {
 	return []any{
 		&c.Race, &c.Background, classLevelsJSON,
@@ -168,6 +171,7 @@ func charPlayerScanDest(c *Character,
 		pvpInt,
 		pendingFeats, pendingSkillPoints, pendingAbilityBumps, pendingWeaves,
 		xpDebt,
+		skillCooldownsJSON,
 		&c.AuthLevel,
 	}
 }

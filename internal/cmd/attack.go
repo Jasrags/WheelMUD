@@ -40,6 +40,7 @@ func NewAttack(
 			"       queued target without restarting the fight.\n",
 		MinArgs:   1,
 		Auth:      telnet.AuthPlayer,
+		Lag:       3 * time.Second,
 		Completer: completeAttackTargets(mobs),
 		Run: func(c *telnet.Context) error {
 			s := c.Session

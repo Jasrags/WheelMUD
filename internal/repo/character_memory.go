@@ -395,6 +395,48 @@ func (r *MemoryCharacterRepo) RecordPvP(_ context.Context, id int64, on bool) er
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordSkillCooldown(_ context.Context, id int64, skillID int32, deadline time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			pruneSkillCooldowns(c, time.Now())
+			if deadline.IsZero() {
+				if c.SkillCooldowns != nil {
+					delete(c.SkillCooldowns, skillID)
+					if len(c.SkillCooldowns) == 0 {
+						c.SkillCooldowns = nil
+					}
+				}
+				return nil
+			}
+			if c.SkillCooldowns == nil {
+				c.SkillCooldowns = make(map[int32]time.Time)
+			}
+			c.SkillCooldowns[skillID] = deadline
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
+// pruneSkillCooldowns drops past-now entries from the in-memory
+// repo's cooldown map. Mirrors the SQL writer's pruning so a long-
+// running test session can't accumulate stale entries.
+func pruneSkillCooldowns(c *Character, now time.Time) {
+	if len(c.SkillCooldowns) == 0 {
+		return
+	}
+	for k, v := range c.SkillCooldowns {
+		if !v.After(now) {
+			delete(c.SkillCooldowns, k)
+		}
+	}
+	if len(c.SkillCooldowns) == 0 {
+		c.SkillCooldowns = nil
+	}
+}
+
 func (r *MemoryCharacterRepo) RecordAffects(_ context.Context, id int64, affects []creature.Affect) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

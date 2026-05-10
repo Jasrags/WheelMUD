@@ -100,6 +100,13 @@ type Character struct {
 	Equipment     creature.Equipment
 	Inventory     []int64
 
+	// SkillCooldowns maps chargen.HashID(skillID) to the absolute
+	// time at which the cooldown clears. Missing or past-time.Now()
+	// entries are treated as cleared. Phase E #26 slice B.
+	// Persisted in skill_cooldowns_json (migration 0047). V1 only
+	// writer is the admin `cooldown` verb.
+	SkillCooldowns map[int32]time.Time
+
 	// ChannelSettings holds per-channel mute state keyed by channel
 	// name (lowercase). `true` means the player has the channel
 	// turned off and won't receive broadcasts; absent / `false`
@@ -323,6 +330,13 @@ type CharacterRepo interface {
 	// the chargen unmarshal contract for non-channelers). Returns
 	// ErrCharacterNotFound when no row matches id.
 	RecordChanneling(ctx context.Context, id int64, c *creature.Channeling) error
+	// RecordSkillCooldown sets or clears the cooldown deadline for one
+	// skill on the character row. Phase E #26 slice B. Passing a zero
+	// time.Time clears the entry; otherwise the entry replaces any
+	// prior value for skillID. Implementations prune past-time.Now()
+	// entries on every write so the map stays bounded. Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordSkillCooldown(ctx context.Context, id int64, skillID int32, deadline time.Time) error
 	// MarkNewsSeen advances last_news_seen to `when` if it strictly
 	// advances the watermark; older or equal values are silently
 	// ignored so reading an old entry can't unread newer ones.

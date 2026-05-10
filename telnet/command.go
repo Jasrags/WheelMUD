@@ -31,6 +31,12 @@ type Command struct {
 	Help    string // one-line summary
 	Long    string // optional multi-line help body
 	Auth    AuthLevel
+	// Lag is the global cooldown stamped on Session.nextReady after a
+	// successful Run. Zero = no lag (default). Verbs that represent
+	// significant in-world actions (combat strikes, zone broadcasts)
+	// opt in. Stamped on success only; a failing Run leaves the
+	// session unlagged. Phase E #26 / ROADMAP §4.
+	Lag     time.Duration
 	Run     func(*Context) error
 	// Completer, if non-nil, supplies argument-side tab completion. args
 	// is the full argument line as typed (everything after the verb,
@@ -343,6 +349,16 @@ func (r *Registry) dispatchOne(ctx context.Context, s *Session, line string, dep
 		}
 		return s.WriteRaw([]byte("Usage: " + usage + "\r\n"))
 	}
+	// Phase E #26 / §4: refuse a lagged segment with a copy that
+	// shows the remaining time. Per-segment so chained `;` inputs
+	// like `look; attack bob` don't refuse the unlagged head.
+	if locked, remaining := s.IsLagged(time.Now()); locked {
+		secs := int64(remaining.Round(time.Second) / time.Second)
+		if secs < 1 {
+			secs = 1
+		}
+		return s.WriteString(fmt.Sprintf("{{You're too busy. (~%ds)}}::yellow\r\n", secs))
+	}
 	cctx := &Context{
 		Ctx:     ctx,
 		Session: s,
@@ -350,7 +366,15 @@ func (r *Registry) dispatchOne(ctx context.Context, s *Session, line string, dep
 		Args:    args,
 		Raw:     rest,
 	}
-	return cmd.Run(cctx)
+	if err := cmd.Run(cctx); err != nil {
+		return err
+	}
+	// Stamp lag on success only — failing commands (bad target,
+	// repo error, etc.) do not rate-limit the player.
+	if cmd.Lag > 0 {
+		s.StampLag(cmd.Lag)
+	}
+	return nil
 }
 
 func writeLookupError(s *Session, err error) error {

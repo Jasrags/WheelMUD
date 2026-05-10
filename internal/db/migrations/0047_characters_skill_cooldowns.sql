@@ -1,0 +1,23 @@
+-- 0047_characters_skill_cooldowns.sql
+--
+-- Phase E §12 / #26 slice B — per-skill cooldowns.
+--
+-- Adds `skill_cooldowns_json` storing a JSON object that maps
+-- chargen.HashID(skillID) (int32 keys, encoded as JSON strings) to
+-- the absolute deadline when the cooldown clears (RFC3339 timestamp).
+-- Missing or past-time.Now() entries are treated as cleared by
+-- readers; the SQL writer prunes past-deadline entries on every
+-- write so the map can't grow unboundedly.
+--
+-- V1 producer is the admin `cooldown <player> <skill> <seconds>`
+-- verb (mirrors affects #25 slice 1). Real player skill checks
+-- (track / hide / lockpick) will stamp at success when those verbs
+-- gain skill-check gates.
+--
+-- Placement: strictly between `xp_debt` (0041) and `auth_level`.
+-- The auth_level column MUST stay the very last entry in
+-- charPlayerColumns / charPlayerValues / charPlayerScanDest for
+-- the SQLite first-character bootstrap CASE in CharacterRepo.Create.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+ALTER TABLE characters ADD COLUMN skill_cooldowns_json TEXT NOT NULL DEFAULT '{}';

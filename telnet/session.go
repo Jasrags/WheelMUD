@@ -107,6 +107,14 @@ type Session struct {
 	crossMu      sync.Mutex
 	lastTellFrom string
 	lastInputAt  time.Time
+	// nextReady is the wall-clock at which this session's dispatcher
+	// will accept a new lagged command. Zero = not lagged. Stamped on
+	// success by Registry.dispatchOne for verbs with Command.Lag > 0;
+	// read by the same dispatcher's gate before each segment. Lives
+	// under crossMu so external (test) callers can ResetLag without a
+	// race; the dispatcher itself only ever reads/writes from its own
+	// goroutine, so the lock is conservative defense.
+	nextReady time.Time
 	// channelMuted holds the per-channel mute map keyed by lowercase
 	// channel name; true = the player has the channel turned off and
 	// should not receive broadcasts. Loaded from the character at game
@@ -252,6 +260,35 @@ func (s *Session) StampInput(t time.Time) {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	s.lastInputAt = t
+}
+
+// IsLagged reports whether the session is currently rate-limited by
+// a prior Command.Lag stamp. remaining is zero when not lagged.
+// Read by Registry.dispatchOne at segment entry; the dispatcher
+// owns the only writer (StampLag) so the lock is defense in depth.
+func (s *Session) IsLagged(now time.Time) (locked bool, remaining time.Duration) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if s.nextReady.IsZero() || !now.Before(s.nextReady) {
+		return false, 0
+	}
+	return true, s.nextReady.Sub(now)
+}
+
+// StampLag extends nextReady by d. No-op when d <= 0. Only extends
+// — a pending longer lag is not shortened by a subsequent shorter
+// stamp (defensive: refuse-mode prevents stacking V1, but a future
+// queue-mode promotion could reach this path).
+func (s *Session) StampLag(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	deadline := time.Now().Add(d)
+	if deadline.After(s.nextReady) {
+		s.nextReady = deadline
+	}
 }
 
 // SetChannelMuted replaces the mute map. Pass nil to clear. The

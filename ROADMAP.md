@@ -158,12 +158,19 @@ constants and helpers in `telnet/iac.go`.
       will land alongside their respective features. `reply` takes
       a free-form message and bells. Channel verbs continue to
       self-name (no completer needed).
-- [ ] Command cooldowns / lag system (combat balance lever) — add
-      `Command.Lag time.Duration` and a `Session.NextReady time.Time`
-      gate checked in `Registry.Dispatch`; commands dispatched while
-      lagged queue (bounded, drop on overflow with a "you're too busy"
-      message). Combat skills set lag on success; movement uses the
-      sector cost from §9.
+- [~] Command cooldowns / lag system (combat balance lever). Phase E
+      #26 slice A landed 2026-05-09. `Command.Lag time.Duration` field
+      on every verb; `Session.NextReady time.Time` (crossMu-guarded);
+      gate placed in `Registry.dispatchOne` (per-segment, NOT in
+      `Dispatch`) so chained `;` inputs gate correctly. Refuse-with-
+      message V1 (`{{You're too busy. (~Ns)}}::yellow`) — bounded-
+      queue promotion is a single dispatcher swap on the same wire
+      shape. Stamp on success only (`StampLag` runs after a
+      `cmd.Run` returning nil, never on Run error). Wired to
+      `attack`/`kill`=3s, `flee`=2s, `parry`=1s, `shout`/`yell`=2s.
+      Deferred: bounded queue, movement lag (waits on §9 sector
+      cost table), say/tell lag (anti-RP — only zone broadcasts
+      lag V1).
 - [x] Macro / multi-command lines (`;` separator) —
       `telnet.SplitOnSemicolon` (quote/escape-aware) splits the raw
       line; `Registry.Dispatch` dispatches each segment in order via
@@ -1151,9 +1158,23 @@ will need on top of those tables.
       fires per-tick (DoT, regen, fear check, madness gain while
       embraced). Stacking rules: same `(source, name)` refreshes;
       different sources stack up to a per-affect cap.
-- [ ] Cooldowns and global lag — per-skill `cooldown_until` on the
+- [~] Cooldowns and global lag — per-skill `cooldown_until` on the
       character + the §4 `Command.Lag` global lag. Display in
-      `cooldowns` command grouped by skill family.
+      `cooldowns` command grouped by skill family. Phase E #26
+      slice B landed 2026-05-09: migration 0047 added
+      `skill_cooldowns_json` (placement: between `xp_debt` and
+      `auth_level`); `Character.SkillCooldowns map[int32]time.Time`
+      keyed by `chargen.HashID(skillID)`; new
+      `CharacterRepo.RecordSkillCooldown` (read-modify-write, prunes
+      past-now entries on every write). New verbs: `cooldowns`
+      (Player; lists active entries sorted alphabetically — V1 has
+      no `Family` field on chargen.Skill so the spec's "grouped by
+      skill family" is deferred until that schema lands) and
+      `cooldown <player> <skill> <seconds>` (Admin, audited;
+      `<seconds>=0` clears, refusals do not audit). V1 producer is
+      admin-only — real player skill-check verbs (track / hide /
+      lockpick) will stamp at success when those gain skill-check
+      gates.
 
 ## 13. Communication
 

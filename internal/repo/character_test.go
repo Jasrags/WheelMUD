@@ -141,6 +141,68 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_skill_cooldown", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "cdowner", PasswordHash: "h"})
+		c, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Birgitte"})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		// Set one cooldown.
+		future := time.Now().Add(30 * time.Second).UTC()
+		if err := cr.RecordSkillCooldown(ctx, c.ID, 42, future); err != nil {
+			t.Fatalf("set cooldown: %v", err)
+		}
+		got, _ := cr.GetByID(ctx, c.ID)
+		if len(got.SkillCooldowns) != 1 {
+			t.Fatalf("len: got %d, want 1", len(got.SkillCooldowns))
+		}
+		// Compare unix seconds — JSON round-trip rounds nanoseconds.
+		if got.SkillCooldowns[42].Unix() != future.Unix() {
+			t.Fatalf("deadline mismatch: got %v want %v", got.SkillCooldowns[42], future)
+		}
+
+		// Set a second; both survive.
+		future2 := time.Now().Add(60 * time.Second).UTC()
+		if err := cr.RecordSkillCooldown(ctx, c.ID, 99, future2); err != nil {
+			t.Fatalf("set 2nd cooldown: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.SkillCooldowns) != 2 {
+			t.Fatalf("after second set: len %d, want 2", len(got.SkillCooldowns))
+		}
+
+		// Clear one (zero time) — the other remains.
+		if err := cr.RecordSkillCooldown(ctx, c.ID, 42, time.Time{}); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if len(got.SkillCooldowns) != 1 || got.SkillCooldowns[99].Unix() != future2.Unix() {
+			t.Fatalf("after clear: %+v", got.SkillCooldowns)
+		}
+
+		// Past-deadline entries pruned on the next write.
+		past := time.Now().Add(-1 * time.Second).UTC()
+		if err := cr.RecordSkillCooldown(ctx, c.ID, 7, past); err != nil {
+			t.Fatalf("set past: %v", err)
+		}
+		// Trigger a write; the past entry must not survive prune.
+		if err := cr.RecordSkillCooldown(ctx, c.ID, 99, future2); err != nil {
+			t.Fatalf("re-set: %v", err)
+		}
+		got, _ = cr.GetByID(ctx, c.ID)
+		if _, has := got.SkillCooldowns[7]; has {
+			t.Fatalf("past entry survived prune: %+v", got.SkillCooldowns)
+		}
+
+		// Missing id.
+		if err := cr.RecordSkillCooldown(ctx, c.ID+999, 1, future); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing id: err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/record_quest_progress", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

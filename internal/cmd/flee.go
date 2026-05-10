@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -19,6 +21,7 @@ func NewFlee(mgr *combat.Manager) *telnet.Command {
 			"       Resolves on your next combat tick. Failure leaves you\n" +
 			"       in the fight; success drops you in a neighbouring room.\n",
 		Auth: telnet.AuthPlayer,
+		Lag:  2 * time.Second,
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			if s.CurrentRoomID == 0 || !mgr.Active(s.CurrentRoomID) {
