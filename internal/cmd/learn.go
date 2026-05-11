@@ -336,4 +336,3 @@ func abilityFullName(token string) string {
 	}
 	return token
 }
-

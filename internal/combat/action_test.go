@@ -68,10 +68,10 @@ func TestDefaultActionCost_Variants(t *testing.T) {
 		{ActionAttack, VariantPower, 4500 * time.Millisecond},
 		{ActionAttack, VariantQuick, 1800 * time.Millisecond},
 		{ActionParry, VariantNormal, 2 * time.Second},
-		{ActionParry, VariantPower, 2 * time.Second},  // variant ignored
-		{ActionParry, VariantQuick, 2 * time.Second},  // variant ignored
+		{ActionParry, VariantPower, 2 * time.Second}, // variant ignored
+		{ActionParry, VariantQuick, 2 * time.Second}, // variant ignored
 		{ActionFlee, VariantNormal, 2 * time.Second},
-		{ActionFlee, VariantPower, 2 * time.Second},   // variant ignored
+		{ActionFlee, VariantPower, 2 * time.Second}, // variant ignored
 		{ActionDodge, VariantNormal, 1 * time.Second},
 		{ActionThrow, VariantNormal, 2 * time.Second},
 		{ActionSidestep, VariantNormal, 500 * time.Millisecond},

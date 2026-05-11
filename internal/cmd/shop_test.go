@@ -296,7 +296,7 @@ func TestShop_SellRollsBackCreditOnDeleteFailure(t *testing.T) {
 		deleteErr:      errors.New("simulated storage failure"),
 	}
 	f.items.Insert(repo.Item{
-		ExternalID:       "potion", Name: "a healing potion", NameLower: "a healing potion",
+		ExternalID: "potion", Name: "a healing potion", NameLower: "a healing potion",
 		OwnerCharacterID: f.alice.CharacterID, Type: repo.ItemTypeConsumable, Value: 10, Weight: 1,
 	})
 

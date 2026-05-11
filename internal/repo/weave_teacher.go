@@ -18,10 +18,10 @@ import (
 // Affinities). Non-zero restricts the teacher to weaves whose Power
 // is set in the bitmask.
 type WeaveTeacher struct {
-	ID              int64
-	MobTemplateID   int64
-	MaxLevelTaught  int8
-	AffinityFilter  creature.PowerSet
+	ID             int64
+	MobTemplateID  int64
+	MaxLevelTaught int8
+	AffinityFilter creature.PowerSet
 }
 
 // WeaveTeacherRepo persists weave-teacher config. Teachers are

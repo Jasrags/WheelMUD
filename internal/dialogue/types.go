@@ -6,12 +6,12 @@
 // `Dialogue` mode against it.
 //
 // V1 vocabulary:
-//   * a Tree owns Nodes keyed by NodeID and names a Root.
-//   * each Node renders a Prompt and offers Responses.
-//   * each Response matches free-text keywords (case-insensitive
+//   - a Tree owns Nodes keyed by NodeID and names a Root.
+//   - each Node renders a Prompt and offers Responses.
+//   - each Response matches free-text keywords (case-insensitive
 //     substring) or a numbered choice, optionally fires Effects, and
 //     names a Next NodeID (or empty = end-of-conversation).
-//   * Effects are interpreted by the runtime (mode/dialogue.go); the
+//   - Effects are interpreted by the runtime (mode/dialogue.go); the
 //     vocabulary here is a typed enum + free-form Args bag.
 //
 // The package owns Validate so YAML load and repo Get can both refuse

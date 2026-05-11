@@ -19,16 +19,16 @@ func TestWeaponSpeedFactor(t *testing.T) {
 		weight float64
 		want   float64
 	}{
-		{0, 0.90},     // unarmed
-		{-1, 0.90},    // negative ≡ unarmed
-		{0.5, 0.80},   // light: dagger
-		{2.0, 0.80},   // light upper edge
-		{3.0, 1.00},   // medium: shortsword
-		{10.0, 1.00},  // medium upper edge
-		{12.0, 1.30},  // heavy: battleaxe
-		{15.0, 1.30},  // heavy upper edge
-		{16.0, 1.50},  // two-handed: greatsword
-		{99.0, 1.50},  // two-handed open-upper
+		{0, 0.90},    // unarmed
+		{-1, 0.90},   // negative ≡ unarmed
+		{0.5, 0.80},  // light: dagger
+		{2.0, 0.80},  // light upper edge
+		{3.0, 1.00},  // medium: shortsword
+		{10.0, 1.00}, // medium upper edge
+		{12.0, 1.30}, // heavy: battleaxe
+		{15.0, 1.30}, // heavy upper edge
+		{16.0, 1.50}, // two-handed: greatsword
+		{99.0, 1.50}, // two-handed open-upper
 	}
 	for _, tc := range cases {
 		if got := weaponSpeedFactor(tc.weight); got != tc.want {
@@ -168,7 +168,7 @@ func TestActorActionCost_HeavyVsLight(t *testing.T) {
 	}
 	plate, err := items.Create(ctx, repo.Item{
 		ExternalID: "test.plate", Name: "plate", Weight: 50.0,
-		Type: repo.ItemTypeArmor,
+		Type:  repo.ItemTypeArmor,
 		Stats: &repo.ArmorStats{WeightClass: "heavy"},
 	})
 	if err != nil {

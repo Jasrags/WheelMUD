@@ -220,4 +220,3 @@ func lookupClass(cat *chargen.Catalog, id string) (*chargen.Class, bool) {
 	}
 	return cl, true
 }
-

@@ -154,8 +154,8 @@ func TestEngine_KillWrongMob_NoDecrement(t *testing.T) {
 	_ = chars.RecordQuestProgress(ctx, c.ID, got.QuestLog)
 
 	e.onCombatDeath(ctx, combat.CombatDeath{
-		Killer: combat.ActorRef{Kind: combat.ActorKindCharacter, ID: c.ID},
-		Victim: combat.ActorRef{Kind: combat.ActorKindMob, ID: 1},
+		Killer:                combat.ActorRef{Kind: combat.ActorKindCharacter, ID: c.ID},
+		Victim:                combat.ActorRef{Kind: combat.ActorKindMob, ID: 1},
 		MobTemplateExternalID: "tr.bandit",
 	})
 	got, _ = chars.GetByID(ctx, c.ID)

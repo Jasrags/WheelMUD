@@ -43,9 +43,9 @@ type Runner struct {
 	cat    *scripts.Catalog
 	logger *slog.Logger
 
-	free   chan *gluua.LState // buffered up to poolSize; available LStates
-	all    []*gluua.LState    // every LState ever borrowed; Stop closes them all
-	allMu  sync.Mutex
+	free  chan *gluua.LState // buffered up to poolSize; available LStates
+	all   []*gluua.LState    // every LState ever borrowed; Stop closes them all
+	allMu sync.Mutex
 
 	stopOnce sync.Once
 	stopped  bool

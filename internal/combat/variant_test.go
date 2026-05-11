@@ -109,9 +109,9 @@ func TestCombatHit_CarriesVariant(t *testing.T) {
 	target := f.Order[1].Ref
 
 	var (
-		mu        sync.Mutex
-		hitSeen   []AttackVariant
-		missSeen  []AttackVariant
+		mu       sync.Mutex
+		hitSeen  []AttackVariant
+		missSeen []AttackVariant
 	)
 	eventbus.Subscribe[CombatHit](bus, func(_ context.Context, ev CombatHit) {
 		mu.Lock()

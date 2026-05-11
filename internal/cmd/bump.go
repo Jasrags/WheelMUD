@@ -176,4 +176,3 @@ func abilityScore(char repo.Character, key repo.AbilityKey) int8 {
 	}
 	return 0
 }
-

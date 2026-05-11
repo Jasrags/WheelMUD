@@ -434,7 +434,7 @@ func TestApplyTickEffects_SkipsNonTickAffects(t *testing.T) {
 		HPCurrent: 20, HPMax: 30,
 		Affects: []creature.Affect{
 			{Name: "blessed", DurationTicks: 5, Modifiers: []creature.StatMod{{Field: FieldDefense, Delta: 2}}}, // no TickEffect
-			{Name: "shielded", DurationTicks: 5, TickEffect: "ward", TickDamage: 0},                            // zero delta
+			{Name: "shielded", DurationTicks: 5, TickEffect: "ward", TickDamage: 0},                             // zero delta
 		},
 	}
 	hp, evs := ApplyTickEffects(c)

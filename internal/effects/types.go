@@ -13,15 +13,15 @@ import "github.com/Jasrags/WheelMUD/internal/creature"
 // with content-time fields (ID, on-apply / on-expire messages) the
 // producer side wants to keep separate from the runtime row.
 type Effect struct {
-	ID            string                 `yaml:"id"`
-	Name          string                 `yaml:"name"`
-	DurationTicks int32                  `yaml:"duration_ticks"`
-	Modifiers     []creature.StatMod     `yaml:"modifiers"`
-	ConditionMask creature.Condition     `yaml:"condition_mask"`
-	TickEffect    string                 `yaml:"tick_effect"`
-	TickDamage    int16                  `yaml:"tick_damage"`
-	MessageOnApply  string               `yaml:"message_on_apply"`
-	MessageOnExpire string               `yaml:"message_on_expire"`
+	ID              string             `yaml:"id"`
+	Name            string             `yaml:"name"`
+	DurationTicks   int32              `yaml:"duration_ticks"`
+	Modifiers       []creature.StatMod `yaml:"modifiers"`
+	ConditionMask   creature.Condition `yaml:"condition_mask"`
+	TickEffect      string             `yaml:"tick_effect"`
+	TickDamage      int16              `yaml:"tick_damage"`
+	MessageOnApply  string             `yaml:"message_on_apply"`
+	MessageOnExpire string             `yaml:"message_on_expire"`
 }
 
 // ToAffect builds a runtime creature.Affect from this catalog entry,

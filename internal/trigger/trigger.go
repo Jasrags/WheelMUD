@@ -56,14 +56,14 @@ type OwnerRef struct {
 // on_say; Actor only for events with a publishing actor). Callers
 // should treat zero-valued fields as "not applicable".
 type EventCtx struct {
-	Event       Event
-	RoomID      int64
-	ActorKind   string // "character" / "mob" / ""
-	ActorID     int64
-	TargetKind  string // for on_attack / on_death; "character" / "mob" / ""
-	TargetID    int64
-	Text        string // on_say utterance
-	BucketName  string // on_tick: "phase" / "combat" / "regen" / ...
+	Event      Event
+	RoomID     int64
+	ActorKind  string // "character" / "mob" / ""
+	ActorID    int64
+	TargetKind string // for on_attack / on_death; "character" / "mob" / ""
+	TargetID   int64
+	Text       string // on_say utterance
+	BucketName string // on_tick: "phase" / "combat" / "regen" / ...
 }
 
 // ActionHandler is invoked once per matching trigger with the

@@ -22,8 +22,8 @@ func NewSidestep(
 	sessions *session.Registry,
 ) *telnet.Command {
 	return &telnet.Command{
-		Name:    "sidestep",
-		Help:    "Sidestep <attacker> — flat-foot a named foe for one round",
+		Name: "sidestep",
+		Help: "Sidestep <attacker> — flat-foot a named foe for one round",
 		Long: "Usage: sidestep <attacker>\n" +
 			"       Reads the named attacker out of the active fight and\n" +
 			"       drops their Dex bonus to Defense on the next swing\n" +

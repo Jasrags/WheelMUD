@@ -97,10 +97,10 @@ func TestTalk_PushesDialogueOnMatch(t *testing.T) {
 	mobs, templates, _ := makeNPCWithDialogue(t, 1, "elder", tree)
 
 	pushed := struct {
-		called      bool
-		name        string
-		externalID  string
-		root        dialogue.NodeID
+		called     bool
+		name       string
+		externalID string
+		root       dialogue.NodeID
 	}{}
 	talk := NewTalk(mobs, templates, func(_ *telnet.Session, npcName, npcExternalID string, t *dialogue.Tree) error {
 		pushed.called = true

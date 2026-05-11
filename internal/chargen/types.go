@@ -111,8 +111,8 @@ type Class struct {
 	// means no starting coin (the chargen finalize path skips the
 	// RecordCoin write entirely). The validator rejects malformed
 	// strings at boot.
-	StartingCoin  string          `yaml:"starting_coin,omitempty"`
-	Description   string          `yaml:"description"`
+	StartingCoin string `yaml:"starting_coin,omitempty"`
+	Description  string `yaml:"description"`
 
 	// Enum maps to creature.Class. Loader fills it.
 	Enum creature.Class `yaml:"-"`

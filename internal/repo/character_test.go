@@ -748,7 +748,7 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		cr, ar := newRepo(t)
 		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
 		c, _ := cr.Create(ctx, Character{
-			AccountID:    acc.ID, Name: "Egwene",
+			AccountID: acc.ID, Name: "Egwene",
 			PendingFeats: 2,
 			Feats:        []int32{111},
 		})
@@ -830,7 +830,7 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		cr, ar := newRepo(t)
 		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
 		c, _ := cr.Create(ctx, Character{
-			AccountID:     acc.ID, Name: "Moiraine",
+			AccountID: acc.ID, Name: "Moiraine",
 			PendingWeaves: 2,
 			Channeling: &creature.Channeling{
 				ChannelerType:  creature.ChannelerInitiate,
@@ -877,7 +877,7 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		cr, ar := newRepo(t)
 		acc, _ := ar.Create(ctx, Account{Username: "study", PasswordHash: "h"})
 		c, _ := cr.Create(ctx, Character{
-			AccountID:      acc.ID, Name: "Egwene",
+			AccountID: acc.ID, Name: "Egwene",
 			PracticePoints: 5,
 			Channeling: &creature.Channeling{
 				ChannelerType:  creature.ChannelerInitiate,

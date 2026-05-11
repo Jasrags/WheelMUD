@@ -101,8 +101,8 @@ func TestRollDamage_AppliesStrModAndCritMult(t *testing.T) {
 // adjustment composes onto raw + BAB + StrMod. Hits/misses change
 // at the boundary between Normal and Power/Quick.
 func TestRollAttack_VariantBonus(t *testing.T) {
-	atk := newAttacker(10, 5)      // +0 Str, +5 BAB
-	def := newDefender(20)         // Defense 20
+	atk := newAttacker(10, 5) // +0 Str, +5 BAB
+	def := newDefender(20)    // Defense 20
 	// raw=15 → total = 15+5+0 = 20 hits Normal; with Power (-2) it
 	// drops to 18 and misses; with Quick (+1) it climbs to 21 and
 	// hits.

@@ -39,7 +39,7 @@ func TestQuaff_AppliesEffectAndConsumesItem(t *testing.T) {
 	cat := loadTestEffects(t)
 	potion := f.items.Insert(repo.Item{
 		ExternalID: "potion_healing", Name: "a healing potion",
-		Type:       repo.ItemTypeConsumable,
+		Type:             repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
 		Stats: &repo.ConsumableStats{
 			Charges:  1,
@@ -93,7 +93,7 @@ func TestQuaff_NotConsumable(t *testing.T) {
 	f := newInvFixture(t)
 	cat := loadTestEffects(t)
 	rock := f.items.Insert(repo.Item{
-		ExternalID:  "rock", Name: "a smooth rock",
+		ExternalID: "rock", Name: "a smooth rock",
 		OwnerCharacterID: f.alice.CharacterID,
 	})
 	_ = rock
@@ -108,7 +108,7 @@ func TestQuaff_UnknownEffectFizzles(t *testing.T) {
 	cat := loadTestEffects(t)
 	potion := f.items.Insert(repo.Item{
 		ExternalID: "mystery_potion", Name: "a mystery potion",
-		Type:       repo.ItemTypeConsumable,
+		Type:             repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
 		Stats: &repo.ConsumableStats{
 			Charges:  1,
@@ -129,7 +129,7 @@ func TestQuaff_MultiChargeDecrements(t *testing.T) {
 	f := newInvFixture(t)
 	cat := loadTestEffects(t)
 	potion := f.items.Insert(repo.Item{
-		ExternalID:       "potion_healing", Name: "a healing potion",
+		ExternalID: "potion_healing", Name: "a healing potion",
 		Type:             repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
 		Stats: &repo.ConsumableStats{
@@ -164,7 +164,7 @@ func TestQuaff_FinalDoseDeletes(t *testing.T) {
 	f := newInvFixture(t)
 	cat := loadTestEffects(t)
 	potion := f.items.Insert(repo.Item{
-		ExternalID:       "potion_healing", Name: "a healing potion",
+		ExternalID: "potion_healing", Name: "a healing potion",
 		Type:             repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
 		Stats: &repo.ConsumableStats{
@@ -196,7 +196,7 @@ func TestQuaff_UnlimitedChargesNeverDeletes(t *testing.T) {
 	f := newInvFixture(t)
 	cat := loadTestEffects(t)
 	potion := f.items.Insert(repo.Item{
-		ExternalID:       "wellspring", Name: "an enchanted wellspring",
+		ExternalID: "wellspring", Name: "an enchanted wellspring",
 		Type:             repo.ItemTypeConsumable,
 		OwnerCharacterID: f.alice.CharacterID,
 		Stats: &repo.ConsumableStats{

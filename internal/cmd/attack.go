@@ -294,17 +294,17 @@ func ActorRefForMob(id int64) combat.ActorRef {
 // line (cfmt-tagged, CRLF-terminated) and false. Refusals are checked
 // in priority order so the message matches the first failing gate.
 //
-//	1. nopvp room flag (room.Flags.NoPVP) — also refused when
-//	   roomKnown=false; we fail closed on the safety gate rather
-//	   than let a transient rooms.FindByID error open a PvP path
-//	   the room flag would have closed.
-//	2. same-group comrade — Phase D #22 slice 2; precedes the
-//	   newbie cap so a refusal cites the group bond rather than
-//	   the level gate.
-//	3. attacker below newbie cap
-//	4. target below newbie cap
-//	5. attacker has not opted in
-//	6. target has not opted in
+//  1. nopvp room flag (room.Flags.NoPVP) — also refused when
+//     roomKnown=false; we fail closed on the safety gate rather
+//     than let a transient rooms.FindByID error open a PvP path
+//     the room flag would have closed.
+//  2. same-group comrade — Phase D #22 slice 2; precedes the
+//     newbie cap so a refusal cites the group bond rather than
+//     the level gate.
+//  3. attacker below newbie cap
+//  4. target below newbie cap
+//  5. attacker has not opted in
+//  6. target has not opted in
 func pvpRefusalReason(roomKnown bool, room repo.Room, attacker, defender repo.Character, sameGroup bool) (string, bool) {
 	if !roomKnown || room.Flags.NoPVP {
 		return "{{These grounds are sanctified — no violence between travelers here.}}::yellow\r\n", false

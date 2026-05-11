@@ -36,8 +36,8 @@ type Command struct {
 	// significant in-world actions (combat strikes, zone broadcasts)
 	// opt in. Stamped on success only; a failing Run leaves the
 	// session unlagged. Phase E #26 / ROADMAP §4.
-	Lag     time.Duration
-	Run     func(*Context) error
+	Lag time.Duration
+	Run func(*Context) error
 	// Completer, if non-nil, supplies argument-side tab completion. args
 	// is the full argument line as typed (everything after the verb,
 	// leading whitespace already stripped). Implementations should match

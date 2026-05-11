@@ -59,13 +59,13 @@ type DialogueHooks struct {
 }
 
 type Dialogue struct {
-	npcName        string
-	npcExternalID  string // mob_template ExternalID — used by AdvanceQuest hook
-	tree           *dialogue.Tree
-	currentID      dialogue.NodeID
-	flags          map[string]bool
-	visible        []dialogue.Response // re-computed each render; numbered choice index → entry
-	hooks          DialogueHooks
+	npcName       string
+	npcExternalID string // mob_template ExternalID — used by AdvanceQuest hook
+	tree          *dialogue.Tree
+	currentID     dialogue.NodeID
+	flags         map[string]bool
+	visible       []dialogue.Response // re-computed each render; numbered choice index → entry
+	hooks         DialogueHooks
 }
 
 // NewDialogue constructs a Dialogue mode rooted at tree.Root. The

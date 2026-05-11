@@ -306,8 +306,8 @@ type Trainer struct {
 // channeler can learn." Loader maps the strings to the
 // creature.PowerSet bitmask before persisting.
 type WeaveTeacher struct {
-	MaxLevelTaught  int      `yaml:"max_level_taught"`
-	AffinityFilter  []string `yaml:"affinity_filter,omitempty"`
+	MaxLevelTaught int      `yaml:"max_level_taught"`
+	AffinityFilter []string `yaml:"affinity_filter,omitempty"`
 }
 
 // DialogueDecl is the authoring shape for a `dialogue:` block on a
@@ -333,12 +333,12 @@ type DialogueNodeDecl struct {
 // free-text input as substrings. Empty Match still allows numbered
 // selection. Effects fire in order before Next is followed.
 type DialogueResponseDecl struct {
-	Match   []string               `yaml:"match,omitempty"`
-	Reply   string                 `yaml:"reply,omitempty"`
-	Label   string                 `yaml:"label,omitempty"`
-	Next    string                 `yaml:"next,omitempty"`
-	Effects []DialogueEffectDecl   `yaml:"effects,omitempty"`
-	Show    DialogueShowDecl       `yaml:"show,omitempty"`
+	Match   []string             `yaml:"match,omitempty"`
+	Reply   string               `yaml:"reply,omitempty"`
+	Label   string               `yaml:"label,omitempty"`
+	Next    string               `yaml:"next,omitempty"`
+	Effects []DialogueEffectDecl `yaml:"effects,omitempty"`
+	Show    DialogueShowDecl     `yaml:"show,omitempty"`
 }
 
 // DialogueEffectDecl is one effect entry under a dialogue response.

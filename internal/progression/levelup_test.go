@@ -257,14 +257,14 @@ func TestComputeLevelUp_PendingPoolDeltas(t *testing.T) {
 	ch.ClassLevels = map[creature.Class]int8{creature.ClassArmsman: 1}
 
 	cases := []struct {
-		startLvl                                     int8
+		startLvl                                    int8
 		wantFeat, wantSkill, wantAbility, wantWeave int32
 	}{
-		{startLvl: 1, wantFeat: 0, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L2
-		{startLvl: 2, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L3 (feat)
-		{startLvl: 3, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L4 (ability)
-		{startLvl: 5, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0}, // → L6 (feat)
-		{startLvl: 7, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L8 (ability)
+		{startLvl: 1, wantFeat: 0, wantSkill: 3, wantAbility: 0, wantWeave: 0},  // → L2
+		{startLvl: 2, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0},  // → L3 (feat)
+		{startLvl: 3, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0},  // → L4 (ability)
+		{startLvl: 5, wantFeat: 1, wantSkill: 3, wantAbility: 0, wantWeave: 0},  // → L6 (feat)
+		{startLvl: 7, wantFeat: 0, wantSkill: 3, wantAbility: 1, wantWeave: 0},  // → L8 (ability)
 		{startLvl: 11, wantFeat: 1, wantSkill: 3, wantAbility: 1, wantWeave: 0}, // → L12 (feat+ability)
 	}
 	for _, tc := range cases {

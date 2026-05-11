@@ -92,12 +92,12 @@ type Reward struct {
 
 // Quest is the authored definition.
 type Quest struct {
-	ID        string `yaml:"id"`
-	Name      string `yaml:"name"`
-	Summary   string `yaml:"summary,omitempty"`
-	GiverMob  string `yaml:"giver_mob,omitempty"` // optional: the NPC who hands it out (informational only)
-	Steps     []Step `yaml:"steps"`
-	Rewards   Reward `yaml:"rewards,omitempty"`
+	ID       string `yaml:"id"`
+	Name     string `yaml:"name"`
+	Summary  string `yaml:"summary,omitempty"`
+	GiverMob string `yaml:"giver_mob,omitempty"` // optional: the NPC who hands it out (informational only)
+	Steps    []Step `yaml:"steps"`
+	Rewards  Reward `yaml:"rewards,omitempty"`
 }
 
 // Catalog is the immutable boot-time set of authored quests, keyed

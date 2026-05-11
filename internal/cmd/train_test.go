@@ -44,7 +44,7 @@ func newTrainFixture(t *testing.T, trainerClassID string, aliceXP int64, aliceLv
 		XP:            aliceXP,
 		Core: creature.Core{
 			HPCurrent: 12, HPMax: 12,
-			BAB: 1, // chargen-seeded armsman L1
+			BAB:   1, // chargen-seeded armsman L1
 			Saves: creature.Saves{Fort: 4, Ref: 1, Will: 0},
 			Abilities: creature.Abilities{
 				Con: creature.AbilityScore{Current: 14, Max: 14},

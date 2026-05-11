@@ -44,9 +44,9 @@ func TestIDForHash_Roundtrip(t *testing.T) {
 func TestEffect_ToAffect(t *testing.T) {
 	e := Effect{
 		ID: "test", Name: "Test", DurationTicks: 5,
-		Modifiers:       []creature.StatMod{{Field: "Defense", Delta: 2}},
-		ConditionMask:   creature.CondBlinded,
-		TickEffect:      "poison", TickDamage: -3,
+		Modifiers:     []creature.StatMod{{Field: "Defense", Delta: 2}},
+		ConditionMask: creature.CondBlinded,
+		TickEffect:    "poison", TickDamage: -3,
 		MessageOnExpire: "The test wears off.",
 	}
 	a := e.ToAffect(42)
