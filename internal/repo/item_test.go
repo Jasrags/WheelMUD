@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/db"
 )
@@ -618,6 +619,123 @@ func runItemRepoTests(t *testing.T, name string, newFix func(t *testing.T) itemR
 		err = fix.items.UpdateStats(ctx, seeded.ID, &KeyStats{KeyID: "wrong"})
 		if !errors.Is(err, ErrItemStatsTypeMismatch) {
 			t.Fatalf("err = %v, want ErrItemStatsTypeMismatch", err)
+		}
+	})
+
+	t.Run(name+"/decay_expiry_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		deadline := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
+		seeded, err := fix.items.Create(ctx, Item{
+			ExternalID: "corpse-decay-rt", Name: "a corpse", RoomID: roomID,
+			Type:           ItemTypeContainer,
+			Stats:          &ContainerStats{CapacityLbs: 100, CapacityCuFt: 10},
+			DecayExpiresAt: &deadline,
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := fix.items.GetByID(ctx, seeded.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		if got.DecayExpiresAt == nil {
+			t.Fatal("DecayExpiresAt lost on round-trip")
+		}
+		if !got.DecayExpiresAt.Equal(deadline) {
+			t.Fatalf("DecayExpiresAt = %v, want %v", got.DecayExpiresAt, deadline)
+		}
+	})
+
+	t.Run(name+"/set_and_clear_decay_expiry", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		seeded, err := fix.items.Create(ctx, Item{
+			ExternalID: "corpse-setclear", Name: "a corpse", RoomID: roomID,
+			Type:  ItemTypeContainer,
+			Stats: &ContainerStats{CapacityLbs: 100, CapacityCuFt: 10},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		deadline := time.Date(2026, 5, 11, 13, 0, 0, 0, time.UTC)
+		if err := fix.items.SetDecayExpiry(ctx, seeded.ID, deadline); err != nil {
+			t.Fatalf("SetDecayExpiry: %v", err)
+		}
+		got, _ := fix.items.GetByID(ctx, seeded.ID)
+		if got.DecayExpiresAt == nil || !got.DecayExpiresAt.Equal(deadline) {
+			t.Fatalf("after Set: DecayExpiresAt = %v, want %v", got.DecayExpiresAt, deadline)
+		}
+		if err := fix.items.ClearDecayExpiry(ctx, seeded.ID); err != nil {
+			t.Fatalf("ClearDecayExpiry: %v", err)
+		}
+		got, _ = fix.items.GetByID(ctx, seeded.ID)
+		if got.DecayExpiresAt != nil {
+			t.Fatalf("after Clear: DecayExpiresAt = %v, want nil", got.DecayExpiresAt)
+		}
+	})
+
+	t.Run(name+"/decay_methods_missing_item", func(t *testing.T) {
+		fix := newFix(t)
+		ctx := context.Background()
+		if err := fix.items.SetDecayExpiry(ctx, 999999, time.Now()); !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("SetDecayExpiry(missing) = %v, want ErrItemNotFound", err)
+		}
+		if err := fix.items.ClearDecayExpiry(ctx, 999999); !errors.Is(err, ErrItemNotFound) {
+			t.Fatalf("ClearDecayExpiry(missing) = %v, want ErrItemNotFound", err)
+		}
+	})
+
+	t.Run(name+"/list_with_decay_filters_and_sorts", func(t *testing.T) {
+		fix := newFix(t)
+		roomID := makeRoom(t, fix)
+		ctx := context.Background()
+		// Plain item — no deadline; must not appear.
+		if _, err := fix.items.Create(ctx, Item{ExternalID: "plain", Name: "plain", RoomID: roomID}); err != nil {
+			t.Fatalf("Create plain: %v", err)
+		}
+		earlier := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		later := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+		a, err := fix.items.Create(ctx, Item{
+			ExternalID: "decayA", Name: "a", RoomID: roomID,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 1},
+			DecayExpiresAt: &later,
+		})
+		if err != nil {
+			t.Fatalf("Create A: %v", err)
+		}
+		b, err := fix.items.Create(ctx, Item{
+			ExternalID: "decayB", Name: "b", RoomID: roomID,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 1},
+			DecayExpiresAt: &earlier,
+		})
+		if err != nil {
+			t.Fatalf("Create B: %v", err)
+		}
+		// Cleared item — has Set then Clear; must not appear.
+		c, err := fix.items.Create(ctx, Item{
+			ExternalID: "decayC", Name: "c", RoomID: roomID,
+			Type: ItemTypeContainer, Stats: &ContainerStats{CapacityLbs: 1},
+			DecayExpiresAt: &later,
+		})
+		if err != nil {
+			t.Fatalf("Create C: %v", err)
+		}
+		if err := fix.items.ClearDecayExpiry(ctx, c.ID); err != nil {
+			t.Fatalf("ClearDecayExpiry C: %v", err)
+		}
+		got, err := fix.items.ListWithDecay(ctx)
+		if err != nil {
+			t.Fatalf("ListWithDecay: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len = %d, want 2: %+v", len(got), got)
+		}
+		if got[0].ID != b.ID || got[1].ID != a.ID {
+			t.Fatalf("order = [%d,%d], want [%d,%d] (earlier first)",
+				got[0].ID, got[1].ID, b.ID, a.ID)
 		}
 	})
 

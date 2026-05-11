@@ -249,6 +249,13 @@ func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int
 	if name == "" {
 		name = "creature"
 	}
+	// Stamp decay deadline inline so the row is durable from the
+	// instant Create returns — a crash between Create and a follow-up
+	// UPDATE would otherwise orphan the corpse. The in-memory
+	// Decayer queue (scheduled below) still drives the 30s sweep in
+	// the live session; the column is the restart-recovery hook
+	// consumed by Decayer.RearmFromRepo (migration 0050).
+	deadline := m.now().Add(corpseDecayDuration)
 	corpse := repo.Item{
 		ExternalID: m.corpseExternalID(mob),
 		Name:       "corpse of " + name,
@@ -259,6 +266,7 @@ func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int
 			CapacityLbs:  500,
 			CapacityCuFt: 50,
 		},
+		DecayExpiresAt: &deadline,
 	}
 	created, err := m.items.Create(ctx, corpse)
 	if err != nil {
@@ -267,7 +275,7 @@ func (m *Manager) spawnCorpse(ctx context.Context, mob creature.MobInstance) int
 		return 0
 	}
 	if m.decayer != nil {
-		m.decayer.Schedule(created.ID, created.RoomID, m.now().Add(corpseDecayDuration))
+		m.decayer.Schedule(created.ID, created.RoomID, deadline)
 	}
 	return created.ID
 }

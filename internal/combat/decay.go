@@ -115,6 +115,46 @@ func (d *Decayer) popDue(now time.Time) []decayEntry {
 	return due
 }
 
+// RearmFromRepo replays persisted decay deadlines back into the
+// in-memory queue at boot. Walks every item row whose decay_expires_at
+// is non-NULL: rows whose deadline already passed are deleted on the
+// spot (no broadcast — nobody is logged in yet); future-deadline rows
+// are Schedule'd so the regular Tick will sweep them when due.
+//
+// Best-effort: a single failed Delete logs and continues so one bad
+// row doesn't block the remaining sweep. Returns the counts for the
+// boot log line.
+//
+// Safe to call on a nil Decayer (returns 0/0/nil). Items repo nil
+// short-circuits because the underlying scan can't run.
+func (d *Decayer) RearmFromRepo(ctx context.Context, items repo.ItemRepo, now time.Time) (rescheduled, swept int, err error) {
+	if d == nil || items == nil {
+		return 0, 0, nil
+	}
+	rows, err := items.ListWithDecay(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, row := range rows {
+		if row.DecayExpiresAt == nil {
+			continue
+		}
+		deadline := *row.DecayExpiresAt
+		if !deadline.After(now) {
+			if delErr := items.Delete(ctx, row.ID); delErr != nil {
+				slog.Warn("combat: corpse rearm sweep delete failed",
+					"item", row.ID, "room", row.RoomID, "error", delErr)
+				continue
+			}
+			swept++
+			continue
+		}
+		d.Schedule(row.ID, row.RoomID, deadline)
+		rescheduled++
+	}
+	return rescheduled, swept, nil
+}
+
 // Tick is the bucket subscription. Pops every due entry, deletes the
 // item row (best-effort), broadcasts the crumble line, and publishes
 // CorpseDecayed. Errors are logged and swallowed — one bad row must

@@ -206,6 +206,46 @@ func (r *MemoryItemRepo) Delete(_ context.Context, id int64) error {
 	return ErrItemNotFound
 }
 
+func (r *MemoryItemRepo) SetDecayExpiry(_ context.Context, itemID int64, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID == itemID {
+			t := at
+			r.items[idx].DecayExpiresAt = &t
+			return nil
+		}
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) ClearDecayExpiry(_ context.Context, itemID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for idx := range r.items {
+		if r.items[idx].ID == itemID {
+			r.items[idx].DecayExpiresAt = nil
+			return nil
+		}
+	}
+	return ErrItemNotFound
+}
+
+func (r *MemoryItemRepo) ListWithDecay(_ context.Context) ([]Item, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []Item
+	for _, i := range r.items {
+		if i.DecayExpiresAt != nil {
+			out = append(out, i)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].DecayExpiresAt.Before(*out[j].DecayExpiresAt)
+	})
+	return out, nil
+}
+
 func (r *MemoryItemRepo) UpdateStats(_ context.Context, id int64, stats ItemStats) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

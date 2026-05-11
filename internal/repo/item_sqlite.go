@@ -20,7 +20,7 @@ func NewSQLiteItemRepo(db *sql.DB) *SQLiteItemRepo {
 }
 
 const itemSelectCols = `id, external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id, ` +
-	`type, weight_lbs, value_cp, quality, flags, stats_json, created_at`
+	`type, weight_lbs, value_cp, quality, flags, stats_json, created_at, decay_expires_at`
 
 func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
 	if i.ExternalID == "" {
@@ -63,13 +63,17 @@ func (r *SQLiteItemRepo) Create(ctx context.Context, i Item) (Item, error) {
 	if i.ParentItemID != 0 {
 		parentID = i.ParentItemID
 	}
+	var decayAt any
+	if i.DecayExpiresAt != nil {
+		decayAt = *i.DecayExpiresAt
+	}
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id,
-			type, weight_lbs, value_cp, quality, flags, stats_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			type, weight_lbs, value_cp, quality, flags, stats_json, created_at, decay_expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		i.ExternalID, i.Name, i.NameLower, i.ShortDesc, roomID, ownerID, parentID,
 		string(i.Type), i.Weight, int64(i.Value), string(i.Quality),
-		int64(i.Flags), statsJSON, i.CreatedAt,
+		int64(i.Flags), statsJSON, i.CreatedAt, decayAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -472,6 +476,63 @@ func (r *SQLiteItemRepo) UpdateStats(ctx context.Context, itemID int64, stats It
 	return nil
 }
 
+// SetDecayExpiry stamps the decay deadline on a single row.
+func (r *SQLiteItemRepo) SetDecayExpiry(ctx context.Context, itemID int64, at time.Time) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET decay_expires_at = ? WHERE id = ?`, at, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("set decay expiry: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set decay expiry rows: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
+// ClearDecayExpiry sets decay_expires_at back to NULL.
+func (r *SQLiteItemRepo) ClearDecayExpiry(ctx context.Context, itemID int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE items SET decay_expires_at = NULL WHERE id = ?`, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("clear decay expiry: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("clear decay expiry rows: %w", err)
+	}
+	if n == 0 {
+		return ErrItemNotFound
+	}
+	return nil
+}
+
+// ListWithDecay returns every row with a non-NULL decay deadline,
+// past or future. The partial index added in 0050 keeps this O(corpses).
+func (r *SQLiteItemRepo) ListWithDecay(ctx context.Context) ([]Item, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+itemSelectCols+` FROM items WHERE decay_expires_at IS NOT NULL ORDER BY decay_expires_at`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list with decay: %w", err)
+	}
+	defer rows.Close()
+	var out []Item
+	for rows.Next() {
+		i, err := scanItemRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
 // scanItemRow reads one row from a SELECT itemSelectCols result and
 // builds a fully decoded Item, including the polymorphic stats blob.
 // Centralized so the column list and decode contract live in one
@@ -487,10 +548,11 @@ func scanItemRow(s rowScanner) (Item, error) {
 		valueCP   int64
 		flags     int64
 		statsJSON string
+		decayAt   sql.NullTime
 	)
 	if err := s.Scan(
 		&i.ID, &i.ExternalID, &i.Name, &i.NameLower, &i.ShortDesc, &rid, &oid, &pid,
-		&typeStr, &i.Weight, &valueCP, &quality, &flags, &statsJSON, &i.CreatedAt,
+		&typeStr, &i.Weight, &valueCP, &quality, &flags, &statsJSON, &i.CreatedAt, &decayAt,
 	); err != nil {
 		return Item{}, fmt.Errorf("scan item row: %w", err)
 	}
@@ -502,6 +564,10 @@ func scanItemRow(s rowScanner) (Item, error) {
 	}
 	if pid.Valid {
 		i.ParentItemID = pid.Int64
+	}
+	if decayAt.Valid {
+		t := decayAt.Time
+		i.DecayExpiresAt = &t
 	}
 	i.Type = ItemType(typeStr)
 	i.Quality = ItemQuality(quality)

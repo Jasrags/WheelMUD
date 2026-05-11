@@ -107,6 +107,13 @@ type Item struct {
 	Stats ItemStats
 
 	CreatedAt time.Time
+
+	// DecayExpiresAt is the wall-clock deadline after which the
+	// `combat.Decayer` sweeper deletes the row. Non-nil only on
+	// corpse containers spawned by the death pipeline. Persisted so
+	// the in-memory decay queue can re-arm itself after a server
+	// restart (migration 0050).
+	DecayExpiresAt *time.Time
 }
 
 // HasFlag reports whether the named bit is set. Tiny helper to keep
@@ -287,6 +294,22 @@ type ItemRepo interface {
 	// ErrItemNotFound if no row matches. Caller must clear any
 	// dangling references (inventory_json, equipment slots) first.
 	Delete(ctx context.Context, id int64) error
+	// SetDecayExpiry stamps items.decay_expires_at to the given
+	// deadline. Used by the death pipeline immediately after
+	// spawnCorpse's Create returns so the row survives restart with
+	// its decay deadline intact. Returns ErrItemNotFound if no row
+	// matches.
+	SetDecayExpiry(ctx context.Context, itemID int64, at time.Time) error
+	// ClearDecayExpiry sets items.decay_expires_at back to NULL.
+	// Sibling to SetDecayExpiry; reserved for future "reanimate"
+	// or admin tools. Returns ErrItemNotFound if no row matches.
+	ClearDecayExpiry(ctx context.Context, itemID int64) error
+	// ListWithDecay returns every row whose decay_expires_at column
+	// is non-NULL, regardless of whether the deadline is in the past
+	// or future. The boot-time rearm walks this set, deleting
+	// already-expired rows and re-scheduling the rest. Sort is
+	// stable by deadline ascending.
+	ListWithDecay(ctx context.Context) ([]Item, error)
 	// UpdateStats overwrites the items.stats_json column for the row
 	// identified by id. Used by Phase E #25 slice 3 `quaff` to
 	// decrement ConsumableStats.Charges instead of deleting the

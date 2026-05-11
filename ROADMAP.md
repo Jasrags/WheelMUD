@@ -988,10 +988,16 @@ will need on top of those tables.
       `DebtTaken` share. The `xp` verb shows the debt line when
       non-zero. No tick-scheduled decay — debt clears through
       play. Inventory / equipment / coin stay with the player;
-      no player corpse spawned. Still pending: durable corpse
-      decay, mob respawn via §9 zone reset (depends on Phase
-      F), `bind` verb to retarget BoundRoomID, drop-on-death
-      toggle if play-tests demand it.
+      no player corpse spawned. **Durable corpse decay landed
+      2026-05-11** — migration 0050 adds `items.decay_expires_at`;
+      `combat.spawnCorpse` stamps the deadline inline at Create
+      time; `combat.Decayer.RearmFromRepo` replays the queue at
+      boot (past-deadline rows are swept on the spot, future rows
+      are re-Schedule'd). Still pending: mob respawn via §9 zone
+      reset (already shipped — `internal/world/respawn.go::
+      ZoneResetter.respawnMobs`; this bullet is stale), `bind`
+      verb to retarget BoundRoomID, drop-on-death toggle if
+      play-tests demand it.
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in

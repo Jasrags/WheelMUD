@@ -496,8 +496,8 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[stri
 		// container-semantics plan.
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO items(external_id, name, name_lower, short_desc, room_id, owner_character_id, parent_item_id,
-				type, weight_lbs, value_cp, quality, flags, stats_json)
-			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+				type, weight_lbs, value_cp, quality, flags, stats_json, decay_expires_at)
+			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, NULL)`,
 			it.ID, it.Name, strings.ToLower(it.Name), it.Short, roomID,
 			string(t), it.Weight, int64(value), string(q),
 			int64(flags), statsJSON,

@@ -334,6 +334,16 @@ func main() {
 	}, bus)
 	combatMgr.SetDecayer(corpseDecay)
 	buckets.Decay.Subscribe(corpseDecay.Tick)
+	// Boot-time rearm: replay persisted corpse decay deadlines from
+	// items.decay_expires_at (migration 0050). Past-deadline rows are
+	// swept on the spot; future rows are reinserted into the queue so
+	// the Decay bucket will resolve them at their original schedule.
+	if rescheduled, swept, err := corpseDecay.RearmFromRepo(context.Background(), items, time.Now()); err != nil {
+		slog.Warn("corpse decay rearm failed", "error", err)
+	} else if rescheduled > 0 || swept > 0 {
+		slog.Info("corpse decay rearmed",
+			"rescheduled", rescheduled, "swept", swept)
+	}
 
 	// Phase D #18 follow-up: flee verb. The mover lives in cmd/ so it
 	// has access to sessions + RenderRoom; combat invokes it from

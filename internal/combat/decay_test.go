@@ -169,6 +169,80 @@ func TestDecayer_ScheduleZeroIDIsIgnored(t *testing.T) {
 	}
 }
 
+func TestDecayer_RearmFromRepo(t *testing.T) {
+	ctx := context.Background()
+	items := repo.NewMemoryItemRepo()
+	t0 := time.Unix(2_000_000, 0).UTC()
+
+	past := t0.Add(-1 * time.Minute)
+	future := t0.Add(5 * time.Minute)
+
+	expired, err := items.Create(ctx, repo.Item{
+		ExternalID:     "corpse-expired",
+		Name:           "corpse of trolloc",
+		RoomID:         42,
+		Type:           repo.ItemTypeContainer,
+		Stats:          &repo.ContainerStats{CapacityLbs: 100, CapacityCuFt: 10},
+		DecayExpiresAt: &past,
+	})
+	if err != nil {
+		t.Fatalf("seed expired: %v", err)
+	}
+	live, err := items.Create(ctx, repo.Item{
+		ExternalID:     "corpse-live",
+		Name:           "corpse of orc",
+		RoomID:         43,
+		Type:           repo.ItemTypeContainer,
+		Stats:          &repo.ContainerStats{CapacityLbs: 100, CapacityCuFt: 10},
+		DecayExpiresAt: &future,
+	})
+	if err != nil {
+		t.Fatalf("seed live: %v", err)
+	}
+
+	d := NewDecayer(items, nil, nil)
+	rescheduled, swept, err := d.RearmFromRepo(ctx, items, t0)
+	if err != nil {
+		t.Fatalf("RearmFromRepo: %v", err)
+	}
+	if rescheduled != 1 || swept != 1 {
+		t.Fatalf("counts = rescheduled=%d swept=%d, want 1/1", rescheduled, swept)
+	}
+	if got := d.Pending(); got != 1 {
+		t.Fatalf("queue len = %d, want 1", got)
+	}
+	if _, err := items.GetByID(ctx, expired.ID); err != repo.ErrItemNotFound {
+		t.Fatalf("expired item still present: err=%v", err)
+	}
+	if _, err := items.GetByID(ctx, live.ID); err != nil {
+		t.Fatalf("live item gone: %v", err)
+	}
+
+	// Advancing the clock past the live deadline drains it via the
+	// normal Tick path — proves the Schedule actually landed.
+	d.SetClock(func() time.Time { return future.Add(time.Second) })
+	d.Tick(ctx)
+	if _, err := items.GetByID(ctx, live.ID); err != repo.ErrItemNotFound {
+		t.Fatalf("live item not swept after deadline: err=%v", err)
+	}
+	if got := d.Pending(); got != 0 {
+		t.Fatalf("queue len after sweep = %d, want 0", got)
+	}
+}
+
+func TestDecayer_RearmFromRepo_NilSafe(t *testing.T) {
+	var d *Decayer
+	r, s, err := d.RearmFromRepo(context.Background(), repo.NewMemoryItemRepo(), time.Now())
+	if err != nil || r != 0 || s != 0 {
+		t.Fatalf("nil receiver: r=%d s=%d err=%v", r, s, err)
+	}
+	d2 := NewDecayer(nil, nil, nil)
+	r, s, err = d2.RearmFromRepo(context.Background(), nil, time.Now())
+	if err != nil || r != 0 || s != 0 {
+		t.Fatalf("nil items: r=%d s=%d err=%v", r, s, err)
+	}
+}
+
 func TestDecayer_NilReceiverNoop(t *testing.T) {
 	var d *Decayer
 	d.Schedule(1, 1, time.Now()) // must not panic

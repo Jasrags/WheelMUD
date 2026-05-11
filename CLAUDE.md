@@ -386,6 +386,19 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `ErrActionFaulted`. Action handlers gain optional access to
   `repo.TriggerRepo` via `ActionDeps.Triggers` — only the
   fault-budget plumbing uses it today.
+  0050 added `items.decay_expires_at` (nullable TIMESTAMP) backing
+  Phase D §19 polish — durable corpse decay. `combat.spawnCorpse`
+  stamps the column with `now() + corpseDecayDuration` at Create
+  time so the row is durable from the instant of insert; on boot
+  `combat.Decayer.RearmFromRepo` walks every row with a non-NULL
+  deadline and either deletes (past) or re-Schedules (future) it.
+  Partial index `idx_items_decay_expires_at` keeps the boot scan
+  O(corpses). No backfill — corpses spawned pre-0050 linger until
+  admin purge on first restart after upgrade. Lock-step rule:
+  `item_sqlite.go` keeps `itemSelectCols` + the `Create` INSERT +
+  `scanItemRow` in sync; the loader's raw-SQL INSERT in
+  `internal/world/loader.go::insertItems` mirrors them (binds NULL
+  — YAML items never carry a decay deadline).
   0048 added `exits.authored_closed` and `exits.authored_locked`
   (both INTEGER NOT NULL DEFAULT 0) backing §7 area/zone reset
   extension — door state on AreaReset. The loader stamps both
