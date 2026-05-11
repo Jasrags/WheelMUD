@@ -1034,6 +1034,105 @@ will need on top of those tables.
       Pending follow-ups (deferred): `gtell`, leader succession,
       invite expiry, cross-room follow, loot share, `assist`,
       `consider`.
+- [~] **Action cost & per-actor cadence** — the current MVP (#18)
+      resolves *one* action per `tick.Buckets.Combat` pulse for the
+      single active actor on a strict round-robin, so a 2-combatant
+      fight swings every 4 s regardless of Dex, weapon, race, or
+      armor. That reads as turn-based, not real-time, and gives an
+      Aiel spearman the same swing rate as a plate-armored Borderland
+      heavy. The long-term model treats combat time as an **action
+      budget over real wall-clock**:
+
+      - **Per-actor cadence.** `Fight.Order` stops driving an
+        `ActiveIdx` round-robin. Each `ActorEntry` carries
+        `NextActAt time.Time`; the bucket pulses at ~1 s and
+        `tickRoom` drains *every* actor whose `NextActAt <= now`
+        in initiative order. Initiative still rolls at `Start` but
+        only seeds the first `NextActAt` (low init = slight delay
+        on the first swing) rather than picking who acts ever.
+      - **Action cost.** Every `Action` carries a base duration
+        and stamina cost. `combat.actorActionCost(core, eq, action)`
+        is the central pure function — easy to test, easy to tune.
+        After resolution, `NextActAt = now + cost(action) ×
+        speedFactor(core, eq)` and `Core.Stamina -= action.Stamina`.
+      - **Speed factor** folds in (multiplicatively): base actor
+        speed (Dex, race, class), worn-armor weight class, wielded-
+        weapon weight, feats that reduce specific penalties.
+        Examples: Aiel-spear-leather ≈ 0.7×; Borderlander-greatsword-
+        plate ≈ 1.8×; Lan-greatsword-mail ≈ 1.1× via Blademaster
+        feat that halves the weapon-weight term. The "Lan exception"
+        is not a special case — it's the same machinery with a feat
+        modifier.
+      - **Action menu broadens.** Today: `Attack | Parry | Flee`.
+        Long-term: same plus `power` / `quick` variants of attack
+        (damage-vs-cost trade), `throw <weapon> <target>` (ranged,
+        consumes the wield slot), `dodge` (short defensive boost,
+        cheap, Dex-favored — pairs with `parry` which is weapon-
+        favored), and `reposition` / `sidestep` (flat-foots last
+        attacker, no damage). Aiel naturally chain
+        `quick → dodge → throw → reposition` because their speed
+        factor + stamina pool support it; a plate Borderlander
+        literally cannot — the action math prices them out even
+        if they queue the verbs.
+      - **Stamina pool** as the burst limiter. New `Stamina`,
+        `StaminaMax`, `StaminaRegen` on `creature.Core`; rides the
+        existing `tick.Buckets.Regen` pulse for refill. Without
+        this, low-cost actions would spam forever. Race table
+        seeds different pools (Aiel large+fast, Ogier large+slow).
+        Stamina refill rate is reduced by armor weight, so plate
+        not only swings slower but recovers cheap actions slower.
+      - **Iterative attacks fold in** as "your action cost is low
+        enough that you queue the next swing immediately." A high-
+        BAB character's `tickRoom` pass drains 2–4 queued attacks
+        per pulse at +0/-5/-10/-15 attack bonus, replacing the
+        D&D 3.x explicit-iteratives mechanic with cadence math.
+      - **Per-verb `Lag` decouples from combat pacing.** Today the
+        verb's 3 s `Lag` (Phase E #26) is the dominant gate; once
+        the engine drives swings, `Lag` shrinks to ~0.5 s as an
+        input-fairness floor. Combat cadence becomes a property of
+        the *fighter*, not of the *typist*.
+      - **Persistence pressure.** A 1 s bucket × 5 simultaneous
+        fights with HP write-back per swing is ~5–25 UPDATEs/s on
+        `characters`/`mob_instances`. SQLite at our scale handles
+        that, but a write-coalescing pass on the persist.Manager
+        (dirty-bit aggregate for HP / stamina) becomes worth
+        scheduling before content scales the fight count up.
+      - **Echo line volume.** `CombatHit`/`CombatMiss` lines stream
+        2–4×/s in a hot fight. Great for *feel*, but the per-
+        character combat brief (currently one full line per event)
+        needs a compact mode — likely an opt-in `combat brief`
+        toggle that collapses runs of misses into a single
+        "you swing wildly (×3)" rollup. Pairs with the prompt
+        templating `%t` slot reserved in §2 for an in-combat HP/SP
+        gauge.
+      - **Balance complexity.** Once cost is a function of
+        `(race × class × feats × armor × weapon × action)`, every
+        new content addition needs a tuning pass and "is Aiel OP"
+        becomes a real question. Mitigated by keeping
+        `actorActionCost` as one pure function with a YAML tuning
+        table sibling to the existing chargen catalog.
+
+      Long-term direction lock-in: per-actor cadence drives the
+      whole subsystem; everything else (action variety, stamina,
+      racial speed, feats, iteratives) is downstream of it. The
+      MVP `[~]` initiative/round structure item above stays
+      shipped — this item *replaces its semantics* once
+      cadence work begins, but the `Fight` / `Manager` / `Action`
+      / event-bus surfaces all carry over with field additions,
+      not a rewrite.
+
+      **Slice 60 (Phase L foundation) landed 2026-05-10.**
+      `ActorEntry.NextActAt` / `LastActedAt` plus
+      `combat.DefaultActionCost(kind)` replace round-robin
+      `ActiveIdx`. Combat bucket cadence dropped 4 s → 1 s; verb
+      `Lag` on `attack`/`parry`/`flee` dropped to 500 ms (lag is
+      now input-fairness only). `RoundStarted` fires per
+      actor-act; `Fight.Round` is the monotonically-incrementing
+      per-fight act counter. `ParryingUntil` stamp moves to
+      `round + 1` so the stance covers exactly the next incoming
+      swing. Action cost is flat-table for now (Attack 3 s,
+      Parry/Flee 2 s, idle 1 s) — slices 61–66 layer variant /
+      gear / race / stamina / feats on top.
 
 ## 12. Skills, spells & progression
 

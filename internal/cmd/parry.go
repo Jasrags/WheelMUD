@@ -27,7 +27,7 @@ func NewParry(mgr *combat.Manager, characters repo.CharacterRepo, sessions *sess
 			"       consumed by the first attack against you and lasts only\n" +
 			"       through the current round.\n",
 		Auth: telnet.AuthPlayer,
-		Lag:  1 * time.Second,
+		Lag:  500 * time.Millisecond,
 		Run: func(c *telnet.Context) error {
 			s := c.Session
 			if s.CurrentRoomID == 0 || !mgr.Active(s.CurrentRoomID) {

@@ -900,6 +900,216 @@ tier has somewhere to land.
 
 ---
 
+## Phase L — Combat depth & feel
+
+Phase D shipped a working combat MVP: round-robin, one action per
+4 s bucket, 3 s verb-lag gate. Functionally complete but
+**tempo-wise it reads as turn-based** — a 2-combatant fight swings
+every 4 s regardless of who's fighting. Long-term we want combat
+that distinguishes an Aiel spearman from a Borderland heavy
+without anyone re-typing their verb faster. See ROADMAP §11
+"Action cost & per-actor cadence" for the full design; this
+phase is the implementation order.
+
+Direction lock-in: **per-actor cadence with action costs**, not
+"speed up the bucket." Cheap to start, scales naturally into
+racial flavor, stamina, iterative attacks, and richer action
+variety. Each slice is shippable on its own; we can stop after
+any slice and the game still works.
+
+60. ~~**Per-actor cadence — kill the round-robin.** Foundation
+    slice. No new content, no balance changes; just replace
+    "one actor per pulse" with "every actor whose timer fired."~~
+    Landed 2026-05-10.
+    - `ActorEntry` gains `NextActAt time.Time` and
+      `LastActedAt time.Time` (debug-only; helps tests assert
+      "Aiel acted 3× while Trolloc acted 1×").
+    - `tickRoom` stops advancing `ActiveIdx`. Instead it walks
+      `Order` in initiative position, and for each entry whose
+      `NextActAt <= m.now()`, pops the queued action and runs
+      `resolveAction`, then sets `NextActAt = m.now() +
+      defaultActionCost(action)`. `ActiveIdx` field deleted
+      (or repurposed as "last actor to swing" for prompt).
+    - New `combat.defaultActionCost(action Action) time.Duration`
+      pure fn — flat table for now: Attack=3 s, Parry=2 s,
+      Flee=2 s. Tuneable constants, not a function of actor yet.
+    - Bucket cadence drops from 4 s → 1 s
+      (`DefaultCombatInterval`). Verb `Lag` drops accordingly:
+      attack 3 s → 0.5 s, parry 1 s → 0.5 s, flee 2 s → 0.5 s.
+      Lag is now input fairness, not combat pacing.
+    - `Manager.SetClock` already exists; tests get rewritten
+      around clock advances rather than tick counts.
+    - **Slice exit criterion:** existing combat tests pass with
+      the new tick loop; two-combatant fight feels like real-time
+      melee, no flavor differentiation yet.
+
+61. **Attack variants — `power` and `quick`.** First flavor
+    payoff with no new schema.
+    - `Action.Kind` keeps `Attack`; `Action` gains
+      `Variant AttackVariant` (`Normal | Power | Quick`).
+    - `attack <target>` keeps current behavior (`Normal`).
+      `attack <target> power` (alias: `power <target>`) and
+      `attack <target> quick` (alias: `jab <target>`) queue the
+      variants. Re-issuing during a fight switches the variant
+      for the next swing.
+    - `defaultActionCost` becomes a 1-arg lookup keyed by
+      `(Kind, Variant)`: Normal 3 s / Power 4.5 s / Quick 1.8 s.
+      `RollDamage` reads a variant multiplier: Normal 1.0 /
+      Power 1.5 / Quick 0.6. Attack roll bonus: Normal 0 /
+      Power -2 / Quick +1.
+    - Echo lines distinguish variants ("you lunge with a power
+      strike", "you flick a quick jab").
+    - **Slice exit:** a high-Dex character realistically chains
+      quick jabs while a heavy hitter loads up power swings;
+      damage-per-second roughly equivalent across variants on a
+      stationary target.
+
+62. **Gear-driven speed — weapon weight + armor encumbrance.**
+    First "your kit matters" pass.
+    - New `combat.actorActionCost(core creature.Core, eq creature.Equipment, action Action) time.Duration`
+      replaces `defaultActionCost`. Same flat table, multiplied
+      by `weaponSpeedFactor(eq)` × `armorSpeedFactor(eq)`.
+    - `weaponSpeedFactor` reads `WeaponStats.Weight` on the
+      wielded item: light ≤ 2 lb → 0.8×, medium → 1.0×, heavy
+      ≥ 10 lb → 1.3×, two-handed ≥ 15 lb → 1.5×. Unarmed = 0.9×.
+    - `armorSpeedFactor` sums worn-armor weight class
+      (none=1.0×, light=1.05×, medium=1.15×, heavy=1.3×). Reads
+      `ArmorStats.WeightClass` (new field; ArmorStats already
+      exists). Loader gets a string→enum translation; default
+      derived from existing `Weight` if unset.
+    - `score` sheet gains a "Speed" line showing effective
+      action-cost multiplier vs. the unencumbered baseline.
+    - **Slice exit:** a leather-and-spear character measurably
+      out-swings a plate-and-greatsword character; the test
+      zone gets a "speed dummy" fixture that just stands and
+      eats hits so DPS comparisons are reproducible.
+
+63. **Racial speed + stamina pool.** First "your race matters"
+    pass; biggest schema lift in the phase.
+    - Migration: `characters.stamina_cur` + `.stamina_max` +
+      `.stamina_regen` (int16; mirror HP shape). `creature.Core`
+      gains the three fields. Mob templates get the same trio
+      via existing `Core` round-trip — no separate column on
+      `mob_templates`.
+    - Race table grows `SpeedFactor float32` + `StaminaMax int16`
+      + `StaminaRegen int16` (per-pulse on `Buckets.Regen`).
+      V1 seed: Human 1.0×/100/2, Aiel 0.7×/130/3, Ogier 1.2×/150/1,
+      Trolloc 1.0×/110/2, Myrddraal 0.8×/120/2.
+    - `actorActionCost` folds in `core.SpeedFactor` as another
+      multiplicative term.
+    - Actions gain `Stamina int16` cost (Normal=5, Power=12,
+      Quick=3, Parry=4, Flee=8). `Manager.EnqueueAction` refuses
+      with `ErrInsufficientStamina` when the pool is dry; the
+      `attack` verb surfaces it as "you're too winded".
+    - `tick.Buckets.Regen` ticker (already exists for affects)
+      gets a new subscriber that refills `Stamina` toward
+      `StaminaMax` at `StaminaRegen`/pulse. Regen halts while
+      `Core.HPCurrent <= 0`; modifier on the regen rate from
+      armor weight (heavy = -50% regen).
+    - `score` sheet gains a stamina line; `prompt` template
+      reserves `%p`/`%P` (cur/max) — wires into the §2 prompt
+      templating slot.
+    - **Slice exit:** Aiel can chain 4–5 quick jabs in the
+      window a plate Borderlander gets one swing, then visibly
+      tires; recovery feel matches the flavor.
+
+64. **New action verbs — `dodge` / `throw` / `sidestep`.** The
+    action menu Aiel actually wants.
+    - `dodge`: short defensive stance (1 round). Grants
+      `FlatFootedUntil` immunity + +4 Defense from the next
+      attack against you. Cost 1.0 s + 3 SP. Mirror of `parry`
+      but Dex-favored vs. weapon-favored.
+    - `throw <weapon> <target>`: ranged-attack variant.
+      Resolves like `Attack` but consumes the
+      `creature.SlotPrimaryWield` item from the wield slot via
+      `Equipment.Set(Slot, 0)` + `RecordEquipment`, and on
+      resolution drops the thrown item to the target's room
+      (or into the corpse on a kill). Throwable items need a
+      new `FlagThrowable` on `WeaponStats`. Cost 2.0 s + 6 SP.
+    - `sidestep <attacker>`: applies a one-round
+      `FlatFootedUntil` to the named attacker. Cheap (0.5 s +
+      2 SP) — pure positional play, no damage. Mirrors how the
+      Manager already tracks `FlatFootedUntil` for parry
+      reflections.
+    - Each verb is a separate `*telnet.Command` in
+      `internal/cmd/`, following the `attack.go` pattern.
+      `Action.Kind` grows three values; `resolveAction`'s
+      switch grows three cases.
+    - **Slice exit:** the qa_zone gains a "skirmisher dummy"
+      and a "throwing range" fixture so a tester can verify
+      the full Aiel chain `quick → dodge → throw → sidestep`.
+
+65. **Feats that modify cadence.** Make character build choices
+    actually move the speed dial.
+    - Chargen `Feat` entries gain optional speed-modifier
+      fields: `weapon_weight_penalty_mul float32` (default 1.0;
+      Blademaster = 0.5), `armor_weight_penalty_mul float32`
+      (Light Step = 0.5), `stamina_cost_mul float32` (Endurance =
+      0.8), `stamina_regen_add int16` (Iron Constitution = +1).
+    - `actorActionCost` walks `core.Feats` (already an
+      `[]int32`) and multiplies the relevant penalty terms.
+      Pure-function tests pin the math.
+    - New seed feats in
+      `internal/chargen/default/feats.yaml`:
+      `feat_blademaster`, `feat_light_step`, `feat_endurance`,
+      `feat_iron_constitution`, `feat_two_weapon_grace`
+      (off-hand-attack cost reduced). Prerequisites V1: none
+      (mirrors current chargen feat stance).
+    - `score` sheet's Speed line cites the active feat
+      contributors so players can see why their cadence is
+      what it is.
+    - **Slice exit:** Lan with Blademaster + Light Step swings
+      a greatsword in mail at near-Aiel cadence; chargen
+      surface exposes the trade so the choice is informed.
+
+66. **Iterative attacks via cadence drain.** Replaces the D&D
+    3.x "+6 BAB gives a second attack at -5" mechanic with
+    cadence math.
+    - `ActorEntry` gains `PendingSwings int` and
+      `IterativeBonuses []int16` (e.g. `[0, -5, -10]` for a
+      BAB+11 fighter). Computed at `Start` from `core.BAB`.
+    - `tickRoom`'s drain loop, instead of running once per
+      ready actor, runs `1 + min(IterativeCount, queued
+      actions)` times back-to-back for the same actor, applying
+      the iterative bonus to each successive `RollAttack`.
+      Costs accumulate so `NextActAt` is set after the *last*
+      swing, not the first.
+    - Stamina drains per swing; the iterative chain truncates
+      when stamina runs out (matches the "you're winded after
+      the fourth swing" feel without a separate gate).
+    - **Slice exit:** high-BAB fighters get the expected
+      multi-attack bursts on their turn rather than waiting
+      out 3 buckets in a row.
+
+67. **Write-coalescing + compact echo mode.** Production-load
+    polish. Optional — only needed once content fills the
+    server with simultaneous fights.
+    - `persist.Manager` dirty-bit aggregate for HP / Stamina /
+      Conditions on `Character` and `MobInstance`. Combat
+      `resolveAction` marks the row dirty in-memory and the
+      Manager flushes at its own cadence (default 2 s) instead
+      of one UPDATE per swing.
+    - New `combat brief` player setting (persisted via the
+      account-settings JSON from migration 0035). When set,
+      `internal/cmd/server/main.go`'s combat-echo subscribers
+      collapse runs of consecutive misses into a single
+      "you swing wildly (×3)" rollup keyed off
+      `Session.lastCombatEcho`. Hits, crits, and damage taken
+      always render.
+    - Prompt template `%t` (in-combat) reserved in §2 wires
+      to a compact `HP|SP|Cooldown` gauge.
+    - **Slice exit:** a 20-fight stress test holds
+      sub-millisecond per-swing CPU and the combat log of a
+      single character stays under one screen of text per
+      round.
+
+After L: combat feels like real-time melee with meaningful
+distinctions between fighter archetypes. Aiel skirmishers,
+plate-armored heavies, and named-feat exceptions like Lan all
+have mechanically supported playstyles.
+
+---
+
 ## Sequencing rules
 
 - **Run #52 (CI matrix) right now**, before anything else. It doesn't
@@ -922,6 +1132,23 @@ tier has somewhere to land.
   incremental rewalk** — it should be the *last* item in G.
 - **Phase I is à la carte.** GMCP first if you want third-party
   clients; WebSocket first if you want browser reach.
+- **Phase L slices are independently shippable** but order
+  matters semantically: #60 (cadence) is the foundation every
+  later slice builds on, so it must land first. #61 (variants)
+  and #62 (gear-driven speed) are independent of each other and
+  can ship in either order, but both should land before #63
+  (stamina) because stamina cost values are easier to tune once
+  variant + gear math is settled. #64 (new verbs) can land any
+  time after #63. #65 (feats) and #66 (iteratives) are
+  independent of each other; #65 needs the chargen Feat schema
+  fields, #66 only touches combat. #67 (write-coalescing) is
+  pure polish — land when load measurements call for it, not
+  before.
+- **Phase L can run concurrently with Phase F** — they touch
+  different packages (combat vs. quest/trigger/Lua) and Lua
+  scripts don't currently mutate combat state in ways the
+  cadence change would break. The slice-3 Lua surface
+  (apply_affect, give_item) stays compatible.
 
 ---
 

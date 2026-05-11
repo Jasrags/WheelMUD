@@ -1,5 +1,27 @@
 package combat
 
+import "time"
+
+// DefaultActionCost returns the wall-clock interval an actor must
+// wait after resolving an action of the given kind before they can
+// act again. Pure function over kind so #62 (gear), #63 (race), and
+// #65 (feats) can layer multiplicative modifiers on top without
+// changing call sites. ActionNone advances by one second so an idle
+// actor doesn't perpetually re-trigger the ready check and burst-act
+// the moment input arrives.
+func DefaultActionCost(kind ActionKind) time.Duration {
+	switch kind {
+	case ActionAttack:
+		return 3 * time.Second
+	case ActionParry:
+		return 2 * time.Second
+	case ActionFlee:
+		return 2 * time.Second
+	default:
+		return 1 * time.Second
+	}
+}
+
 // ActionKind tags a queued combat action. Slice 1 ships only Attack;
 // future kinds (flee, kick, weave, ready, defend) slot in here without
 // changing the queue plumbing.

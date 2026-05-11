@@ -129,7 +129,7 @@ type Buckets struct {
 // tuned later; the values are conservative starting points modeled on
 // classic DikuMUD-family servers.
 const (
-	DefaultCombatInterval    = 4 * time.Second
+	DefaultCombatInterval    = 1 * time.Second
 	DefaultRegenInterval     = 30 * time.Second
 	DefaultAreaResetInterval = 5 * time.Minute
 	DefaultWanderInterval    = 20 * time.Second

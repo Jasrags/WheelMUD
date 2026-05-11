@@ -127,8 +127,22 @@ func TestStart_PublishesCombatStarted(t *testing.T) {
 	}
 }
 
-func TestTick_AdvancesRoundAndRotatesActor(t *testing.T) {
+// TestTick_PerActorCadence verifies the slice-60 cadence rewrite:
+// every actor whose NextActAt has elapsed resolves in initiative
+// order on each pulse, Round increments per actor-act, and an actor
+// who acted on the previous pulse is gated by DefaultActionCost
+// before re-acting.
+//
+// Setup: two mobs, no actions queued (ActionNone → 1s cost). Both
+// start ready at t=0. Pulse 1 at t=0 fires both in initiative order
+// (Round 1, Round 2). Pulse 2 at t=0.5s — neither has crossed the 1s
+// gate, so zero events fire. Pulse 3 at t=1.5s — both ready again,
+// fires both (Round 3, Round 4).
+func TestTick_PerActorCadence(t *testing.T) {
 	mgr, _, bus := seedManager(t, 42)
+	now := time.Unix(0, 0).UTC()
+	mgr.SetClock(func() time.Time { return now })
+
 	parts := []ActorRef{{Kind: ActorKindMob, ID: 1}, {Kind: ActorKindMob, ID: 2}}
 	f, err := mgr.Start(context.Background(), 1, parts)
 	if err != nil {
@@ -145,25 +159,87 @@ func TestTick_AdvancesRoundAndRotatesActor(t *testing.T) {
 		roundsMu.Unlock()
 	})
 
+	// Pulse 1: both ready, both fire in initiative order.
 	mgr.Tick(context.Background())
+	// Pulse 2: clock barely moved; gate is 1s for ActionNone.
+	now = now.Add(500 * time.Millisecond)
 	mgr.Tick(context.Background())
+	// Pulse 3: clock past the gate; both fire again.
+	now = now.Add(1 * time.Second)
 	mgr.Tick(context.Background())
 
 	roundsMu.Lock()
 	defer roundsMu.Unlock()
-	if len(rounds) != 3 {
-		t.Fatalf("got %d RoundStarted events, want 3", len(rounds))
+	if len(rounds) != 4 {
+		t.Fatalf("got %d RoundStarted events, want 4 (pulse 1: 2, pulse 2: 0, pulse 3: 2)", len(rounds))
 	}
-	// Round 1 keeps ActiveIdx=0 (no rotation on the opening round);
-	// round 2 advances to second; round 3 wraps back to first.
-	wantRoundActor := []ActorRef{first, second, first}
-	wantRoundN := []int{1, 2, 3}
+	wantActor := []ActorRef{first, second, first, second}
+	wantRound := []int{1, 2, 3, 4}
 	for i, ev := range rounds {
-		if ev.Round != wantRoundN[i] {
-			t.Errorf("round[%d].Round = %d, want %d", i, ev.Round, wantRoundN[i])
+		if ev.Round != wantRound[i] {
+			t.Errorf("event[%d].Round = %d, want %d", i, ev.Round, wantRound[i])
 		}
-		if ev.Active != wantRoundActor[i] {
-			t.Errorf("round[%d].Active = %+v, want %+v", i, ev.Active, wantRoundActor[i])
+		if ev.Active != wantActor[i] {
+			t.Errorf("event[%d].Active = %+v, want %+v", i, ev.Active, wantActor[i])
+		}
+	}
+}
+
+// TestTick_FastActorOutPaces stamps NextActAt directly on the two
+// entries to prove the gate works independently of action cost.
+// Actor A starts ready (NextActAt = 0); actor B is gated until t=10s.
+// Three 3-second clock advances must produce A acting 3× and B
+// acting 0×. Real cost-differentiation (gear, race, feats) lands in
+// later L slices; this test exercises the timing plumbing only.
+func TestTick_FastActorOutPaces(t *testing.T) {
+	mgr, _, bus := seedManager(t, 1)
+	now := time.Unix(0, 0).UTC()
+	mgr.SetClock(func() time.Time { return now })
+
+	parts := []ActorRef{{Kind: ActorKindMob, ID: 1}, {Kind: ActorKindMob, ID: 2}}
+	f, err := mgr.Start(context.Background(), 1, parts)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	a := f.Order[0].Ref
+	b := f.Order[1].Ref
+
+	// Direct field stamp: A ready immediately, B parked far in the
+	// future. Acquire the manager lock to keep -race quiet.
+	mgr.mu.Lock()
+	for i := range f.Order {
+		switch f.Order[i].Ref {
+		case a:
+			f.Order[i].NextActAt = now
+		case b:
+			f.Order[i].NextActAt = now.Add(10 * time.Second)
+		}
+	}
+	mgr.mu.Unlock()
+
+	rounds := []RoundStarted{}
+	var roundsMu sync.Mutex
+	eventbus.Subscribe[RoundStarted](bus, func(_ context.Context, ev RoundStarted) {
+		roundsMu.Lock()
+		rounds = append(rounds, ev)
+		roundsMu.Unlock()
+	})
+
+	// Three pulses spaced 3s apart. ActionNone cost is 1s so A is
+	// ready at every step; B's 10s gate keeps them silent.
+	for i := 0; i < 3; i++ {
+		mgr.Tick(context.Background())
+		now = now.Add(3 * time.Second)
+	}
+
+	roundsMu.Lock()
+	defer roundsMu.Unlock()
+	if len(rounds) != 3 {
+		t.Fatalf("got %d events, want 3 (A acts 3×, B 0×): %+v", len(rounds), rounds)
+	}
+	for i, ev := range rounds {
+		if ev.Active != a {
+			t.Errorf("event[%d].Active = %+v, want A %+v", i, ev.Active, a)
 		}
 	}
 }

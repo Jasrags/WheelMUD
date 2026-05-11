@@ -72,7 +72,11 @@ func TestAllocateXP_ZeroTotalReturnsNil(t *testing.T) {
 	}
 }
 
-func TestPruneDead_RemovesAndClampsActiveIdx(t *testing.T) {
+// TestPruneDead_RemovesEntry verifies pruneDead drops dead actors
+// from Order. Under per-actor cadence there is no ActiveIdx to walk
+// back — each remaining entry's NextActAt continues to gate its own
+// resolution.
+func TestPruneDead_RemovesEntry(t *testing.T) {
 	a := ActorRef{Kind: ActorKindMob, ID: 1}
 	b := ActorRef{Kind: ActorKindMob, ID: 2}
 	c := ActorRef{Kind: ActorKindMob, ID: 3}
@@ -82,8 +86,7 @@ func TestPruneDead_RemovesAndClampsActiveIdx(t *testing.T) {
 			{Ref: b, Initiative: 15},
 			{Ref: c, Initiative: 10},
 		},
-		ActiveIdx: 2,
-		Dead:      map[ActorRef]struct{}{b: {}},
+		Dead: map[ActorRef]struct{}{b: {}},
 	}
 	if !f.pruneDead() {
 		t.Fatal("pruneDead should report a removal")
@@ -91,63 +94,26 @@ func TestPruneDead_RemovesAndClampsActiveIdx(t *testing.T) {
 	if len(f.Order) != 2 {
 		t.Fatalf("len(Order) = %d, want 2", len(f.Order))
 	}
-	// b sat at index 1, before ActiveIdx=2; ActiveIdx walks back to 1.
-	if f.ActiveIdx != 1 {
-		t.Fatalf("ActiveIdx = %d, want 1", f.ActiveIdx)
-	}
-	if f.Order[f.ActiveIdx].Ref != c {
-		t.Fatalf("active = %+v, want c", f.Order[f.ActiveIdx].Ref)
+	if f.Order[0].Ref != a || f.Order[1].Ref != c {
+		t.Fatalf("Order after prune = %+v, want [a, c]", f.Order)
 	}
 	if f.Dead != nil {
 		t.Fatalf("Dead should be cleared, got %v", f.Dead)
 	}
 }
 
-// TestPruneDead_DeadHeadDoesNotSkipNewHead covers the regression
-// where ActiveIdx=0 with the index-0 actor dead used to wrap forward
-// to the second new actor, silently skipping the new head's first
-// turn. ActiveIdx is parked at -1 so the round-advance lands on 0.
-func TestPruneDead_DeadHeadDoesNotSkipNewHead(t *testing.T) {
-	a := ActorRef{Kind: ActorKindMob, ID: 1}
-	b := ActorRef{Kind: ActorKindMob, ID: 2}
-	c := ActorRef{Kind: ActorKindMob, ID: 3}
-	f := &Fight{
-		Order: []ActorEntry{
-			{Ref: a, Initiative: 18},
-			{Ref: b, Initiative: 15},
-			{Ref: c, Initiative: 10},
-		},
-		ActiveIdx: 0,
-		Dead:      map[ActorRef]struct{}{a: {}},
-	}
-	f.pruneDead()
-	if len(f.Order) != 2 {
-		t.Fatalf("len(Order) = %d, want 2", len(f.Order))
-	}
-	// Round-advance simulation: (-1 + 1) % 2 = 0 → new head (b) acts.
-	next := (f.ActiveIdx + 1) % len(f.Order)
-	if f.Order[next].Ref != b {
-		t.Fatalf("next active = %+v, want b (the new head)", f.Order[next].Ref)
-	}
-	// Active() must not panic with ActiveIdx parked at -1.
-	if got := f.Active(); got != (ActorRef{}) {
-		t.Fatalf("Active() with parked idx = %+v, want zero ref", got)
-	}
-}
-
-func TestPruneDead_AllRemovedClampsToZero(t *testing.T) {
+// TestPruneDead_AllRemovedEmptiesOrder is the auto-end edge case —
+// pruneDead leaves Order empty when every entry was dead, and
+// tickRoom's "len(f.Order) == 0" branch closes the fight.
+func TestPruneDead_AllRemovedEmptiesOrder(t *testing.T) {
 	a := ActorRef{Kind: ActorKindMob, ID: 1}
 	f := &Fight{
-		Order:     []ActorEntry{{Ref: a, Initiative: 10}},
-		ActiveIdx: 0,
-		Dead:      map[ActorRef]struct{}{a: {}},
+		Order: []ActorEntry{{Ref: a, Initiative: 10}},
+		Dead:  map[ActorRef]struct{}{a: {}},
 	}
 	f.pruneDead()
 	if len(f.Order) != 0 {
 		t.Fatalf("Order should be empty: %+v", f.Order)
-	}
-	if f.ActiveIdx != 0 {
-		t.Fatalf("ActiveIdx = %d, want 0", f.ActiveIdx)
 	}
 }
 

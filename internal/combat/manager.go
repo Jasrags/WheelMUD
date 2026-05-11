@@ -174,12 +174,18 @@ func (m *Manager) Start(ctx context.Context, roomID int64, participants []ActorR
 		m.mu.Unlock()
 		return nil, ErrFightExists
 	}
+	startedAt := m.now()
+	// Per-actor cadence: every entry is "ready" on the first pulse.
+	// Initiative order resolves within-pulse fan-out ties; NextActAt
+	// gates future pulses once each actor has acted at least once.
+	for i := range entries {
+		entries[i].NextActAt = startedAt
+	}
 	f := &Fight{
 		RoomID:    roomID,
 		Round:     0,
 		Order:     entries,
-		ActiveIdx: 0,
-		StartedAt: m.now(),
+		StartedAt: startedAt,
 	}
 	m.fights[roomID] = f
 	m.mu.Unlock()
@@ -212,14 +218,16 @@ func (m *Manager) End(ctx context.Context, roomID int64, reason string) error {
 	return nil
 }
 
-// Tick advances every active fight by one round. Subscribed to
+// Tick advances every active fight by one pulse. Subscribed to
 // tick.Buckets.Combat at boot. For each fight:
 //
 //  1. If fewer than 2 participants are still in the room (anyone
 //     logged out, mob despawned, character moved), the fight
 //     auto-ends with ReasonNoParticipants and no RoundStarted fires.
-//  2. Otherwise Round increments, ActiveIdx wraps to the next
-//     position, and RoundStarted publishes for the new active actor.
+//  2. Otherwise every actor whose NextActAt <= now resolves one
+//     queued action (or a no-op when nothing is queued) in
+//     initiative order. Round increments per resolution and a
+//     RoundStarted event publishes for each acting actor.
 //
 // The participant-presence check uses the same primitives `look`
 // uses — RoomID match for characters via repo, ListInRoom for mobs.
@@ -286,9 +294,9 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		m.mu.Unlock()
 		return
 	}
-	// Prune actors that died on the previous round before advancing.
-	// Done up here (not inline in resolveAction) so ActiveIdx math
-	// observes a stable Order for the duration of resolveAction.
+	// Prune actors that died on the previous pulse before walking.
+	// Done up here (not inline in resolveAction) so the per-actor
+	// walk observes a stable Order across this pulse.
 	f.pruneDead()
 	if len(f.Order) == 0 {
 		// Last participant fell — close the fight cleanly. Mirrors
@@ -301,32 +309,79 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		}
 		return
 	}
-	f.Round++
-	if f.Round > 1 {
-		f.ActiveIdx = (f.ActiveIdx + 1) % len(f.Order)
+
+	// Snapshot the ready set under the lock. Snapshotting Refs (not
+	// indices) decouples the per-actor resolution loop from any
+	// mid-loop Order mutation (death prune lands next pulse, but
+	// EnqueueAction can still race on f.Actions). Snapshot per-actor
+	// rounds so each RoundStarted event reflects the pre-resolution
+	// counter for that swing.
+	now := m.now()
+	type readyEntry struct {
+		ref   ActorRef
+		round int
 	}
-	round := f.Round
-	active := f.Order[f.ActiveIdx].Ref
-	pending, hasAction := f.popAction(active)
+	ready := make([]readyEntry, 0, len(f.Order))
+	for i := range f.Order {
+		if f.Order[i].NextActAt.After(now) {
+			continue
+		}
+		f.Round++
+		ready = append(ready, readyEntry{ref: f.Order[i].Ref, round: f.Round})
+	}
+	if len(ready) == 0 {
+		m.mu.Unlock()
+		// Affects still tick — out-of-combat buffs would otherwise
+		// freeze whenever a fight is open but nobody is acting on
+		// this pulse.
+		m.tickParticipantAffects(ctx, roomID)
+		return
+	}
+	pendings := make(map[ActorRef]Action, len(ready))
+	hasActions := make(map[ActorRef]bool, len(ready))
+	for _, r := range ready {
+		a, ok := f.popAction(r.ref)
+		pendings[r.ref] = a
+		hasActions[r.ref] = ok
+	}
 	m.mu.Unlock()
 
-	if m.bus != nil {
-		m.bus.Publish(ctx, RoundStarted{
-			RoomID: roomID,
-			Round:  round,
-			Active: active,
-		})
+	for _, r := range ready {
+		if m.bus != nil {
+			m.bus.Publish(ctx, RoundStarted{
+				RoomID: roomID,
+				Round:  r.round,
+				Active: r.ref,
+			})
+		}
+		action := pendings[r.ref]
+		if hasActions[r.ref] {
+			m.resolveAction(ctx, roomID, r.round, r.ref, action)
+		}
+		// Stamp the actor's next-ready time under the lock so a
+		// concurrent EnqueueAction can't observe a stale schedule.
+		// resolveAction may have mutated Order (death prune is
+		// deferred to next pulse, but Fled is queued during flee
+		// resolution) so re-resolve the entry by Ref.
+		cost := DefaultActionCost(action.Kind)
+		m.mu.Lock()
+		if f2, ok := m.fights[roomID]; ok {
+			for i := range f2.Order {
+				if f2.Order[i].Ref == r.ref {
+					f2.Order[i].LastActedAt = now
+					f2.Order[i].NextActAt = now.Add(cost)
+					break
+				}
+			}
+		}
+		m.mu.Unlock()
 	}
 
-	if hasAction {
-		m.resolveAction(ctx, roomID, round, active, pending)
-	}
-
-	// Phase E #26: tick every participant's affects once per round so
-	// in-fight buffs/debuffs count down. Out-of-combat ticking lives
-	// in the Affects bucket subscriber. Pruning runs at the top of
-	// the next round-tick, so a death this round still ticks here
-	// (harmless — the row is gone next round). Mob affects are
+	// Phase E #26: tick every participant's affects once per pulse
+	// so in-fight buffs/debuffs count down. Out-of-combat ticking
+	// lives in the Affects bucket subscriber. Pruning runs at the
+	// top of the next pulse, so a death this pulse still ticks here
+	// (harmless — the row is gone next pulse). Mob affects are
 	// in-memory only and are dropped on despawn anyway.
 	m.tickParticipantAffects(ctx, roomID)
 }
@@ -683,7 +738,10 @@ func (m *Manager) fightHasLiveParticipants(ctx context.Context, roomID int64, or
 
 // resolveParry applies the parrying stance for the actor. The stance
 // is round-keyed and consumed by the next incoming attack against
-// the actor (see the parry gate in resolveAction). A no-op when the
+// the actor (see the parry gate in resolveAction). Under per-actor
+// cadence Round ++'s on every actor-act, so the stamp value
+// `round + 1` means "good for the very next incoming swing" — once
+// another actor-act elapses the stance expires. A no-op when the
 // fight has been ended between Tick's snapshot and this call.
 func (m *Manager) resolveParry(ctx context.Context, roomID int64, round int, actor ActorRef) {
 	m.mu.Lock()
@@ -691,7 +749,7 @@ func (m *Manager) resolveParry(ctx context.Context, roomID int64, round int, act
 		if f.ParryingUntil == nil {
 			f.ParryingUntil = make(map[ActorRef]int)
 		}
-		f.ParryingUntil[actor] = round
+		f.ParryingUntil[actor] = round + 1
 	}
 	m.mu.Unlock()
 	if m.bus != nil {
