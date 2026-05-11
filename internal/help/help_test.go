@@ -113,43 +113,16 @@ func TestParseFrontMatter(t *testing.T) {
 }
 
 // catalogFromTopics builds a Catalog directly from in-memory topics,
-// bypassing the embedded fs. Mirrors the validation Load runs after
-// parsing so collision rules can be exercised without committing
-// pathological fixture files.
+// bypassing the embedded fs. Reuses Load's validateAndIndex helper so
+// collision rules stay in sync automatically.
 func catalogFromTopics(t *testing.T, topics []*Topic) (*Catalog, error) {
 	t.Helper()
-	// Re-implement the validation half of Load on a synthetic slice.
-	// This is the only place catalog construction is done outside
-	// Load; if the validation rules change in Load, mirror them here.
-	c := &Catalog{
-		byID:      make(map[string]*Topic),
-		byKeyword: make(map[string]*Topic),
-	}
 	cp := append([]*Topic(nil), topics...)
-	c.sorted = cp
-	for _, tp := range cp {
-		if _, dup := c.byID[tp.ID]; dup {
-			return nil, errDup("id", tp.ID)
-		}
-		if _, dup := c.byKeyword[tp.ID]; dup {
-			return nil, errDup("id-vs-keyword", tp.ID)
-		}
-		c.byID[tp.ID] = tp
-		for _, kw := range tp.Keywords {
-			if _, dup := c.byID[kw]; dup {
-				return nil, errDup("keyword-vs-id", kw)
-			}
-			if _, dup := c.byKeyword[kw]; dup {
-				return nil, errDup("keyword", kw)
-			}
-			c.byKeyword[kw] = tp
-		}
+	byID, byKeyword, err := validateAndIndex(cp)
+	if err != nil {
+		return nil, err
 	}
-	return c, nil
-}
-
-func errDup(kind, name string) error {
-	return errors.New("dup " + kind + ": " + name)
+	return &Catalog{sorted: cp, byID: byID, byKeyword: byKeyword}, nil
 }
 
 func mustCatalog(t *testing.T, topics []*Topic) *Catalog {
@@ -255,6 +228,36 @@ func TestLookupExact_AndKeyword(t *testing.T) {
 	}
 	if _, ok := c.LookupKeyword("combat"); ok {
 		t.Errorf("LookupKeyword(combat) = true; should not match id")
+	}
+}
+
+func TestValidTopicID(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty", "", false},
+		{"lowercase", "combat", true},
+		{"with dash", "combat-basics", true},
+		{"with digits", "v2", true},
+		{"uppercase", "Combat", false},
+		{"space", "two words", false},
+		{"tab", "a\tb", false},
+		{"nul", "a\x00b", false},
+		{"del 0x7F", "a\x7fb", false},
+		{"high bit 0x80", "a\x80b", false},
+		{"non-ascii utf-8", "café", false},
+		{"low control 0x01", "a\x01b", false},
+		{"carriage return", "a\rb", false},
+		{"newline", "a\nb", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := validTopicID(tt.in); got != tt.want {
+				t.Errorf("validTopicID(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 

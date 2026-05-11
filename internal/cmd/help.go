@@ -195,7 +195,9 @@ func writeTopic(s *telnet.Session, t *help.Topic) error {
 	b.WriteString("\r\n\r\n")
 	body := strings.ReplaceAll(t.Body, "\r\n", "\n")
 	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
-	if !strings.HasSuffix(b.String(), "\r\n") {
+	// Check body (normalized to \n) rather than the builder string to
+	// avoid allocating the full output just to inspect its tail.
+	if !strings.HasSuffix(body, "\n") {
 		b.WriteString("\r\n")
 	}
 	return s.WritePaged([]byte(b.String()))

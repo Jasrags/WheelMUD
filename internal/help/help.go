@@ -82,27 +82,38 @@ func Load() (*Catalog, error) {
 	}
 	sort.Slice(topics, func(i, j int) bool { return topics[i].ID < topics[j].ID })
 
-	byID := make(map[string]*Topic, len(topics))
-	byKeyword := make(map[string]*Topic)
+	byID, byKeyword, err := validateAndIndex(topics)
+	if err != nil {
+		return nil, err
+	}
+	return &Catalog{sorted: topics, byID: byID, byKeyword: byKeyword}, nil
+}
+
+// validateAndIndex builds the byID / byKeyword maps and enforces the
+// id/keyword collision rules. Shared by Load and test-only catalog
+// builders so validation drift cannot creep in via duplicated logic.
+func validateAndIndex(topics []*Topic) (byID, byKeyword map[string]*Topic, err error) {
+	byID = make(map[string]*Topic, len(topics))
+	byKeyword = make(map[string]*Topic)
 	for _, t := range topics {
 		if _, dup := byID[t.ID]; dup {
-			return nil, fmt.Errorf("help: duplicate topic id %q", t.ID)
+			return nil, nil, fmt.Errorf("help: duplicate topic id %q", t.ID)
 		}
 		if _, dup := byKeyword[t.ID]; dup {
-			return nil, fmt.Errorf("help: topic id %q collides with a keyword", t.ID)
+			return nil, nil, fmt.Errorf("help: topic id %q collides with a keyword", t.ID)
 		}
 		byID[t.ID] = t
 		for _, kw := range t.Keywords {
 			if _, dup := byID[kw]; dup {
-				return nil, fmt.Errorf("help: keyword %q collides with a topic id", kw)
+				return nil, nil, fmt.Errorf("help: keyword %q collides with a topic id", kw)
 			}
 			if existing, dup := byKeyword[kw]; dup {
-				return nil, fmt.Errorf("help: keyword %q used by both %q and %q", kw, existing.ID, t.ID)
+				return nil, nil, fmt.Errorf("help: keyword %q used by both %q and %q", kw, existing.ID, t.ID)
 			}
 			byKeyword[kw] = t
 		}
 	}
-	return &Catalog{sorted: topics, byID: byID, byKeyword: byKeyword}, nil
+	return byID, byKeyword, nil
 }
 
 // All returns every topic, sorted by id. The returned slice is a

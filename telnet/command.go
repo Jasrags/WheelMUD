@@ -134,7 +134,7 @@ func (r *Registry) lookupExactLocked(verb string) (*Command, bool) {
 
 // Lookup resolves verb to a command. Resolution order: alias, exact name,
 // unique prefix. Returns ErrUnknownCommand or ErrAmbiguousPrefix when
-// resolution fails.
+// resolution fails. Verb is lowercased internally; callers may pass any case.
 func (r *Registry) Lookup(verb string) (*Command, error) {
 	verb = strings.ToLower(verb)
 	if verb == "" {
@@ -161,7 +161,8 @@ func (r *Registry) Lookup(verb string) (*Command, error) {
 // callers (notably the help command, which merges its prefix pass with
 // the help-topic catalog) sometimes need to distinguish a true exact
 // hit from a prefix coincidence so the merged resolution can pick the
-// right side. Returns ErrUnknownCommand on miss.
+// right side. Returns ErrUnknownCommand on miss. Verb is lowercased
+// internally; callers may pass any case.
 func (r *Registry) LookupExact(verb string) (*Command, error) {
 	verb = strings.ToLower(verb)
 	if verb == "" {
