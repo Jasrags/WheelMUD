@@ -3,6 +3,7 @@ package combat
 import (
 	"context"
 	"errors"
+	"math/rand"
 	"sync"
 	"testing"
 
@@ -318,6 +319,11 @@ func killTrollocWithLoot(t *testing.T, tmpl creature.MobTemplate,
 	}
 
 	mgr := New(bus, chars, mobs, templates, items)
+	// Pin the RNG so the first kill-swing lands. Unmocked wall clock
+	// means NextActAt blocks subsequent ticks, so a nat-1 first roll
+	// strands the test with a live mob — surfaced as a 1-in-20 CI
+	// flake. Seed 1 produces a hitting raw on the very first Intn.
+	mgr.SetRNG(rand.New(rand.NewSource(1)))
 	var awards []CombatXPAwarded
 	var amu sync.Mutex
 	eventbus.Subscribe[CombatXPAwarded](bus, func(_ context.Context, ev CombatXPAwarded) {

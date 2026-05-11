@@ -2,6 +2,7 @@ package combat
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"testing"
 
@@ -69,6 +70,11 @@ func killCharacterByMob(t *testing.T, charXP int64, charXPDebt int64,
 
 	items := repo.NewMemoryItemRepo()
 	mgr = New(bus, chars, mobs, templates, items)
+	// Pin the RNG so the kill-swing roll is deterministic — without
+	// this, a nat-1 on the first swing leaves the character alive and
+	// every subsequent Tick is blocked behind NextActAt (real wall
+	// clock is unmocked here). CI surfaced this as a 1-in-20 flake.
+	mgr.SetRNG(rand.New(rand.NewSource(1)))
 
 	var dmu sync.Mutex
 	eventbus.Subscribe[CharacterDied](bus, func(_ context.Context, ev CharacterDied) {
