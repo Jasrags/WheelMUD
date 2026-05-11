@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
@@ -62,17 +63,21 @@ type StaminaTicker struct {
 	candidates StaminaCandidateSource
 	chars      StaminaCharLoader
 	items      StaminaItemLoader
+	cat        *chargen.Catalog // optional; nil disables feat-driven regen add (Phase L slice 65)
 	log        *slog.Logger
 }
 
 // NewStaminaTicker constructs the ticker. items may be nil — the
 // heavy-armor penalty path skips when items is unavailable so a test
-// can run the ticker without a full ItemRepo. log defaults to the
-// global slog when nil.
+// can run the ticker without a full ItemRepo. cat may be nil — the
+// feat-driven regen-add (Phase L slice 65) skips when the catalog is
+// unavailable so combat-only tests stay decoupled from chargen
+// content. log defaults to the global slog when nil.
 func NewStaminaTicker(
 	candidates StaminaCandidateSource,
 	chars StaminaCharLoader,
 	items StaminaItemLoader,
+	cat *chargen.Catalog,
 	log *slog.Logger,
 ) *StaminaTicker {
 	if log == nil {
@@ -82,6 +87,7 @@ func NewStaminaTicker(
 		candidates: candidates,
 		chars:      chars,
 		items:      items,
+		cat:        cat,
 		log:        log,
 	}
 }
@@ -115,7 +121,16 @@ func (t *StaminaTicker) tickOne(ctx context.Context, c StaminaCandidate) {
 	if ch.Core.StaminaCurrent >= ch.Core.StaminaMax {
 		return
 	}
-	regen := EffectiveStaminaRegen(ch.Core.StaminaRegen, t.armorWeightClass(ctx, ch.Equipment))
+	// Phase L slice 65: Iron Constitution + similar feats add a flat
+	// per-pulse regen bump *before* the heavy-armor halving so the
+	// feat acts as a constitutional baseline rather than a bonus
+	// stacked on top of armor encumbrance.
+	base := ch.Core.StaminaRegen
+	if t.cat != nil {
+		fm := ResolveFeatModifiers(ch.Feats, t.cat)
+		base += int32(fm.StaminaRegenAdd)
+	}
+	regen := EffectiveStaminaRegen(base, t.armorWeightClass(ctx, ch.Equipment))
 	if regen <= 0 {
 		return
 	}

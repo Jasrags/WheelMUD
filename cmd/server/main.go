@@ -303,6 +303,11 @@ func main() {
 	// Verbs (#18) and damage math (#17/#18) consume this spine but
 	// are not in this slice.
 	combatMgr := combat.New(bus, characters, mobs, mobTemplates, items)
+	// Phase L slice 65: feat-driven cadence modifiers. The Manager
+	// reads the chargen catalog every actorActionCost call to resolve
+	// FeatModifiers off ch.Feats — nil-safe so combat-only tests can
+	// skip it.
+	combatMgr.SetCatalog(chargenCatalog)
 	buckets.Combat.Subscribe(combatMgr.Tick)
 
 	// Phase D #22: in-memory party manager. State is process-level
@@ -665,6 +670,7 @@ func main() {
 		staminaCandidates,
 		characters,
 		items,
+		chargenCatalog,
 		slog.Default(),
 	)
 	buckets.Regen.Subscribe(staminaTicker.Tick)

@@ -1262,6 +1262,33 @@ will need on top of those tables.
       knives (`range: thrown`); laminated card walks the full Aiel
       chain `attack quick → dodge → sidestep → throw`.
 
+      **Slice 65 (feats that modify cadence) landed 2026-05-11.**
+      `chargen.Feat` gains four optional cadence-modifier fields
+      (`weapon_weight_penalty_mul`, `armor_weight_penalty_mul`,
+      `stamina_cost_mul`, `stamina_regen_add`) validated in the
+      catalog loader. A new `Catalog.FeatByHashedID` reverse map
+      (built eagerly at `Load` end) gives the combat hot path
+      cheap int32 → `*Feat` lookup over the FNV-32a hashes
+      already stored on `creature.Core.Feats`.
+      `combat.FeatModifiers` aggregates the per-feat fields in
+      one resolver call; `ApplyFeatGearAttenuation` rewrites
+      gear factors as `1 + (factor-1)*mul` so feats attenuate
+      *penalties* (>1.0×) without rewarding already-light gear.
+      The aggregate folds into `actorActionCost` (gear-step
+      attenuation), `drainStamina` (cost-mul, rounded to
+      nearest), and `StaminaTicker` (regen-add stacks before the
+      heavy-armor halving in `EffectiveStaminaRegen`). Four new
+      general feats seeded in `feats.yaml`: `feat_blademaster`
+      (weapon mul 0.5), `feat_light_step` (armor mul 0.5),
+      `feat_endurance` (cost mul 0.8), `feat_iron_constitution`
+      (regen +1). `feat_two_weapon_grace` deferred until
+      tickRoom grows an off-hand swing. Manager gains
+      `cat *chargen.Catalog` + `SetCatalog`; cmd/server/main.go
+      wires it after construction. `score` Combat line cites
+      active contributors in brackets (`[Blademaster]`); both
+      `score` and the hot path go through the same resolver so
+      the rendered list matches what's firing.
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

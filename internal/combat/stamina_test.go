@@ -199,7 +199,7 @@ func TestStaminaTicker_RefillsTowardMax(t *testing.T) {
 	candidates := func() []StaminaCandidate {
 		return []StaminaCandidate{{CharacterID: ch.ID, RoomID: 1}}
 	}
-	tk := NewStaminaTicker(candidates, chars, nil, nil)
+	tk := NewStaminaTicker(candidates, chars, nil, nil, nil)
 	tk.Tick(ctx)
 
 	got, _ := chars.GetByID(ctx, ch.ID)
@@ -239,7 +239,7 @@ func TestStaminaTicker_HaltsAtZeroHP(t *testing.T) {
 	candidates := func() []StaminaCandidate {
 		return []StaminaCandidate{{CharacterID: ch.ID, RoomID: 1}}
 	}
-	tk := NewStaminaTicker(candidates, chars, nil, nil)
+	tk := NewStaminaTicker(candidates, chars, nil, nil, nil)
 	tk.Tick(ctx)
 
 	got, _ := chars.GetByID(ctx, ch.ID)
@@ -276,7 +276,7 @@ func TestStaminaTicker_HeavyArmorHalvesRegen(t *testing.T) {
 	candidates := func() []StaminaCandidate {
 		return []StaminaCandidate{{CharacterID: ch.ID, RoomID: 1}}
 	}
-	tk := NewStaminaTicker(candidates, chars, items, nil)
+	tk := NewStaminaTicker(candidates, chars, items, nil, nil)
 	tk.Tick(ctx)
 
 	got, _ := chars.GetByID(ctx, ch.ID)

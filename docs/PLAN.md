@@ -1039,28 +1039,55 @@ any slice and the game still works.
       and a "throwing range" fixture so a tester can verify
       the full Aiel chain `quick → dodge → throw → sidestep`.
 
-65. **Feats that modify cadence.** Make character build choices
-    actually move the speed dial.
+65. ~~**Feats that modify cadence.** Make character build choices
+    actually move the speed dial.~~ Landed 2026-05-11.
     - Chargen `Feat` entries gain optional speed-modifier
       fields: `weapon_weight_penalty_mul float32` (default 1.0;
       Blademaster = 0.5), `armor_weight_penalty_mul float32`
       (Light Step = 0.5), `stamina_cost_mul float32` (Endurance =
       0.8), `stamina_regen_add int16` (Iron Constitution = +1).
-    - `actorActionCost` walks `core.Feats` (already an
-      `[]int32`) and multiplies the relevant penalty terms.
-      Pure-function tests pin the math.
+      Catalog validator rejects non-zero `*Mul` outside (0,2] and
+      `stamina_regen_add` outside [-10,10].
+    - `actorActionCost` walks `core.Feats` (already `[]int32` —
+      FNV-32a hashes via `chargen.HashID`) through a new
+      `Catalog.FeatByHashedID` reverse map built eagerly at the
+      end of `chargen.Load`. `FeatModifiers` aggregate stacks
+      the per-feat `*Mul` fields multiplicatively and
+      `StaminaRegenAdd` additively in a single resolver call.
+      `ApplyFeatGearAttenuation` rewrites each gear factor as
+      `1 + (factor-1) * mul` when `factor > 1.0` so the feat
+      attenuates the *penalty portion* without rewarding
+      already-light gear. Pure-fn tests in
+      `internal/combat/featmod_test.go` pin the math.
+    - Stamina sides fold the aggregate too: `drainStamina`
+      multiplies its computed cost by `StaminaCostMul` (rounded
+      to nearest, floored at 0); `StaminaTicker` adds
+      `StaminaRegenAdd` to the base before
+      `EffectiveStaminaRegen` so Iron Constitution stacks
+      correctly with the heavy-armor halving (mirrors the
+      score-sheet's order so the live value and the rendered
+      hint always agree).
     - New seed feats in
       `internal/chargen/default/feats.yaml`:
       `feat_blademaster`, `feat_light_step`, `feat_endurance`,
-      `feat_iron_constitution`, `feat_two_weapon_grace`
-      (off-hand-attack cost reduced). Prerequisites V1: none
-      (mirrors current chargen feat stance).
-    - `score` sheet's Speed line cites the active feat
-      contributors so players can see why their cadence is
-      what it is.
-    - **Slice exit:** Lan with Blademaster + Light Step swings
-      a greatsword in mail at near-Aiel cadence; chargen
-      surface exposes the trade so the choice is informed.
+      `feat_iron_constitution`. Prerequisites V1: none
+      (mirrors current chargen feat stance). All
+      `background: false` (general 1st-level picks).
+      `feat_two_weapon_grace` deferred — no off-hand swing in
+      tickRoom yet (no consumer for `off_hand_cost_mul`).
+    - `score` sheet's Combat line cites active feat
+      contributors: `Combat: 0.97x (0.75 weapon × 1.30 armor)
+      [Blademaster]`. Both `score` and the combat hot path go
+      through `combat.ResolveFeatModifiers` so the rendered
+      bracketed list reflects exactly what's firing in resolve.
+    - Combat Manager gains `cat *chargen.Catalog` field +
+      `SetCatalog` setter; `cmd/server/main.go` wires it after
+      construction. `StaminaTicker` constructor takes the catalog
+      as a new parameter (nil-safe for combat-only tests).
+    - **Slice exit (verified):** Blademaster on a greatsword
+      brings a normal swing from 4.5s to 3.75s while still
+      paying the gear baseline; Iron Constitution renders
+      `(+3/pulse)` over a base of 2; full suite race-clean.
 
 66. **Iterative attacks via cadence drain.** Replaces the D&D
     3.x "+6 BAB gives a second attack at -5" mechanic with

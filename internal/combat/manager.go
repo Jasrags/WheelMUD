@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/affects"
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -51,6 +52,7 @@ type Manager struct {
 	decayer    *Decayer             // optional; nil leaves corpses lingering until admin purge
 	fleeMover  FleeMover            // optional; nil makes ActionFlee fail with reason="no_mover"
 	groupShare GroupResolver        // optional; nil = solo split (each kill credits the dealer only)
+	cat        *chargen.Catalog     // optional; nil disables feat-driven cadence modifiers (Phase L slice 65)
 
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
@@ -75,6 +77,17 @@ func New(bus *eventbus.Bus, chars repo.CharacterRepo, mobs repo.MobInstanceRepo,
 		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
 		now:       time.Now,
 	}
+}
+
+// SetCatalog wires the chargen catalog so the combat hot path can
+// resolve cadence-modifier feats off a character's []int32 Feats list.
+// Phase L slice 65 — optional; nil leaves the actor at the
+// gear-driven baseline. cmd/server/main.go calls this after the
+// catalog loads at boot.
+func (m *Manager) SetCatalog(cat *chargen.Catalog) {
+	m.mu.Lock()
+	m.cat = cat
+	m.mu.Unlock()
 }
 
 // SetDecayer wires the corpse decay queue. Optional — when unset the

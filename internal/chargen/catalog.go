@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -31,6 +32,12 @@ type Catalog struct {
 	skillOrder []string
 	weaveOrder []string
 	itemOrder  []string
+
+	// Phase L slice 65: int32 hash → *Feat. Built eagerly at the end
+	// of Load(); creature.Core.Feats stores chargen.HashID(id) values,
+	// so the combat hot path needs cheap reverse lookup. Immutable
+	// after Load returns; safe for concurrent reads.
+	featByHash map[int32]*Feat
 }
 
 // Filenames the loader expects under fsys's root.
@@ -130,7 +137,27 @@ func Load(fsys fs.FS) (*Catalog, error) {
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
+	c.buildFeatHashIndex()
 	return c, nil
+}
+
+// buildFeatHashIndex builds the int32 → *Feat reverse-lookup table
+// once at the end of Load(). FNV-32a collisions over a catalog this
+// size are astronomically unlikely, but if one ever lands we log it
+// and keep the first entry (deterministic by load order) so combat
+// effects stay attached to a well-defined feat. Phase L slice 65.
+func (c *Catalog) buildFeatHashIndex() {
+	c.featByHash = make(map[int32]*Feat, len(c.feats))
+	for _, id := range c.featOrder {
+		f := c.feats[id]
+		key := HashID(f.ID)
+		if prev, dup := c.featByHash[key]; dup {
+			slog.Warn("chargen: feat hash collision",
+				"first", prev.ID, "second", f.ID, "hash", key)
+			continue
+		}
+		c.featByHash[key] = f
+	}
 }
 
 // readYAMLList parses a top-level list of T from `name` under fsys
@@ -211,6 +238,22 @@ func (c *Catalog) validate() error {
 		}
 		if !f.Background && len(f.Backgrounds) > 0 {
 			errs = append(errs, fmt.Sprintf("feat %q: backgrounds set but background:false", f.ID))
+		}
+		// Phase L slice 65: cadence-modifier sanity. Zero values are
+		// the "no-op" identity (resolver substitutes 1.0× for *Mul);
+		// non-zero values must stay within a reasonable band so a typo
+		// can't collapse combat to zero or grind it to a halt.
+		if f.WeaponWeightPenaltyMul != 0 && (f.WeaponWeightPenaltyMul <= 0 || f.WeaponWeightPenaltyMul > 2) {
+			errs = append(errs, fmt.Sprintf("feat %q: weapon_weight_penalty_mul %.3f outside (0,2]", f.ID, f.WeaponWeightPenaltyMul))
+		}
+		if f.ArmorWeightPenaltyMul != 0 && (f.ArmorWeightPenaltyMul <= 0 || f.ArmorWeightPenaltyMul > 2) {
+			errs = append(errs, fmt.Sprintf("feat %q: armor_weight_penalty_mul %.3f outside (0,2]", f.ID, f.ArmorWeightPenaltyMul))
+		}
+		if f.StaminaCostMul != 0 && (f.StaminaCostMul <= 0 || f.StaminaCostMul > 2) {
+			errs = append(errs, fmt.Sprintf("feat %q: stamina_cost_mul %.3f outside (0,2]", f.ID, f.StaminaCostMul))
+		}
+		if f.StaminaRegenAdd < -10 || f.StaminaRegenAdd > 10 {
+			errs = append(errs, fmt.Sprintf("feat %q: stamina_regen_add %d outside [-10,10]", f.ID, f.StaminaRegenAdd))
 		}
 	}
 
@@ -336,6 +379,18 @@ func (c *Catalog) Class(id string) (*Class, bool) { v, ok := c.classes[id]; retu
 
 // Feat returns the entry by id, ok=false on miss.
 func (c *Catalog) Feat(id string) (*Feat, bool) { v, ok := c.feats[id]; return v, ok }
+
+// FeatByHashedID returns the catalog Feat whose HashID matches key,
+// or nil when no feat hashes to that key. creature.Core.Feats stores
+// the hashed int32 form; this accessor is the cheap reverse-lookup
+// used by the combat hot path. nil-safe receiver returns nil.
+// Phase L slice 65.
+func (c *Catalog) FeatByHashedID(key int32) *Feat {
+	if c == nil || c.featByHash == nil {
+		return nil
+	}
+	return c.featByHash[key]
+}
 
 // Skill returns the entry by id, ok=false on miss.
 func (c *Catalog) Skill(id string) (*Skill, bool) { v, ok := c.skills[id]; return v, ok }

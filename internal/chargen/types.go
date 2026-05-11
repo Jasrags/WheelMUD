@@ -129,6 +129,19 @@ type Feat struct {
 	Background  bool     `yaml:"background"` // background-feat-only
 	Backgrounds []string `yaml:"backgrounds,omitempty"`
 	Description string   `yaml:"description"`
+
+	// Phase L slice 65 — cadence modifiers. All optional; zero values
+	// are no-ops so existing background feats round-trip unmodified.
+	// WeaponWeightPenaltyMul and ArmorWeightPenaltyMul attenuate the
+	// "above 1.0×" portion of the gear factor (a feat halves a
+	// greatsword's penalty but never speeds up a dagger). StaminaCostMul
+	// scales the per-action SP debit. StaminaRegenAdd is an additive
+	// per-pulse bump folded in before the heavy-armor halving in
+	// EffectiveStaminaRegen.
+	WeaponWeightPenaltyMul float32 `yaml:"weapon_weight_penalty_mul,omitempty"`
+	ArmorWeightPenaltyMul  float32 `yaml:"armor_weight_penalty_mul,omitempty"`
+	StaminaCostMul         float32 `yaml:"stamina_cost_mul,omitempty"`
+	StaminaRegenAdd        int16   `yaml:"stamina_regen_add,omitempty"`
 }
 
 // Skill is one entry in the class-skill universe. Ability is the

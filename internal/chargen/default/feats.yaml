@@ -222,3 +222,48 @@
     The Waste teaches what it teaches; you remember.
 
     +1 Fortitude; +2 Wilderness Lore.
+
+# Phase L slice 65 — general (non-background) feats that modify combat
+# cadence. These ride creature.Core.Feats through the combat hot path
+# (actorActionCost / drainStamina / StaminaTicker) via the
+# FeatModifiers aggregate. No prerequisites in V1 — any character may
+# spend a pending feat slot on these via the `feat` verb.
+- id: feat_blademaster
+  name: Blademaster
+  background: false
+  description: |-
+    Trained in disciplined blade-forms — Warder drills, Andoran
+    fence-yard, or the older Tairen pell-work. The heavy weapons
+    swing as if they weighed half as much.
+
+    Halves the cadence penalty of weapons weighing > 10 lb.
+  weapon_weight_penalty_mul: 0.5
+- id: feat_light_step
+  name: Light Step
+  background: false
+  description: |-
+    Movement and footwork training — the way a Warder slides under
+    a hauberk that should slow them, or an Aielman ghosts through
+    sand in cadin'sor. Encumbrance loses half its bite.
+
+    Halves the cadence penalty of medium and heavy body armor.
+  armor_weight_penalty_mul: 0.5
+- id: feat_endurance
+  name: Endurance
+  background: false
+  description: |-
+    You pace your exertion. Every swing, parry, and burst of motion
+    costs you less than it costs the next soldier.
+
+    Actions cost 20% less stamina.
+  stamina_cost_mul: 0.8
+- id: feat_iron_constitution
+  name: Iron Constitution
+  background: false
+  description: |-
+    A sturdy constitution — slow to tire, quick to recover. The
+    pull of a long fight catches up with you a beat later than it
+    catches up with everyone else.
+
+    +1 stamina regen per pulse.
+  stamina_regen_add: 1

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -145,6 +146,69 @@ func absDiff(a, b float64) float64 {
 		return -d
 	}
 	return d
+}
+
+// TestActorActionCost_BlademasterAttenuates seeds a character with
+// the Blademaster feat (weapon_weight_penalty_mul: 0.5), wields a
+// 16-lb greatsword, and asserts the cadence drops from the un-feated
+// baseline. Pure-fn math: 3.0s × (1 + (1.5-1)*0.5) × 1.0 (no armor)
+// = 3.0s × 1.25 = 3.75s, versus 3.0s × 1.5 = 4.5s without the feat.
+// Phase L slice 65.
+func TestActorActionCost_BlademasterAttenuates(t *testing.T) {
+	ctx := context.Background()
+	chars := repo.NewMemoryCharacterRepo()
+	mobs := repo.NewMemoryMobInstanceRepo()
+	items := repo.NewMemoryItemRepo()
+	templates := repo.NewMemoryMobTemplateRepo()
+	accs := repo.NewMemoryAccountRepo()
+
+	gs, err := items.Create(ctx, repo.Item{
+		ExternalID: "test.greatsword", Name: "greatsword",
+		Weight: 16.0, Type: repo.ItemTypeWeapon,
+		Stats: &repo.WeaponStats{Damage: "1d12"},
+	})
+	if err != nil {
+		t.Fatalf("seed greatsword: %v", err)
+	}
+
+	acc, _ := accs.Create(ctx, repo.Account{Username: "u", PasswordHash: "h"})
+	eq := creature.Equipment{}
+	eq.Set(creature.SlotPrimaryWield, gs.ID)
+
+	bm, _ := chars.Create(ctx, repo.Character{
+		AccountID: acc.ID, Name: "Blademaster", CurrentRoomID: 1,
+		Equipment: eq,
+		Feats:     []int32{chargen.HashID("blademaster")},
+	})
+	plain, _ := chars.Create(ctx, repo.Character{
+		AccountID: acc.ID, Name: "Plain", CurrentRoomID: 1,
+		Equipment: eq,
+	})
+
+	bus := eventbus.New()
+	mgr := New(bus, chars, mobs, templates, items)
+	mgr.SetCatalog(loadFakeCatalog(t))
+
+	bmCost := mgr.actorActionCost(ctx,
+		ActorRef{Kind: ActorKindCharacter, ID: bm.ID},
+		Action{Kind: ActionAttack, Variant: VariantNormal})
+	plainCost := mgr.actorActionCost(ctx,
+		ActorRef{Kind: ActorKindCharacter, ID: plain.ID},
+		Action{Kind: ActionAttack, Variant: VariantNormal})
+
+	// Plain: 3000ms × 1.5 (greatsword) × 1.0 (no armor) × 1.0 (human race) = 4500ms
+	// BM:    3000ms × (1+(1.5-1)*0.5) × 1.0 × 1.0 = 3750ms
+	wantBM := 3750 * time.Millisecond
+	wantPlain := 4500 * time.Millisecond
+	if bmCost != wantBM {
+		t.Errorf("blademaster cost = %v, want %v", bmCost, wantBM)
+	}
+	if plainCost != wantPlain {
+		t.Errorf("plain cost = %v, want %v", plainCost, wantPlain)
+	}
+	if bmCost >= plainCost {
+		t.Errorf("blademaster (%v) should be faster than plain (%v)", bmCost, plainCost)
+	}
 }
 
 // TestActorActionCost_HeavyVsLight asserts a plate-greatsword actor's

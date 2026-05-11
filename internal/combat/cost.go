@@ -161,21 +161,45 @@ func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Eq
 }
 
 // actorActionCost combines DefaultActionCost with the actor's gear
-// factors and racial speed multiplier. Called from tickRoom after a
-// swing resolves to stamp NextActAt. resolveAction-time gear is
-// "as of now" — re-wielding mid-fight changes the cadence of the
-// next queued action, matching how combat verbs already re-read
-// weapon stats by id. Race is immutable per actor so the lookup
-// caches via the repo's normal char fetch.
+// factors, feat-driven attenuations, and racial speed multiplier.
+// Called from tickRoom after a swing resolves to stamp NextActAt.
+// resolveAction-time gear is "as of now" — re-wielding mid-fight
+// changes the cadence of the next queued action, matching how combat
+// verbs already re-read weapon stats by id. Feats are looked up via
+// the chargen catalog every call: combat is ~1Hz and the catalog
+// lookup is a single map read, so caching on Core would add
+// invalidation complexity for negligible benefit.
+//
+// Order matters: feats attenuate the gear factors before the racial
+// speed multiplier folds in. Stacking on the racial side would let
+// an Aiel-with-Light-Step double-discount armor in a way the score
+// sheet's bracketed contributors would no longer reflect.
 func (m *Manager) actorActionCost(ctx context.Context, ref ActorRef, action Action) time.Duration {
 	base := DefaultActionCost(action.Kind, action.Variant)
 	cost := base
+	fm := m.resolveFeatModifiers(ctx, ref)
 	if eq, ok := m.resolveEquipment(ctx, ref); ok {
 		g := ResolveGearFactors(ctx, m.items, eq)
+		g = ApplyFeatGearAttenuation(g, fm)
 		cost = time.Duration(float64(cost) * g.Multiplier())
 	}
 	cost = ApplySpeedFactor(cost, m.actorSpeedFactor(ctx, ref))
 	return cost
+}
+
+// resolveFeatModifiers returns the feat-driven cadence aggregate for
+// the actor. Mob actors and characters with no catalog wired both
+// return the identity aggregate so combat math is well-defined under
+// every configuration. Phase L slice 65.
+func (m *Manager) resolveFeatModifiers(ctx context.Context, ref ActorRef) FeatModifiers {
+	if ref.Kind != ActorKindCharacter || m.chars == nil || m.cat == nil {
+		return IdentityFeatModifiers()
+	}
+	ch, err := m.chars.GetByID(ctx, ref.ID)
+	if err != nil {
+		return IdentityFeatModifiers()
+	}
+	return ResolveFeatModifiers(ch.Feats, m.cat)
 }
 
 // actorSpeedFactor returns the RaceProfile.SpeedFactor for the actor,
@@ -216,6 +240,20 @@ func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action)
 	// stay unmetered.
 	if ch.Core.StaminaMax <= 0 {
 		return
+	}
+	// Phase L slice 65: feat-driven cost-mul (Endurance = 0.8×).
+	// Identity mul = 1.0 → no change. Floor at 0 so a stacked discount
+	// can't credit stamina back to the actor; round to nearest so
+	// integer SP costs don't all collapse to the same value.
+	if m.cat != nil {
+		fm := ResolveFeatModifiers(ch.Feats, m.cat)
+		if fm.StaminaCostMul > 0 && fm.StaminaCostMul != 1.0 {
+			scaled := float32(cost) * fm.StaminaCostMul
+			if scaled < 0 {
+				scaled = 0
+			}
+			cost = int32(scaled + 0.5)
+		}
 	}
 	next := ch.Core.StaminaCurrent - cost
 	if next < 0 {

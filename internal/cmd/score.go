@@ -42,14 +42,18 @@ func NewScore(characters repo.CharacterRepo, items repo.ItemRepo, cat *chargen.C
 					"{{Could not load your character.}}::red\r\n")
 			}
 			gear := combat.ResolveGearFactors(c.Ctx, items, ch.Equipment)
-			return renderScore(c.Session, ch, cat, gear)
+			fm := combat.ResolveFeatModifiers(ch.Feats, cat)
+			gear = combat.ApplyFeatGearAttenuation(gear, fm)
+			return renderScore(c.Session, ch, cat, gear, fm)
 		},
 	}
 }
 
 // renderScore writes the full sheet to s. Broken out so tests can
-// drive it without the registry / context machinery.
-func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gear combat.GearFactors) error {
+// drive it without the registry / context machinery. fm is the
+// feat-modifier aggregate so the Combat line can cite active
+// contributors and the Stamina line can show the feat-bumped regen.
+func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gear combat.GearFactors, fm combat.FeatModifiers) error {
 	if err := display.SectionHeader(s, "Character — "+ch.Name); err != nil {
 		return err
 	}
@@ -111,7 +115,11 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gea
 		}
 	}
 	if ch.Core.StaminaMax > 0 {
-		effRegen := combat.EffectiveStaminaRegen(ch.Core.StaminaRegen, gear.ArmorWeightClass)
+		// Phase L slice 65: Iron Constitution adds before the
+		// heavy-armor halving, mirroring the StaminaTicker's order
+		// so the score line and the live regen agree.
+		baseRegen := ch.Core.StaminaRegen + int32(fm.StaminaRegenAdd)
+		effRegen := combat.EffectiveStaminaRegen(baseRegen, gear.ArmorWeightClass)
 		if err := display.FieldRow(s, "Stamina",
 			fmt.Sprintf("%d / %d  (+%d/pulse)",
 				ch.Core.StaminaCurrent, ch.Core.StaminaMax, effRegen),
@@ -119,10 +127,12 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gea
 			return err
 		}
 	}
-	if err := display.FieldRow(s, "Combat",
-		fmt.Sprintf("%.2fx (%.2f weapon x %.2f armor)",
-			gear.Multiplier(), gear.WeaponFactor, gear.ArmorFactor),
-		scoreLabelGutter); err != nil {
+	combatLine := fmt.Sprintf("%.2fx (%.2f weapon x %.2f armor)",
+		gear.Multiplier(), gear.WeaponFactor, gear.ArmorFactor)
+	if len(fm.Active) > 0 {
+		combatLine += " [" + strings.Join(fm.Active, ", ") + "]"
+	}
+	if err := display.FieldRow(s, "Combat", combatLine, scoreLabelGutter); err != nil {
 		return err
 	}
 

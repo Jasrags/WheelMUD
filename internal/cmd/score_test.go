@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -297,5 +298,108 @@ func TestClassLine_EmptyOrZeroLevels(t *testing.T) {
 	}
 	if got := classLine(map[creature.Class]int8{creature.ClassArmsman: 0}, nil); got != "(unset)" {
 		t.Errorf("zero levels: got %q want (unset)", got)
+	}
+}
+
+// loadDefaultChargen loads the production chargen catalog from the
+// embedded fixtures. Used by score tests that exercise feat-driven
+// score rendering (Phase L slice 65).
+func loadDefaultChargen(t *testing.T) *chargen.Catalog {
+	t.Helper()
+	fsys, err := chargen.SourceFS()
+	if err != nil {
+		t.Fatalf("chargen source fs: %v", err)
+	}
+	cat, err := chargen.Load(fsys)
+	if err != nil {
+		t.Fatalf("chargen load: %v", err)
+	}
+	return cat
+}
+
+// TestScore_CombatLineCitesActiveFeats seeds a character with the
+// Blademaster feat, equips a greatsword, and asserts the score
+// Combat line includes the bracketed contributor name. Verifies
+// the slice-65 score-sheet feedback loop end-to-end.
+func TestScore_CombatLineCitesActiveFeats(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	items := repo.NewMemoryItemRepo()
+	cat := loadDefaultChargen(t)
+
+	gs, _ := items.Create(context.Background(), repo.Item{
+		ExternalID: "test.greatsword", Name: "greatsword",
+		Type: repo.ItemTypeWeapon, Weight: 16.0,
+		Stats: &repo.WeaponStats{Damage: "1d12"},
+	})
+	eq := creature.Equipment{}
+	eq.Set(creature.SlotPrimaryWield, gs.ID)
+
+	in := repo.Character{
+		AccountID: 400,
+		Name:      "Lan",
+		Race:      creature.RaceHuman,
+		ClassLevels: map[creature.Class]int8{
+			creature.ClassArmsman: 1,
+		},
+		Core:      creature.Core{HPCurrent: 10, HPMax: 10},
+		Equipment: eq,
+		Feats:     []int32{chargen.HashID("feat_blademaster")},
+		AuthLevel: repo.AuthLevelPlayer,
+	}
+	if _, err := chars.Create(context.Background(), in); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s, out := bufSession(t)
+	s.AuthLevel = telnet.AuthPlayer
+	s.CharacterName = "Lan"
+	s.Width = 80
+	runCmd(t, NewScore(chars, items, cat), s, "")
+	got := out.String()
+
+	if !strings.Contains(got, "[Blademaster]") {
+		t.Fatalf("Combat line should cite [Blademaster]; got:\n%s", got)
+	}
+	// Sanity: the line still carries the multiplier number prefix.
+	if !strings.Contains(got, "Combat") {
+		t.Fatalf("Combat row missing; got:\n%s", got)
+	}
+}
+
+// TestScore_FeatRegenBumpRendered seeds a character with Iron
+// Constitution and a base regen of 2. Expected: the Stamina line
+// shows (+3/pulse) because the +1 feat bump adds before
+// EffectiveStaminaRegen.
+func TestScore_FeatRegenBumpRendered(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	cat := loadDefaultChargen(t)
+
+	in := repo.Character{
+		AccountID: 401,
+		Name:      "Ironside",
+		Race:      creature.RaceHuman,
+		ClassLevels: map[creature.Class]int8{
+			creature.ClassArmsman: 1,
+		},
+		Core: creature.Core{
+			HPCurrent: 10, HPMax: 10,
+			StaminaCurrent: 50, StaminaMax: 100, StaminaRegen: 2,
+		},
+		Feats:     []int32{chargen.HashID("feat_iron_constitution")},
+		AuthLevel: repo.AuthLevelPlayer,
+	}
+	if _, err := chars.Create(context.Background(), in); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s, out := bufSession(t)
+	s.AuthLevel = telnet.AuthPlayer
+	s.CharacterName = "Ironside"
+	s.Width = 80
+	runCmd(t, NewScore(chars, nil, cat), s, "")
+	got := out.String()
+
+	if !strings.Contains(got, "(+3/pulse)") {
+		t.Fatalf("expected (+3/pulse) with Iron Constitution; got:\n%s", got)
 	}
 }
