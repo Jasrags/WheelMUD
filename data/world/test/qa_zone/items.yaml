@@ -203,6 +203,28 @@
 
 # ─── Cellar torch: pair with the dark room. ────────────────────────
 
+# ─── Phase L #64 evasion-floor throwables. Range=thrown gates `throw`;
+# the dagger sample on the speed-range table is melee-only so this is
+# the dedicated throwables fixture.
+
+- id: test.qa.weapon_throwing_knives
+  room: test.qa.evasion
+  name: a brace of throwing knives
+  short: a brace of throwing knives lies on a side table
+  type: weapon
+  weight: 0.5
+  value: 1sp
+  quality: normal
+  stats:
+    proficiency: simple
+    size: small
+    range: thrown
+    damage: "1d4"
+    range_inc_ft: 10
+    crit_mult: 2
+    damage_type:
+      - P
+
 - id: test.qa.cellar_torch
   room: test.qa.dark
   name: an unlit cellar torch

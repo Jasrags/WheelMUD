@@ -22,6 +22,12 @@ func DefaultActionCost(kind ActionKind, variant AttackVariant) time.Duration {
 		return 2 * time.Second
 	case ActionFlee:
 		return 2 * time.Second
+	case ActionDodge:
+		return 1 * time.Second
+	case ActionThrow:
+		return 2 * time.Second
+	case ActionSidestep:
+		return 500 * time.Millisecond
 	default:
 		return 1 * time.Second
 	}
@@ -103,6 +109,12 @@ func DefaultActionStamina(kind ActionKind, variant AttackVariant) int32 {
 		return 4
 	case ActionFlee:
 		return 8
+	case ActionDodge:
+		return 3
+	case ActionThrow:
+		return 6
+	case ActionSidestep:
+		return 2
 	default:
 		return 0
 	}
@@ -129,6 +141,24 @@ const (
 	// moves the actor to a neighbouring room and prunes them from
 	// the fight order on the next pulse.
 	ActionFlee
+	// ActionDodge sets the actor into a Dex-flavored evasion stance
+	// for the rest of this round. The next incoming attack against
+	// the actor takes +4 Defense and immunity to flat-foot; the
+	// stance is consumed after one trigger. Mirror of ActionParry
+	// but reaction-only — no opposed roll, no attacker flat-foot on
+	// success.
+	ActionDodge
+	// ActionThrow resolves a one-shot ranged attack: the actor's
+	// wielded thrown weapon (WeaponStats.Range == "thrown") rolls
+	// like a Normal attack and is consumed from the primary wield
+	// slot on resolution — either dropped to the room on miss or
+	// parented into the target's corpse on kill.
+	ActionThrow
+	// ActionSidestep flat-foots a named attacker for one round
+	// (loses Dex to Defense, -2 attack roll). Cheap positional
+	// play — no damage, no opposed roll. Target field carries the
+	// attacker the actor wants to sidestep.
+	ActionSidestep
 )
 
 // Action is one combatant's queued intent for the current round. The

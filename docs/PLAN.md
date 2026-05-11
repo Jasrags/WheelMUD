@@ -1013,8 +1013,8 @@ any slice and the game still works.
       window a plate Borderlander gets one swing, then visibly
       tires; recovery feel matches the flavor.
 
-64. **New action verbs — `dodge` / `throw` / `sidestep`.** The
-    action menu Aiel actually wants.
+64. ~~**New action verbs — `dodge` / `throw` / `sidestep`.** The
+    action menu Aiel actually wants.~~ Landed 2026-05-11.
     - `dodge`: short defensive stance (1 round). Grants
       `FlatFootedUntil` immunity + +4 Defense from the next
       attack against you. Cost 1.0 s + 3 SP. Mirror of `parry`

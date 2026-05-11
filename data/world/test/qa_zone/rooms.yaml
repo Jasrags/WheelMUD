@@ -68,6 +68,31 @@
          wear plate ; score       (regen halves to +N/2)"
   exits:
     d: test.qa.hub
+    n: test.qa.evasion
+  flags:
+    indoors: true
+    nopvp: true
+    nomap: true
+  sector: city
+
+- id: test.qa.evasion
+  name: The QA Evasion Floor
+  short: a wide floor scattered with hanging pendulum targets and rolling dummies
+  long: |
+    A wide floor scattered with hanging pendulum targets and rolling
+    dummies on wheeled stands. A stack of throwing knives sits ready
+    on a side table. A laminated card by the door reads:
+
+      "Phase L #64 — dodge / throw / sidestep. Recipe:
+         attack dummy quick           (start a fight)
+         dodge                        (+4 Defense for the next swing)
+         sidestep dummy               (flat-foots the dummy)
+         get knives ; wield knives
+         throw knives dummy           (ranged consume-and-drop)
+         score                        (watch SP drain across the chain)
+       Dummy respawns every 60s."
+  exits:
+    s: test.qa.speed_range
   flags:
     indoors: true
     nopvp: true

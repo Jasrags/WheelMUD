@@ -84,6 +84,9 @@ func TestDefaultActionStamina(t *testing.T) {
 		{ActionAttack, VariantQuick, 3},
 		{ActionParry, VariantNormal, 4},
 		{ActionFlee, VariantNormal, 8},
+		{ActionDodge, VariantNormal, 3},
+		{ActionThrow, VariantNormal, 6},
+		{ActionSidestep, VariantNormal, 2},
 		{ActionNone, VariantNormal, 0},
 	}
 	for _, tc := range cases {

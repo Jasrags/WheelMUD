@@ -173,13 +173,45 @@ type CombatParry struct {
 	Attack   int
 }
 
-// CombatStance fires when an actor enters a combat stance (currently
-// only "parry"). Subscribers compose room broadcasts off this so the
-// resolver doesn't need to know about cfmt or session plumbing.
+// CombatStance fires when an actor enters a combat stance ("parry",
+// "dodge", or "sidestep"). Subscribers compose room broadcasts off
+// this so the resolver doesn't need to know about cfmt or session
+// plumbing. Target is the named actor for stances that aim at a
+// specific peer (sidestep names the attacker to flat-foot) — zero
+// ActorRef for self-only stances (parry, dodge).
 type CombatStance struct {
 	RoomID int64
 	Actor  ActorRef
-	Kind   string // "parry" today; future "defend" / "charge"
+	Kind   string // "parry" | "dodge" | "sidestep"
+	Target ActorRef
+}
+
+// CombatDodgeAvoided fires when a defender's dodge stance turns an
+// otherwise-hitting swing into a miss via the +4 Defense / flat-foot
+// immunity grant. Distinct from CombatMiss so subscribers can render
+// the active "you twist aside" line rather than a passive "you miss".
+// The stance is consumed by the trigger.
+type CombatDodgeAvoided struct {
+	RoomID   int64
+	Defender ActorRef
+	Attacker ActorRef
+	Roll     int   // attacker total before dodge bonus
+	Defense  int16 // defender Defense after +4 dodge bonus
+}
+
+// CombatThrow fires when an ActionThrow resolves. The cmd-layer uses
+// this to emit a "you fling the dagger" lead-in line; the underlying
+// hit/miss is published as a separate CombatHit / CombatMiss so the
+// existing damage-echo subscribers don't need to special-case ranged.
+// ItemName is captured at resolve time so subscribers don't have to
+// round-trip the item repo after the item has been moved.
+type CombatThrow struct {
+	RoomID   int64
+	Attacker ActorRef
+	Defender ActorRef
+	ItemID   int64
+	ItemName string
+	Landed   bool // true if the swing rolled a hit (damage may still be 0 from DR)
 }
 
 // CombatFlee fires when an ActionFlee resolves — whether the actor

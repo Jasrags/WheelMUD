@@ -79,8 +79,16 @@ type Fight struct {
 
 	// FlatFootedUntil maps an actor to the round number through which
 	// they are flat-footed (lose Dex bonus to Defense). Set when a
-	// successful parry deflects their attack.
+	// successful parry deflects their attack, or by ActionSidestep
+	// from an in-room defender naming the attacker.
 	FlatFootedUntil map[ActorRef]int
+
+	// DodgeUntil maps an actor to the round number through which
+	// their dodge stance is active. Set by ActionDodge resolution
+	// to `currentRound + 1`; consumed on the first incoming attack
+	// that would otherwise resolve normally (grants +4 Defense and
+	// flat-foot immunity for that one swing).
+	DodgeUntil map[ActorRef]int
 
 	// Threat[defender][attacker] = cumulative threat that attacker
 	// has generated against defender over the lifetime of the fight.
@@ -142,6 +150,7 @@ func (f *Fight) pruneDead() bool {
 		if removed(e.Ref) {
 			delete(f.ParryingUntil, e.Ref)
 			delete(f.FlatFootedUntil, e.Ref)
+			delete(f.DodgeUntil, e.Ref)
 			// Threat: drop the defender row, then walk every other
 			// row to drop the attacker column. Keeps the map bounded
 			// as a fight grinds on and prevents stale refs from

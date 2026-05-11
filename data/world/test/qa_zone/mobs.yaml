@@ -166,3 +166,14 @@
   room: test.qa.lua
   name: the QA Trigger Warden
   short: a warden in plain robes stands at the edge of the brass rune
+
+# ─── Phase L #64 evasion-floor dummy. HP-fat target so the
+# dodge/throw/sidestep recipe runs end-to-end without dying mid-chain.
+
+- id: test.qa.dummy_evasion
+  room: test.qa.evasion
+  name: a rolling practice dummy
+  short: a wheeled practice dummy on a swivel base
+  wander_chance: 0.0
+  xp_value: 0
+  gold_dice: ""

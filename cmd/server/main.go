@@ -372,6 +372,11 @@ func main() {
 		switch ev.Kind {
 		case "parry":
 			combatBroadcast(ev.RoomID, "{{"+name+" raises a weapon to parry.}}::yellow\r\n")
+		case "dodge":
+			combatBroadcast(ev.RoomID, "{{"+name+" drops into a wary crouch.}}::yellow\r\n")
+		case "sidestep":
+			tgt := combatActorName(ctx, ev.Target, characters, mobs)
+			combatBroadcast(ev.RoomID, "{{"+name+" eyes "+tgt+"'s footing.}}::yellow\r\n")
 		}
 	})
 	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatParry) {
@@ -405,6 +410,26 @@ func main() {
 			}
 		}
 	}
+
+	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatDodgeAvoided) {
+		def := combatActorName(ctx, ev.Defender, characters, mobs)
+		atk := combatActorName(ctx, ev.Attacker, characters, mobs)
+		var defSess, atkSess *telnet.Session
+		if ev.Defender.Kind == combat.ActorKindCharacter {
+			defSess = cmd.LookupByCharacterID(sessions, ev.Defender.ID)
+			if defSess != nil {
+				_ = defSess.WriteAsync("{{You twist aside, evading " + atk + "'s blow.}}::cyan\r\n")
+			}
+		}
+		if ev.Attacker.Kind == combat.ActorKindCharacter {
+			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
+			if atkSess != nil {
+				_ = atkSess.WriteAsync("{{" + def + " twists aside — your swing whiffs.}}::yellow\r\n")
+			}
+		}
+		combatBroadcastSkip(ev.RoomID,
+			"{{"+def+" ducks "+atk+"'s blow!}}::cyan\r\n", atkSess, defSess)
+	})
 
 	// CombatHit: per-attacker echo, per-defender echo (if player),
 	// third-person line to room peers excluding both. Crit adds a
@@ -1263,6 +1288,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions, groups),
 		cmd.NewPower(combatMgr, rooms, mobs, characters, sessions, groups),
 		cmd.NewJab(combatMgr, rooms, mobs, characters, sessions, groups),
+		cmd.NewThrow(combatMgr, rooms, mobs, characters, items, sessions, groups),
 	); err != nil {
 		return nil, err
 	}
@@ -1278,6 +1304,8 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(
 		cmd.NewFlee(combatMgr),
 		cmd.NewParry(combatMgr, characters, sessions),
+		cmd.NewDodge(combatMgr, sessions),
+		cmd.NewSidestep(combatMgr, mobs, sessions),
 	); err != nil {
 		return nil, err
 	}

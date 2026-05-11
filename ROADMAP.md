@@ -1228,6 +1228,40 @@ will need on top of those tables.
       refusal, wait one Regen pulse, then wear plate to verify the
       halved regen).
 
+      **Slice 64 (new action verbs — dodge / throw / sidestep)
+      landed 2026-05-11.** Three new `ActionKind` values
+      (`ActionDodge`, `ActionThrow`, `ActionSidestep`) join the
+      existing Attack/Parry/Flee with their own cadence + stamina
+      entries: `DefaultActionCost` 1.0 s / 2.0 s / 0.5 s,
+      `DefaultActionStamina` 3 / 6 / 2. `Fight.DodgeUntil` is the
+      new round-keyed stance map (mirror of `ParryingUntil`); the
+      attack resolver reads it post-snapshot, adds +4 to the
+      defender's effective Defense for that one swing, and grants
+      flat-foot immunity (overrides a concurrent FlatFootedUntil
+      entry). A swing turned from hit→miss by the +4 publishes
+      the new `CombatDodgeAvoided` event so cmd-layer subscribers
+      can render the active "you twist aside" line instead of a
+      passive miss; the stance consumes either way (one swing's
+      worth of evasion). `pruneDead` clears `DodgeUntil` alongside
+      `ParryingUntil` / `FlatFootedUntil`. Sidestep stamps
+      `FlatFootedUntil` on the named attacker (existing read path
+      picks it up) and publishes `CombatStance{Kind:"sidestep",
+      Target:<attacker>}` — no new map needed. Throw is a one-shot
+      ranged variant: gates on `WeaponStats.Range == "thrown"`,
+      rolls a Normal-variant attack with the weapon stats, then
+      clears `SlotPrimaryWield` via `RecordEquipment` and drops
+      the item via `ItemRepo.SetParent` (into the freshly-spawned
+      corpse via the new `latestCorpseInRoom` helper on kill) or
+      `ItemRepo.SetRoom` (onto the floor on miss / hit-but-alive).
+      Three new verbs in `internal/cmd/` follow the parry/attack
+      templates: `dodge` (no args), `throw <weapon> <target>`,
+      `sidestep <attacker>`. All three carry `Lag: 500 ms` per
+      the slice-60 input-fairness floor. QA fixture: new room
+      `test.qa.evasion` (linked off `test.qa.speed_range` to the
+      north) with a rolling practice dummy + a brace of throwing
+      knives (`range: thrown`); laminated card walks the full Aiel
+      chain `attack quick → dodge → sidestep → throw`.
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

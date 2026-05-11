@@ -489,6 +489,15 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	case ActionFlee:
 		m.resolveFlee(ctx, roomID, actor)
 		return
+	case ActionDodge:
+		m.resolveDodge(ctx, roomID, round, actor)
+		return
+	case ActionSidestep:
+		m.resolveSidestep(ctx, roomID, round, actor, action.Target)
+		return
+	case ActionThrow:
+		m.resolveThrow(ctx, roomID, round, actor, action)
+		return
 	case ActionAttack:
 		// fall through
 	default:
@@ -527,12 +536,21 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	m.mu.Lock()
 	defenderFlatFooted := false
 	defenderParrying := false
+	defenderDodging := false
 	if f, ok := m.fights[roomID]; ok {
 		if v, has := f.FlatFootedUntil[action.Target]; has && v >= round {
 			defenderFlatFooted = true
 		}
 		if v, has := f.ParryingUntil[action.Target]; has && v >= round {
 			defenderParrying = true
+		}
+		if v, has := f.DodgeUntil[action.Target]; has && v >= round {
+			defenderDodging = true
+			// Dodge grants flat-foot immunity for this one swing —
+			// the attack rolls against full Dex Defense even when
+			// FlatFootedUntil also applies (e.g. a sidestepper on
+			// the same defender).
+			defenderFlatFooted = false
 		}
 	}
 	m.mu.Unlock()
@@ -546,8 +564,16 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	atkEff := affects.Effective(atkCore)
 	defEff := affects.Effective(defCore)
 
+	// Dodge grants the defender +4 to effective Defense for this one
+	// swing. Applied via a transient Core copy so RollAttack's pure
+	// signature stays intact and the original defEff remains the
+	// canonical view for damage / write-back below.
+	defForRoll := defEff
+	if defenderDodging {
+		defForRoll.Defense += 4
+	}
 	m.rngMu.Lock()
-	roll := RollAttack(m.rng, atkEff, defEff, stats, defenderFlatFooted, VariantAttackBonus(action.Variant))
+	roll := RollAttack(m.rng, atkEff, defForRoll, stats, defenderFlatFooted, VariantAttackBonus(action.Variant))
 	parried := false
 	parryTotal := 0
 	if roll.Hit && defenderParrying {
@@ -587,17 +613,50 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	}
 
 	if !roll.Hit {
+		// Dodge: if the swing would have hit against base Defense but
+		// missed only because of the +4 bonus, publish the dedicated
+		// CombatDodgeAvoided event so subscribers can render the
+		// active evasion line. Consume the stance regardless of which
+		// branch triggered — one swing's worth of evasion.
+		dodgeTriggered := defenderDodging && roll.Total >= int(defEff.Defense)
+		if defenderDodging {
+			m.mu.Lock()
+			if f, ok := m.fights[roomID]; ok {
+				delete(f.DodgeUntil, action.Target)
+			}
+			m.mu.Unlock()
+		}
 		if m.bus != nil {
-			m.bus.Publish(ctx, CombatMiss{
-				RoomID:    roomID,
-				Attacker:  actor,
-				Defender:  action.Target,
-				RollTotal: roll.Total,
-				Defense:   defEff.Defense,
-				Variant:   action.Variant,
-			})
+			if dodgeTriggered {
+				m.bus.Publish(ctx, CombatDodgeAvoided{
+					RoomID:   roomID,
+					Defender: action.Target,
+					Attacker: actor,
+					Roll:     roll.Total,
+					Defense:  defForRoll.Defense,
+				})
+			} else {
+				m.bus.Publish(ctx, CombatMiss{
+					RoomID:    roomID,
+					Attacker:  actor,
+					Defender:  action.Target,
+					RollTotal: roll.Total,
+					Defense:   defEff.Defense,
+					Variant:   action.Variant,
+				})
+			}
 		}
 		return
+	}
+	// Hit path: dodge stance still consumes if it didn't flip the
+	// outcome (e.g. a nat-20 or a roll above Defense+4 still lands).
+	// One swing, one dodge.
+	if defenderDodging {
+		m.mu.Lock()
+		if f, ok := m.fights[roomID]; ok {
+			delete(f.DodgeUntil, action.Target)
+		}
+		m.mu.Unlock()
 	}
 
 	// Persist mutated HP/subdual back to the live row so subsequent
@@ -817,6 +876,292 @@ func (m *Manager) resolveFlee(ctx context.Context, roomID int64, actor ActorRef)
 			Reason:    res.Reason,
 		})
 	}
+}
+
+// resolveDodge applies the dodge stance for actor. Mirror of
+// resolveParry but no opposed-roll dependency — the attack resolver
+// adds +4 Defense and grants flat-foot immunity for the next swing
+// against actor, consuming the stance on first trigger. Published as
+// CombatStance{Kind:"dodge"} so cmd-layer broadcast subscribers
+// don't need to know about ParryingUntil / DodgeUntil layout.
+func (m *Manager) resolveDodge(ctx context.Context, roomID int64, round int, actor ActorRef) {
+	m.mu.Lock()
+	if f, ok := m.fights[roomID]; ok {
+		if f.DodgeUntil == nil {
+			f.DodgeUntil = make(map[ActorRef]int)
+		}
+		f.DodgeUntil[actor] = round + 1
+	}
+	m.mu.Unlock()
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatStance{
+			RoomID: roomID,
+			Actor:  actor,
+			Kind:   "dodge",
+		})
+	}
+}
+
+// resolveSidestep stamps FlatFootedUntil[target] for one round.
+// target is the attacker the sidestepping actor wants to expose;
+// the existing FlatFootedUntil read in resolveAction will drop the
+// attacker's Dex bonus to Defense on the next swing landed against
+// them. Silently no-ops when target isn't a participant — the verb
+// layer pre-validates this but defense in depth.
+func (m *Manager) resolveSidestep(ctx context.Context, roomID int64, round int, actor ActorRef, target ActorRef) {
+	m.mu.Lock()
+	if f, ok := m.fights[roomID]; ok {
+		inOrder := false
+		for _, e := range f.Order {
+			if e.Ref == target {
+				inOrder = true
+				break
+			}
+		}
+		if inOrder {
+			if f.FlatFootedUntil == nil {
+				f.FlatFootedUntil = make(map[ActorRef]int)
+			}
+			f.FlatFootedUntil[target] = round + 1
+		}
+	}
+	m.mu.Unlock()
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatStance{
+			RoomID: roomID,
+			Actor:  actor,
+			Kind:   "sidestep",
+			Target: target,
+		})
+	}
+}
+
+// resolveThrow resolves a one-shot ranged attack. Rolls a Normal
+// variant attack with the thrown weapon's stats, publishes a
+// CombatThrow lead-in alongside the standard CombatHit/CombatMiss,
+// then unequips the thrown item from SlotPrimaryWield and drops it —
+// to the room on miss, into the corpse on kill. Errors persisting
+// equipment or moving the item log-and-continue; the swing is
+// authoritative either way.
+func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, actor ActorRef, action Action) {
+	if action.Target.Kind == ActorKindUnknown || action.WeaponID == 0 {
+		return
+	}
+	atkCore, err := m.resolveCore(ctx, actor)
+	if err != nil {
+		slog.Warn("combat: resolve attacker failed (throw)",
+			"room", roomID, "actor", actor, "error", err)
+		return
+	}
+	defCore, err := m.resolveCore(ctx, action.Target)
+	if err != nil {
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatMiss{
+				RoomID: roomID, Attacker: actor, Defender: action.Target,
+			})
+		}
+		return
+	}
+	var item repo.Item
+	stats := unarmedDamage
+	itemName := "the weapon"
+	if m.items != nil {
+		it, err := m.items.GetByID(ctx, action.WeaponID)
+		if err == nil {
+			item = it
+			stats = weaponStatsFor(&it)
+			if it.Name != "" {
+				itemName = it.Name
+			}
+		}
+	}
+
+	m.mu.Lock()
+	defenderFlatFooted := false
+	if f, ok := m.fights[roomID]; ok {
+		if v, has := f.FlatFootedUntil[action.Target]; has && v >= round {
+			defenderFlatFooted = true
+		}
+	}
+	m.mu.Unlock()
+
+	atkEff := affects.Effective(atkCore)
+	defEff := affects.Effective(defCore)
+
+	m.rngMu.Lock()
+	roll := RollAttack(m.rng, atkEff, defEff, stats, defenderFlatFooted, 0)
+	var dealt int32
+	if roll.Hit {
+		raw := RollDamage(m.rng, atkEff, stats, roll.IsCrit, VariantNormal)
+		dealt = applyDamage(&defCore, raw, weaponPrimaryDamageType(stats))
+	}
+	m.rngMu.Unlock()
+
+	// Publish CombatThrow before hit/miss so the cmd-layer lead-in line
+	// renders ahead of the damage echo.
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatThrow{
+			RoomID:   roomID,
+			Attacker: actor,
+			Defender: action.Target,
+			ItemID:   action.WeaponID,
+			ItemName: itemName,
+			Landed:   roll.Hit,
+		})
+	}
+
+	// Consume the wielded weapon: clear the primary wield slot and
+	// persist the updated equipment_json. Character actors only —
+	// mob actors don't have an Equipment surface today (deferred).
+	if actor.Kind == ActorKindCharacter && m.chars != nil {
+		ch, err := m.chars.GetByID(ctx, actor.ID)
+		if err == nil {
+			if ch.Equipment.Get(creature.SlotPrimaryWield) == action.WeaponID {
+				ch.Equipment.Set(creature.SlotPrimaryWield, 0)
+				if err := m.chars.RecordEquipment(ctx, actor.ID, ch.Equipment); err != nil {
+					slog.Warn("combat: throw equipment persist failed",
+						"room", roomID, "char", actor.ID, "error", err)
+				}
+			}
+		}
+	}
+
+	if !roll.Hit {
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatMiss{
+				RoomID:    roomID,
+				Attacker:  actor,
+				Defender:  action.Target,
+				RollTotal: roll.Total,
+				Defense:   defEff.Defense,
+				Variant:   VariantNormal,
+			})
+		}
+		// Item lands on the floor at the target's feet (== actor's room).
+		m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
+		return
+	}
+
+	// Hit path: persist damage, bump tally + threat, publish CombatHit.
+	switch action.Target.Kind {
+	case ActorKindMob:
+		if err := m.mobs.UpdateLive(ctx, action.Target.ID,
+			defCore.HPCurrent, defCore.Subdual, defCore.Conditions, defCore.Position); err != nil {
+			slog.Warn("combat: mob hp write-back failed (throw)",
+				"room", roomID, "mob", action.Target.ID, "error", err)
+		}
+	case ActorKindCharacter:
+		if err := m.chars.RecordCore(ctx, action.Target.ID,
+			defCore.HPCurrent, defCore.Subdual, defCore.Conditions, defCore.Position); err != nil {
+			slog.Warn("combat: char hp write-back failed (throw)",
+				"room", roomID, "char", action.Target.ID, "error", err)
+		}
+	}
+
+	m.mu.Lock()
+	if f, ok := m.fights[roomID]; ok {
+		if f.DamageTally == nil {
+			f.DamageTally = make(map[ActorRef]int32)
+		}
+		f.DamageTally[actor] += dealt
+		if dealt > 0 {
+			if f.Threat == nil {
+				f.Threat = make(map[ActorRef]map[ActorRef]int32)
+			}
+			row := f.Threat[action.Target]
+			if row == nil {
+				row = make(map[ActorRef]int32)
+				f.Threat[action.Target] = row
+			}
+			row[actor] += dealt
+		}
+	}
+	m.mu.Unlock()
+
+	if m.bus != nil {
+		m.bus.Publish(ctx, CombatHit{
+			RoomID:   roomID,
+			Attacker: actor,
+			Defender: action.Target,
+			Damage:   dealt,
+			Weapon:   action.WeaponID,
+			IsCrit:   roll.IsCrit,
+			Variant:  VariantNormal,
+		})
+	}
+
+	if defCore.HPCurrent <= 0 {
+		switch action.Target.Kind {
+		case ActorKindMob:
+			m.handleMobDeath(ctx, actor, action.Target)
+			// Drop the thrown weapon into the corpse if one was
+			// spawned by handleMobDeath. The corpse item id is on
+			// the published CombatDeath, but we can't subscribe to
+			// our own bus inline; instead, look up the freshest
+			// corpse in the room by deriving from the mobs.GetCorpse
+			// pattern. V1 simplification: re-list room items and
+			// parent into the most recent corpse owned by this room.
+			m.dropThrownItem(ctx, action.WeaponID, roomID, m.latestCorpseInRoom(ctx, roomID), item)
+		case ActorKindCharacter:
+			m.handleCharacterDeath(ctx, actor, action.Target)
+			m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
+		}
+		return
+	}
+	// Survived the hit — item drops at the target's feet.
+	m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
+}
+
+// dropThrownItem moves a thrown weapon into a corpse (when corpseID
+// is non-zero) or onto the room floor (when corpseID is zero). Errors
+// log-and-continue — the swing has already published, so failing the
+// drop just leaks the item in inventory (which the operator can
+// inspect via admin tools). Caller should have already cleared the
+// equipment slot.
+func (m *Manager) dropThrownItem(ctx context.Context, itemID, roomID, corpseID int64, _ repo.Item) {
+	if m.items == nil || itemID == 0 {
+		return
+	}
+	if corpseID != 0 {
+		if err := m.items.SetParent(ctx, itemID, corpseID); err != nil {
+			slog.Warn("combat: throw item-into-corpse failed",
+				"item", itemID, "corpse", corpseID, "error", err)
+		}
+		return
+	}
+	if err := m.items.SetRoom(ctx, itemID, roomID); err != nil {
+		slog.Warn("combat: throw item-to-floor failed",
+			"item", itemID, "room", roomID, "error", err)
+	}
+}
+
+// latestCorpseInRoom returns the id of the most recently created
+// corpse in roomID, or 0 if none. Used by resolveThrow to parent
+// the thrown weapon into a freshly-spawned corpse. Best-effort —
+// returns 0 on any repo error so the throw degrades to a floor
+// drop rather than failing the swing.
+func (m *Manager) latestCorpseInRoom(ctx context.Context, roomID int64) int64 {
+	if m.items == nil {
+		return 0
+	}
+	list, err := m.items.ListInRoom(ctx, roomID)
+	if err != nil {
+		return 0
+	}
+	var latest int64
+	for _, it := range list {
+		if it.Type != repo.ItemTypeContainer {
+			continue
+		}
+		// Corpses use the "corpse-" external_id prefix (see
+		// mob_death.go::corpseExternalID). Match on that so we don't
+		// accidentally parent the thrown weapon into a player-placed
+		// chest that happens to share the room.
+		if len(it.ExternalID) >= 7 && it.ExternalID[:7] == "corpse-" && it.ID > latest {
+			latest = it.ID
+		}
+	}
+	return latest
 }
 
 // snapFleeMover snapshots the mover under the lock so callers don't
