@@ -1,10 +1,11 @@
 package telnet
 
-import "github.com/fatih/color"
+import "github.com/gookit/color"
 
-// Force cfmt's underlying fatih/color package to emit ANSI escapes
-// during tests regardless of stdout TTY state. CI runs tests without
-// a TTY, which would otherwise leave fatih/color.NoColor = true and
-// strip every SGR sequence — exactly the cases the cfmt-rendering
-// tests in this package assert against.
-func init() { color.NoColor = false }
+// Force gookit/color (cfmt's underlying color renderer) to emit ANSI
+// escapes during tests regardless of stdout TTY state. CI runs tests
+// without a TTY, so gookit's SupportColor() returns false and every
+// cfmt-rendered payload comes out plain — which would fail the
+// session-level assertions that check for SGR escapes when
+// ColorLevel != None.
+func init() { color.ForceOpenColor() }
