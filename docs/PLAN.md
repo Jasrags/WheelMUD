@@ -964,25 +964,25 @@ any slice and the game still works.
       damage-per-second roughly equivalent across variants on a
       stationary target.
 
-62. **Gear-driven speed — weapon weight + armor encumbrance.**
-    First "your kit matters" pass.
-    - New `combat.actorActionCost(core creature.Core, eq creature.Equipment, action Action) time.Duration`
-      replaces `defaultActionCost`. Same flat table, multiplied
-      by `weaponSpeedFactor(eq)` × `armorSpeedFactor(eq)`.
-    - `weaponSpeedFactor` reads `WeaponStats.Weight` on the
-      wielded item: light ≤ 2 lb → 0.8×, medium → 1.0×, heavy
-      ≥ 10 lb → 1.3×, two-handed ≥ 15 lb → 1.5×. Unarmed = 0.9×.
-    - `armorSpeedFactor` sums worn-armor weight class
-      (none=1.0×, light=1.05×, medium=1.15×, heavy=1.3×). Reads
-      `ArmorStats.WeightClass` (new field; ArmorStats already
-      exists). Loader gets a string→enum translation; default
-      derived from existing `Weight` if unset.
-    - `score` sheet gains a "Speed" line showing effective
-      action-cost multiplier vs. the unencumbered baseline.
-    - **Slice exit:** a leather-and-spear character measurably
-      out-swings a plate-and-greatsword character; the test
-      zone gets a "speed dummy" fixture that just stands and
-      eats hits so DPS comparisons are reproducible.
+62. ~~**Gear-driven speed — weapon weight + armor encumbrance.**~~
+    Landed 2026-05-10.
+    - `combat.ActionCost(base, weaponWeight, armorWeightClass)` is
+      the new pure fn layered on top of `DefaultActionCost`.
+      Manager-side: `actorActionCost(ctx, ref, action)` +
+      `resolveEquipment(ctx, ref)` mirror `resolveCore`.
+      `tickRoom` callsite at L366 swapped from `DefaultActionCost`.
+    - Weapon weight comes from `repo.Item.Weight` (lb) — not
+      `WeaponStats.Weight` (no such field). Armor weight from
+      `repo.ArmorStats.WeightClass` (already a string). No loader
+      changes needed.
+    - `score` sheet renders `Combat: 1.95x (1.50 weapon x 1.30
+      armor)` directly under movement Speed in Vitals;
+      `NewScore` took an `items repo.ItemRepo` parameter (nil
+      yields the unarmed/naked baseline so tests keep passing).
+    - QA fixture: room `test.qa.speed_range` off the hub via `u`,
+      dummy `test.qa.dummy_speed`, kit greatsword (16 lb) /
+      dagger (1 lb) / plate (heavy). Mob-side equipment authoring
+      deferred — would need a new migration on `mob_templates`.
 
 63. **Racial speed + stamina pool.** First "your race matters"
     pass; biggest schema lift in the phase.

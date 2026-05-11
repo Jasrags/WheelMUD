@@ -1157,6 +1157,36 @@ will need on top of those tables.
       completer via a private `runAttack` helper. Re-issuing
       during a fight overwrites the queued variant.
 
+      **Slice 62 (gear-driven cadence — weapon weight + armor
+      encumbrance) landed 2026-05-10.** New `combat.ActionCost(base,
+      weaponWeight, armorWeightClass)` pure fn multiplies the
+      kind/variant base by a weapon factor (unarmed 0.9× ; ≤2 lb
+      0.8× ; ≤10 lb 1.0× ; ≤15 lb 1.3× ; >15 lb 1.5×) and an armor
+      factor (none/empty 1.0× ; light 1.05× ; medium 1.15× ; heavy
+      1.3×). `combat.ResolveGearFactors(ctx, items, eq)` looks up
+      `SlotPrimaryWield` (weight from `repo.Item.Weight`) and
+      `SlotArmor` (class from `repo.ArmorStats.WeightClass`); nil
+      items repo / lookup failures degrade to the unarmed/naked
+      baseline so combat never panics on gear glitches. Manager
+      gained `actorActionCost(ctx, ref, action)` plus
+      `resolveEquipment(ctx, ref)`, mirroring `resolveCore`; the
+      single `tickRoom` callsite swapped from `DefaultActionCost`.
+      `internal/cmd/score.go` renders a new
+      `Combat: 1.95x (1.50 weapon x 1.30 armor)` line in Vitals
+      directly under the existing movement Speed; `NewScore` took
+      an `items repo.ItemRepo` parameter (nil yields the same
+      unarmed/naked baseline as the resolver). QA fixture: room
+      `test.qa.speed_range` (off the hub via `u`), dummy
+      `test.qa.dummy_speed`, kit `test.qa.weapon_greatsword` (16 lb
+      two-handed), `test.qa.weapon_dagger` (1 lb light),
+      `test.qa.armor_plate` (heavy). Mob-side equipment authoring
+      deferred (no `mob_templates.equipment_json` yet) — tester
+      carries the gear and the dummy just stands still.
+      Variant-cadence tests adjusted to the new unarmed/naked
+      baseline (3 s × 0.9 = 2.7 s for Normal; 4.5 × 0.9 = 4.05 s
+      Power; 1.8 × 0.9 = 1.62 s Quick) — the base table tested in
+      `TestDefaultActionCost_Variants` stays unchanged.
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

@@ -144,6 +144,20 @@
             effects:
               - kind: end
 
+# ─── Speed-test dummy. Phase L #62: HP-fat target so a tester can
+# measure DPS across many swings without the dummy dying mid-test.
+# Defense 10 keeps hits frequent so cadence (not accuracy) is what
+# varies. Mob-side equipment authoring is deferred — the tester
+# carries the speed-range kit; the dummy just stands still.
+
+- id: test.qa.dummy_speed
+  room: test.qa.speed_range
+  name: a reinforced practice dummy
+  short: a reinforced practice dummy stands on a weighted base
+  wander_chance: 0.0
+  xp_value: 0
+  gold_dice: ""
+
 # ─── Lua trigger target. The on_enter trigger is on the room
 # (test.qa.lua), not the mob; this NPC is just a flavour anchor so
 # the room isn't empty when an admin walks in.

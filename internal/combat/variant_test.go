@@ -45,7 +45,9 @@ func TestVariantCadence_PowerSlowsActor(t *testing.T) {
 			break
 		}
 	}
-	if got, want := stamped, now.Add(4500*time.Millisecond); !got.Equal(want) {
+	// Phase L #62: unarmed cadence factor is 0.9× (no weapon held),
+	// armor factor is 1.0× (no armor worn). 4500ms × 0.9 = 4050ms.
+	if got, want := stamped, now.Add(4050*time.Millisecond); !got.Equal(want) {
 		t.Errorf("power NextActAt = %v, want %v", got, want)
 	}
 }
@@ -83,7 +85,8 @@ func TestVariantCadence_QuickSpeedsActor(t *testing.T) {
 			break
 		}
 	}
-	if got, want := stamped, now.Add(1800*time.Millisecond); !got.Equal(want) {
+	// Phase L #62: unarmed cadence factor is 0.9×. 1800ms × 0.9 = 1620ms.
+	if got, want := stamped, now.Add(1620*time.Millisecond); !got.Equal(want) {
 		t.Errorf("quick NextActAt = %v, want %v", got, want)
 	}
 }

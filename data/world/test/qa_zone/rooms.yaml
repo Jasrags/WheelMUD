@@ -29,11 +29,40 @@
     nw: test.qa.items
     se: test.qa.quest
     sw: test.qa.lua
+    u: test.qa.speed_range
     d: test.qa.dark
   flags:
     indoors: true
     nopvp: true
     noteleport: false
+    nomap: true
+  sector: city
+
+- id: test.qa.speed_range
+  name: The QA Speed Range
+  short: a stripped-down sparring loft with a reinforced dummy at one end
+  long: |
+    A sparring loft kept stripped down for cadence testing. A
+    reinforced practice dummy stands at the far end; a weapon rack
+    holds a two-handed greatsword and a light dagger, and a suit of
+    heavy plate hangs on a rack beside it. A laminated card by the
+    door reads:
+
+      "Phase L #62 — gear-driven cadence. Recipe:
+         get greatsword ; wield greatsword
+         wear plate
+         score                    (Combat line shows 1.95x)
+         attack the dummy power   (~8.8s between swings)
+         remove plate ; remove greatsword
+         get dagger ; wield dagger
+         score                    (Combat line shows 0.80x)
+         attack the dummy quick   (~1.4s between swings)
+       Dummy respawns every 60s."
+  exits:
+    d: test.qa.hub
+  flags:
+    indoors: true
+    nopvp: true
     nomap: true
   sector: city
 

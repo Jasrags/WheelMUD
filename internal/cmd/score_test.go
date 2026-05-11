@@ -64,7 +64,7 @@ func TestScore_RendersIdentityVitalsAbilitiesWealth(t *testing.T) {
 	s.CharacterName = "Lan"
 	s.Width = 80
 
-	cmd := NewScore(chars, nil)
+	cmd := NewScore(chars, nil, nil)
 	runCmd(t, cmd, s, "")
 
 	got := out.String()
@@ -149,7 +149,7 @@ func TestScore_ChannelerBlockShowsPracticeAndState(t *testing.T) {
 	s.CharacterName = "Moiraine"
 	s.Width = 80
 
-	cmd := NewScore(chars, nil)
+	cmd := NewScore(chars, nil, nil)
 	runCmd(t, cmd, s, "")
 
 	got := out.String()
@@ -176,7 +176,7 @@ func TestScore_LoadFailureWritesError(t *testing.T) {
 	s.CharacterName = "Ghost"
 	s.Width = 80
 
-	cmd := NewScore(chars, nil)
+	cmd := NewScore(chars, nil, nil)
 	runCmd(t, cmd, s, "")
 
 	if !strings.Contains(out.String(), "Could not load") {
@@ -194,7 +194,7 @@ func TestScore_HonorsColorLevelNone(t *testing.T) {
 	s.Width = 80
 	s.ColorLevel = telnet.ColorLevelNone
 
-	runCmd(t, NewScore(chars, nil), s, "")
+	runCmd(t, NewScore(chars, nil, nil), s, "")
 
 	if strings.ContainsRune(out.String(), 0x1b) {
 		t.Fatalf("ColorLevelNone leaked SGR:\n%s", out.String())

@@ -363,7 +363,13 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		// resolveAction may have mutated Order (death prune is
 		// deferred to next pulse, but Fled is queued during flee
 		// resolution) so re-resolve the entry by Ref.
-		cost := DefaultActionCost(action.Kind, action.Variant)
+		//
+		// Phase L #62: cadence is gear-driven. actorActionCost reads
+		// the actor's wielded weapon weight + worn armor weight class
+		// at "now", so a `wield` mid-fight changes the cadence of the
+		// next swing. Lookup happens outside the manager lock to keep
+		// the SQL hit off the critical section.
+		cost := m.actorActionCost(ctx, r.ref, action)
 		m.mu.Lock()
 		if f2, ok := m.fights[roomID]; ok {
 			for i := range f2.Order {

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
+	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -25,8 +26,10 @@ import (
 const scoreLabelGutter = 14
 
 // NewScore builds the score command. Catalog may be nil — the command
-// degrades to enum-fallback names for race/class/background.
-func NewScore(characters repo.CharacterRepo, cat *chargen.Catalog) *telnet.Command {
+// degrades to enum-fallback names for race/class/background. items
+// may be nil — the Combat speed line falls back to the unarmed/naked
+// baseline (1.00×) instead of resolving wielded/worn gear.
+func NewScore(characters repo.CharacterRepo, items repo.ItemRepo, cat *chargen.Catalog) *telnet.Command {
 	return &telnet.Command{
 		Name:    "score",
 		Aliases: []string{"sc", "stat", "stats", "sheet"},
@@ -38,14 +41,15 @@ func NewScore(characters repo.CharacterRepo, cat *chargen.Catalog) *telnet.Comma
 				return c.Session.WriteString(
 					"{{Could not load your character.}}::red\r\n")
 			}
-			return renderScore(c.Session, ch, cat)
+			gear := combat.ResolveGearFactors(c.Ctx, items, ch.Equipment)
+			return renderScore(c.Session, ch, cat, gear)
 		},
 	}
 }
 
 // renderScore writes the full sheet to s. Broken out so tests can
 // drive it without the registry / context machinery.
-func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog) error {
+func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gear combat.GearFactors) error {
 	if err := display.SectionHeader(s, "Character — "+ch.Name); err != nil {
 		return err
 	}
@@ -105,6 +109,12 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog) err
 			scoreLabelGutter); err != nil {
 			return err
 		}
+	}
+	if err := display.FieldRow(s, "Combat",
+		fmt.Sprintf("%.2fx (%.2f weapon x %.2f armor)",
+			gear.Multiplier(), gear.WeaponFactor, gear.ArmorFactor),
+		scoreLabelGutter); err != nil {
+		return err
 	}
 
 	if err := display.Subsection(s, "Abilities"); err != nil {

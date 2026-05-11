@@ -140,6 +140,67 @@
   flags:
     - trade_good
 
+# ─── Speed-range kit: Phase L #62 gear-driven cadence. The tester
+# spawns one weapon + (optionally) the plate onto themselves, wields/
+# wears, and times swings against `test.qa.dummy_speed`. Three items
+# span the full weapon-weight curve and the heavy-armor band:
+#   greatsword (16 lb)  → 1.50× weapon
+#   plate      (heavy)  → 1.30× armor
+#   dagger     (1 lb)   → 0.80× weapon
+# Combined: Power swing in greatsword+plate = 4.5s × 1.5 × 1.3 = 8.78s;
+# Quick jab in dagger (no armor)           = 1.8s × 0.8 × 1.0 = 1.44s.
+
+- id: test.qa.weapon_greatsword
+  room: test.qa.speed_range
+  name: a two-handed greatsword
+  short: a heavy two-handed greatsword leans against the rack
+  type: weapon
+  weight: 16.0
+  value: 5gc
+  quality: normal
+  stats:
+    proficiency: martial
+    size: large
+    range: melee
+    damage: "1d12"
+    crit_mult: 2
+    damage_type:
+      - S
+
+- id: test.qa.weapon_dagger
+  room: test.qa.speed_range
+  name: a light dagger
+  short: a balanced fighting dagger lies on a small table
+  type: weapon
+  weight: 1.0
+  value: 2sp
+  quality: normal
+  stats:
+    proficiency: simple
+    size: small
+    range: melee
+    damage: "1d4"
+    threat_low: 19
+    crit_mult: 2
+    damage_type:
+      - P
+      - S
+
+- id: test.qa.armor_plate
+  room: test.qa.speed_range
+  name: a suit of heavy plate
+  short: a suit of heavy plate hangs on an iron rack
+  type: armor
+  weight: 50.0
+  value: 1gc
+  quality: normal
+  stats:
+    weight_class: heavy
+    bonus: 8
+    max_dex: 1
+    check_penalty: -6
+    speed_ft: 20
+
 # ─── Cellar torch: pair with the dark room. ────────────────────────
 
 - id: test.qa.cellar_torch

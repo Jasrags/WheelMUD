@@ -1288,7 +1288,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewNews(newsCatalog, characters)); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewScore(characters, chargenCatalog)); err != nil {
+	if err := r.Register(cmd.NewScore(characters, items, chargenCatalog)); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewXP(characters)); err != nil {
