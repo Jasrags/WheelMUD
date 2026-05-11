@@ -363,7 +363,7 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		// resolveAction may have mutated Order (death prune is
 		// deferred to next pulse, but Fled is queued during flee
 		// resolution) so re-resolve the entry by Ref.
-		cost := DefaultActionCost(action.Kind)
+		cost := DefaultActionCost(action.Kind, action.Variant)
 		m.mu.Lock()
 		if f2, ok := m.fights[roomID]; ok {
 			for i := range f2.Order {
@@ -527,7 +527,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	defEff := affects.Effective(defCore)
 
 	m.rngMu.Lock()
-	roll := RollAttack(m.rng, atkEff, defEff, stats, defenderFlatFooted)
+	roll := RollAttack(m.rng, atkEff, defEff, stats, defenderFlatFooted, VariantAttackBonus(action.Variant))
 	parried := false
 	parryTotal := 0
 	if roll.Hit && defenderParrying {
@@ -538,7 +538,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	}
 	var dealt int32
 	if roll.Hit && !parried {
-		raw := RollDamage(m.rng, atkEff, stats, roll.IsCrit)
+		raw := RollDamage(m.rng, atkEff, stats, roll.IsCrit, action.Variant)
 		dealt = applyDamage(&defCore, raw, weaponPrimaryDamageType(stats))
 	}
 	m.rngMu.Unlock()
@@ -574,6 +574,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 				Defender:  action.Target,
 				RollTotal: roll.Total,
 				Defense:   defEff.Defense,
+				Variant:   action.Variant,
 			})
 		}
 		return
@@ -631,6 +632,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			Damage:   dealt,
 			Weapon:   action.WeaponID,
 			IsCrit:   roll.IsCrit,
+			Variant:  action.Variant,
 		})
 	}
 

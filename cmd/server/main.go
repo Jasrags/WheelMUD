@@ -420,7 +420,7 @@ func main() {
 		if ev.Attacker.Kind == combat.ActorKindCharacter {
 			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
 			if atkSess != nil {
-				_ = atkSess.WriteAsync(fmt.Sprintf("{{You hit %s for %d damage.}}::cyan%s",
+				_ = atkSess.WriteAsync(fmt.Sprintf(variantHitSelfFormat(ev.Variant),
 					defName, ev.Damage, critTail))
 			}
 		}
@@ -446,7 +446,7 @@ func main() {
 		if ev.Attacker.Kind == combat.ActorKindCharacter {
 			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
 			if atkSess != nil {
-				_ = atkSess.WriteAsync(fmt.Sprintf("{{You swing at %s and miss.}}::gray", defName))
+				_ = atkSess.WriteAsync(fmt.Sprintf(variantMissSelfFormat(ev.Variant), defName))
 			}
 		}
 		if ev.Defender.Kind == combat.ActorKindCharacter {
@@ -1091,6 +1091,35 @@ func parseLogLevel(s string) (slog.Level, bool) {
 	}
 }
 
+// variantHitSelfFormat returns the complete Sprintf format string
+// for a CombatHit subscriber's first-person echo line. cfmt wrap is
+// baked in so the returned value can be passed as a literal format
+// to Sprintf and `go vet` statically validates the verb/arg counts.
+// Verbs: %s (defender name), %d (damage), %s (crit tail). Phase L #61.
+func variantHitSelfFormat(v combat.AttackVariant) string {
+	switch v {
+	case combat.VariantPower:
+		return "{{You lunge with a power strike at %s for %d damage.}}::cyan%s"
+	case combat.VariantQuick:
+		return "{{You flick a quick jab at %s for %d damage.}}::cyan%s"
+	default:
+		return "{{You hit %s for %d damage.}}::cyan%s"
+	}
+}
+
+// variantMissSelfFormat is the miss-side mirror of
+// variantHitSelfFormat. Verb: %s (defender name).
+func variantMissSelfFormat(v combat.AttackVariant) string {
+	switch v {
+	case combat.VariantPower:
+		return "{{You lunge wide of %s and miss.}}::gray"
+	case combat.VariantQuick:
+		return "{{You flick at %s and miss.}}::gray"
+	default:
+		return "{{You swing at %s and miss.}}::gray"
+	}
+}
+
 // combatActorName resolves an ActorRef to a display name for combat
 // broadcasts. Best-effort: a despawned/logged-out participant falls
 // back to "Someone" / "A creature" so the broadcast still reads.
@@ -1202,7 +1231,11 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	if err := r.Register(cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions, groups)); err != nil {
+	if err := r.Register(
+		cmd.NewAttack(combatMgr, rooms, mobs, characters, sessions, groups),
+		cmd.NewPower(combatMgr, rooms, mobs, characters, sessions, groups),
+		cmd.NewJab(combatMgr, rooms, mobs, characters, sessions, groups),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewGroup(groups, sessions)); err != nil {

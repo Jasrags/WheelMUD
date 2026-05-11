@@ -23,7 +23,7 @@ func TestRollAttack_FlatFootedReducesDefense(t *testing.T) {
 	attacker := newAttacker(10, 0)
 
 	rng := rand.New(rand.NewSource(stubSeedForRoll(14)))
-	roll := RollAttack(rng, attacker, defender, repo.WeaponStats{}, false)
+	roll := RollAttack(rng, attacker, defender, repo.WeaponStats{}, false, 0)
 	if roll.Hit {
 		t.Fatalf("baseline 14 vs Defense 18 should miss: %+v", roll)
 	}
@@ -31,7 +31,7 @@ func TestRollAttack_FlatFootedReducesDefense(t *testing.T) {
 	// Same inputs, FlatFooted=true → effective Defense drops by Dex
 	// mod (3) to 15; 14 still misses.
 	rng = rand.New(rand.NewSource(stubSeedForRoll(14)))
-	roll = RollAttack(rng, attacker, defender, repo.WeaponStats{}, true)
+	roll = RollAttack(rng, attacker, defender, repo.WeaponStats{}, true, 0)
 	if roll.Hit {
 		t.Fatalf("flat-footed 14 vs effective 15 should still miss: %+v", roll)
 	}
@@ -39,11 +39,11 @@ func TestRollAttack_FlatFootedReducesDefense(t *testing.T) {
 	// Roll 15: baseline still misses (15 < 18), flat-footed hits
 	// (15 >= 15).
 	rng = rand.New(rand.NewSource(stubSeedForRoll(15)))
-	if r := RollAttack(rng, attacker, defender, repo.WeaponStats{}, false); r.Hit {
+	if r := RollAttack(rng, attacker, defender, repo.WeaponStats{}, false, 0); r.Hit {
 		t.Fatalf("baseline 15 vs Defense 18 should miss: %+v", r)
 	}
 	rng = rand.New(rand.NewSource(stubSeedForRoll(15)))
-	if r := RollAttack(rng, attacker, defender, repo.WeaponStats{}, true); !r.Hit {
+	if r := RollAttack(rng, attacker, defender, repo.WeaponStats{}, true, 0); !r.Hit {
 		t.Fatalf("flat-footed 15 vs effective 15 should hit: %+v", r)
 	}
 }

@@ -1134,6 +1134,29 @@ will need on top of those tables.
       Parry/Flee 2 s, idle 1 s) — slices 61–66 layer variant /
       gear / race / stamina / feats on top.
 
+      **Slice 61 (attack variants — power / quick) landed
+      2026-05-10.** `combat.AttackVariant` (`VariantNormal` /
+      `VariantPower` / `VariantQuick`) lives on `Action.Variant`
+      (zero value = Normal, so existing call sites stay green).
+      `DefaultActionCost(kind, variant)` scales the base 3 s
+      Attack cost by 1.0 / 1.5 / 0.6 → 3.0 / 4.5 / 1.8 s; Parry
+      and Flee ignore Variant. `RollAttack` gained a trailing
+      `bonus int` parameter for the variant attack-roll modifier
+      (Normal 0 / Power -2 / Quick +1) so #62 (gear), #63 (race),
+      and #65 (feats) can compose onto the same term.
+      `RollDamage` gained a trailing `variant AttackVariant`
+      parameter — variant damage factor applies after crit-mult,
+      then re-floors to 1 so Quick on a 1-base hit still deals 1
+      and Power-crit chains both multipliers. `CombatHit` /
+      `CombatMiss` carry `Variant` so attacker-side echo lines
+      pick variant-flavored copy ("You lunge with a power
+      strike", "You flick a quick jab"); defender + room
+      narration stays generic for now (variant compaction is
+      slice #67). Verbs: `attack <target> [power|quick]`,
+      `power <target>`, `jab <target>` — all share Auth, Lag, and
+      completer via a private `runAttack` helper. Re-issuing
+      during a fight overwrites the queued variant.
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

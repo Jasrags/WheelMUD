@@ -25,7 +25,7 @@ func TestRollAttack_NaturalOneAlwaysMisses(t *testing.T) {
 	// Seed 0: rng.Intn(20) returns 14 (15 raw). Force a controlled
 	// stream by using a stub rng feeding 1.
 	rng := rand.New(rand.NewSource(stubSeedForRoll(1)))
-	roll := RollAttack(rng, newAttacker(20, 10), newDefender(0), repo.WeaponStats{}, false)
+	roll := RollAttack(rng, newAttacker(20, 10), newDefender(0), repo.WeaponStats{}, false, 0)
 	if roll.Hit {
 		t.Fatalf("nat 1 must miss: %+v", roll)
 	}
@@ -47,7 +47,7 @@ func TestRollAttack_NaturalTwentyAlwaysHits(t *testing.T) {
 	rng := rand.New(rand.NewSource(stubSeedForRoll(20)))
 	// Attacker with 0 BAB / 0 Str-mod against a 999 defense — only
 	// the natural-20 short-circuit makes this hit.
-	roll := RollAttack(rng, newAttacker(10, 0), newDefender(999), repo.WeaponStats{}, false)
+	roll := RollAttack(rng, newAttacker(10, 0), newDefender(999), repo.WeaponStats{}, false, 0)
 	if !roll.Hit {
 		t.Fatalf("nat 20 must hit: %+v", roll)
 	}
@@ -56,13 +56,13 @@ func TestRollAttack_NaturalTwentyAlwaysHits(t *testing.T) {
 func TestRollAttack_Threshold(t *testing.T) {
 	rng := rand.New(rand.NewSource(stubSeedForRoll(15)))
 	// 15 + BAB 5 + Str mod 0 (Str 10) = 20 vs Defense 20 → hit.
-	roll := RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false)
+	roll := RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false, 0)
 	if !roll.Hit {
 		t.Fatalf("total>=defense must hit: %+v", roll)
 	}
 	rng = rand.New(rand.NewSource(stubSeedForRoll(10)))
 	// 10 + 5 + 0 = 15 vs Defense 20 → miss.
-	roll = RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false)
+	roll = RollAttack(rng, newAttacker(10, 5), newDefender(20), repo.WeaponStats{}, false, 0)
 	if roll.Hit {
 		t.Fatalf("total<defense must miss: %+v", roll)
 	}
@@ -72,7 +72,7 @@ func TestRollAttack_CritThreshold(t *testing.T) {
 	stats := repo.WeaponStats{ThreatLow: 18}
 	for _, raw := range []int{17, 18, 19, 20} {
 		rng := rand.New(rand.NewSource(stubSeedForRoll(raw)))
-		roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false)
+		roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false, 0)
 		if !roll.Hit {
 			t.Fatalf("raw=%d expected hit: %+v", raw, roll)
 		}
@@ -87,13 +87,75 @@ func TestRollDamage_AppliesStrModAndCritMult(t *testing.T) {
 	stats := repo.WeaponStats{Damage: "1d1+0", CritMult: 3}
 	rng := rand.New(rand.NewSource(1))
 	atk := newAttacker(16, 0) // +3 Str mod
-	dmg := RollDamage(rng, atk, stats, false)
+	dmg := RollDamage(rng, atk, stats, false, VariantNormal)
 	if dmg != 1+3 {
 		t.Fatalf("non-crit dmg = %d, want %d", dmg, 4)
 	}
-	dmg = RollDamage(rng, atk, stats, true)
+	dmg = RollDamage(rng, atk, stats, true, VariantNormal)
 	if dmg != (1+3)*3 {
 		t.Fatalf("crit dmg = %d, want %d", dmg, 12)
+	}
+}
+
+// TestRollAttack_VariantBonus verifies the slice-61 attack-roll
+// adjustment composes onto raw + BAB + StrMod. Hits/misses change
+// at the boundary between Normal and Power/Quick.
+func TestRollAttack_VariantBonus(t *testing.T) {
+	atk := newAttacker(10, 5)      // +0 Str, +5 BAB
+	def := newDefender(20)         // Defense 20
+	// raw=15 → total = 15+5+0 = 20 hits Normal; with Power (-2) it
+	// drops to 18 and misses; with Quick (+1) it climbs to 21 and
+	// hits.
+	rng := rand.New(rand.NewSource(stubSeedForRoll(15)))
+	if r := RollAttack(rng, atk, def, repo.WeaponStats{}, false, VariantAttackBonus(VariantNormal)); !r.Hit {
+		t.Fatalf("normal raw=15 expected hit: %+v", r)
+	}
+	rng = rand.New(rand.NewSource(stubSeedForRoll(15)))
+	if r := RollAttack(rng, atk, def, repo.WeaponStats{}, false, VariantAttackBonus(VariantPower)); r.Hit {
+		t.Fatalf("power raw=15 expected miss (-2): %+v", r)
+	}
+	rng = rand.New(rand.NewSource(stubSeedForRoll(14)))
+	if r := RollAttack(rng, atk, def, repo.WeaponStats{}, false, VariantAttackBonus(VariantQuick)); !r.Hit {
+		t.Fatalf("quick raw=14 expected hit (+1): %+v", r)
+	}
+}
+
+// TestRollDamage_VariantFactor verifies Power scales rolled damage
+// by 1.5 and Quick by 0.6 (with the ≥1 floor). Power-on-crit
+// preserves the weapon's crit multiplier — both factors stack.
+func TestRollDamage_VariantFactor(t *testing.T) {
+	stats := repo.WeaponStats{Damage: "1d1+0", CritMult: 2}
+	atk := newAttacker(16, 0) // +3 Str → base damage 1+3 = 4
+	rng := rand.New(rand.NewSource(1))
+
+	// Normal non-crit = 4
+	if dmg := RollDamage(rng, atk, stats, false, VariantNormal); dmg != 4 {
+		t.Errorf("normal non-crit = %d, want 4", dmg)
+	}
+	// Power non-crit = floor(4 * 1.5) = 6
+	if dmg := RollDamage(rng, atk, stats, false, VariantPower); dmg != 6 {
+		t.Errorf("power non-crit = %d, want 6", dmg)
+	}
+	// Quick non-crit = floor(4 * 0.6) = 2
+	if dmg := RollDamage(rng, atk, stats, false, VariantQuick); dmg != 2 {
+		t.Errorf("quick non-crit = %d, want 2", dmg)
+	}
+	// Power crit chains both: (4 * 2) * 1.5 = 12
+	if dmg := RollDamage(rng, atk, stats, true, VariantPower); dmg != 12 {
+		t.Errorf("power crit = %d, want 12", dmg)
+	}
+}
+
+// TestRollDamage_QuickFloorsAtOne verifies Quick on a 1-damage
+// base still produces ≥1 instead of rounding to zero.
+func TestRollDamage_QuickFloorsAtOne(t *testing.T) {
+	stats := repo.WeaponStats{Damage: "1d1"}
+	atk := newAttacker(10, 0) // +0 Str → base 1
+	rng := rand.New(rand.NewSource(1))
+	for i := 0; i < 5; i++ {
+		if dmg := RollDamage(rng, atk, stats, false, VariantQuick); dmg < 1 {
+			t.Fatalf("quick floor: dmg=%d", dmg)
+		}
 	}
 }
 
@@ -102,7 +164,7 @@ func TestRollDamage_FloorOne(t *testing.T) {
 	stats := repo.WeaponStats{Damage: "1d1"}
 	rng := rand.New(rand.NewSource(1))
 	atk := newAttacker(6, 0)
-	if dmg := RollDamage(rng, atk, stats, false); dmg < 1 {
+	if dmg := RollDamage(rng, atk, stats, false, VariantNormal); dmg < 1 {
 		t.Fatalf("damage floor: got %d, want >=1", dmg)
 	}
 }

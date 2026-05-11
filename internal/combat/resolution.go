@@ -87,16 +87,18 @@ func critMult(stats repo.WeaponStats) int {
 	return stats.CritMult
 }
 
-// RollAttack rolls d20 + BAB + Str-mod against defender.Defense. A
-// natural 1 always misses; a natural 20 always hits. A roll in the
-// weapon's threat range (defaulting to 20) flags IsCrit. When
-// flatFootedDefender is true the defender's effective Defense is
-// reduced by max(0, DexMod) — the standard WoT/d20 flat-footed AC
-// penalty.
-func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.WeaponStats, flatFootedDefender bool) AttackRoll {
+// RollAttack rolls d20 + BAB + Str-mod (+ bonus) against
+// defender.Defense. A natural 1 always misses; a natural 20 always
+// hits. A roll in the weapon's threat range (defaulting to 20) flags
+// IsCrit. When flatFootedDefender is true the defender's effective
+// Defense is reduced by max(0, DexMod) — the standard WoT/d20
+// flat-footed AC penalty. bonus is the slice-61 variant attack-roll
+// adjustment (Normal 0 / Power -2 / Quick +1); future slices fold
+// feat / stance / status modifiers into the same term.
+func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.WeaponStats, flatFootedDefender bool, bonus int) AttackRoll {
 	raw := rng.Intn(20) + 1
 	abilityMod := int(attacker.Abilities.StrMod())
-	total := raw + int(attacker.BAB) + abilityMod
+	total := raw + int(attacker.BAB) + abilityMod + bonus
 
 	hit := total >= int(effectiveDefense(defender, flatFootedDefender))
 	switch raw {
@@ -139,10 +141,13 @@ func RollParry(rng *rand.Rand, defender creature.Core) int {
 }
 
 // RollDamage rolls weapon damage + Str-mod. On crit, the result is
-// multiplied by the weapon's CritMult. Returns at least 1 on a hit so
-// a damage roll of zero never produces a "free" no-op hit. The
-// returned amount is pre-DR / pre-resist.
-func RollDamage(rng *rand.Rand, attacker creature.Core, stats repo.WeaponStats, isCrit bool) int32 {
+// multiplied by the weapon's CritMult. The variant factor (Power
+// ×1.5 / Quick ×0.6 / Normal ×1.0) is applied after crit-mult so a
+// Power-crit chains both multipliers. Returns at least 1 on a hit so
+// a damage roll of zero (or a Quick swing rounding to 0) never
+// produces a "free" no-op hit. The returned amount is pre-DR /
+// pre-resist.
+func RollDamage(rng *rand.Rand, attacker creature.Core, stats repo.WeaponStats, isCrit bool, variant AttackVariant) int32 {
 	base, ok := rollDice(rng, stats.Damage)
 	if !ok || base <= 0 {
 		// "1d3" fallback when the weapon's Damage string is unparseable
@@ -159,6 +164,13 @@ func RollDamage(rng *rand.Rand, attacker creature.Core, stats repo.WeaponStats, 
 	}
 	if dmg < 1 {
 		dmg = 1
+	}
+	if f := VariantDamageFactor(variant); f != 1.0 {
+		scaled := int(float64(dmg) * f)
+		if scaled < 1 {
+			scaled = 1
+		}
+		dmg = scaled
 	}
 	// Clamp to int32 so a pathological catalog row (huge flat
 	// modifier in WeaponStats.Damage) can't wrap to negative damage,

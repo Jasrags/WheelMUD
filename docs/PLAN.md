@@ -943,8 +943,8 @@ any slice and the game still works.
       the new tick loop; two-combatant fight feels like real-time
       melee, no flavor differentiation yet.
 
-61. **Attack variants — `power` and `quick`.** First flavor
-    payoff with no new schema.
+61. ~~**Attack variants — `power` and `quick`.** First flavor
+    payoff with no new schema.~~ Landed 2026-05-10.
     - `Action.Kind` keeps `Attack`; `Action` gains
       `Variant AttackVariant` (`Normal | Power | Quick`).
     - `attack <target>` keeps current behavior (`Normal`).

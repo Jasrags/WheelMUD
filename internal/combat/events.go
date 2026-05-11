@@ -56,6 +56,10 @@ type CombatHit struct {
 	Damage   int32
 	Weapon   int64
 	IsCrit   bool
+	// Variant carries the attack variant resolved this swing
+	// (Normal / Power / Quick). Subscribers compose variant-flavored
+	// echo lines off this field.
+	Variant AttackVariant
 }
 
 // CombatMiss fires when a queued attack rolls below the defender's
@@ -67,6 +71,10 @@ type CombatMiss struct {
 	Defender  ActorRef
 	RollTotal int
 	Defense   int16
+	// Variant carries the attack variant resolved this swing
+	// (Normal / Power / Quick). Subscribers compose variant-flavored
+	// echo lines off this field.
+	Variant AttackVariant
 }
 
 // ActionResolved fires whether the queued action was an attack that

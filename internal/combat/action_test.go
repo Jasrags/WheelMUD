@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 )
@@ -49,6 +50,59 @@ func TestEnqueueAction_NoFight(t *testing.T) {
 	if err := mgr.EnqueueAction(99, ActorRef{Kind: ActorKindMob, ID: 1},
 		Action{Kind: ActionAttack}); !errors.Is(err, ErrFightNotFound) {
 		t.Fatalf("got %v, want ErrFightNotFound", err)
+	}
+}
+
+// TestDefaultActionCost_Variants pins the slice-61 cost table:
+// Attack scales by variant factor (1.0 / 1.5 / 0.6); Parry/Flee
+// ignore Variant; the zero ActionNone falls through to 1s. Times
+// are pinned to the millisecond so a future tuning pass surfaces
+// here.
+func TestDefaultActionCost_Variants(t *testing.T) {
+	cases := []struct {
+		kind    ActionKind
+		variant AttackVariant
+		want    time.Duration
+	}{
+		{ActionAttack, VariantNormal, 3 * time.Second},
+		{ActionAttack, VariantPower, 4500 * time.Millisecond},
+		{ActionAttack, VariantQuick, 1800 * time.Millisecond},
+		{ActionParry, VariantNormal, 2 * time.Second},
+		{ActionParry, VariantPower, 2 * time.Second},  // variant ignored
+		{ActionParry, VariantQuick, 2 * time.Second},  // variant ignored
+		{ActionFlee, VariantNormal, 2 * time.Second},
+		{ActionFlee, VariantPower, 2 * time.Second},   // variant ignored
+		{ActionNone, VariantNormal, 1 * time.Second},
+	}
+	for _, tc := range cases {
+		got := DefaultActionCost(tc.kind, tc.variant)
+		if got != tc.want {
+			t.Errorf("DefaultActionCost(kind=%v variant=%v) = %v, want %v",
+				tc.kind, tc.variant, got, tc.want)
+		}
+	}
+}
+
+// TestEnqueueAction_VariantRoundTrip pins that the new Action.Variant
+// field round-trips through EnqueueAction + PendingAction.
+func TestEnqueueAction_VariantRoundTrip(t *testing.T) {
+	mgr, _, _ := seedManager(t, 1)
+	parts := []ActorRef{{Kind: ActorKindMob, ID: 1}, {Kind: ActorKindMob, ID: 2}}
+	if _, err := mgr.Start(context.Background(), 1, parts); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	for _, v := range []AttackVariant{VariantNormal, VariantPower, VariantQuick} {
+		a := Action{Kind: ActionAttack, Variant: v, Target: parts[1]}
+		if err := mgr.EnqueueAction(1, parts[0], a); err != nil {
+			t.Fatalf("enqueue variant=%v: %v", v, err)
+		}
+		got, ok := mgr.PendingAction(1, parts[0])
+		if !ok {
+			t.Fatalf("variant=%v: no pending action", v)
+		}
+		if got.Variant != v {
+			t.Errorf("variant=%v: got %v", v, got.Variant)
+		}
 	}
 }
 

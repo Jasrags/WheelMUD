@@ -4,21 +4,78 @@ import "time"
 
 // DefaultActionCost returns the wall-clock interval an actor must
 // wait after resolving an action of the given kind before they can
-// act again. Pure function over kind so #62 (gear), #63 (race), and
-// #65 (feats) can layer multiplicative modifiers on top without
-// changing call sites. ActionNone advances by one second so an idle
-// actor doesn't perpetually re-trigger the ready check and burst-act
-// the moment input arrives.
-func DefaultActionCost(kind ActionKind) time.Duration {
+// act again. Pure function over (kind, variant) so #62 (gear), #63
+// (race), and #65 (feats) can layer multiplicative modifiers on top
+// without changing call sites. ActionNone advances by one second so
+// an idle actor doesn't perpetually re-trigger the ready check and
+// burst-act the moment input arrives. Variant is only consulted when
+// kind == ActionAttack.
+func DefaultActionCost(kind ActionKind, variant AttackVariant) time.Duration {
 	switch kind {
 	case ActionAttack:
-		return 3 * time.Second
+		base := float64(3 * time.Second)
+		return time.Duration(base * variantCostFactor(variant))
 	case ActionParry:
 		return 2 * time.Second
 	case ActionFlee:
 		return 2 * time.Second
 	default:
 		return 1 * time.Second
+	}
+}
+
+// AttackVariant tags a queued ActionAttack as Normal, Power, or
+// Quick. Slice 61 (Phase L #61) — first flavor-payoff layer on top
+// of the per-actor cadence. Ignored when Kind != ActionAttack.
+type AttackVariant uint8
+
+const (
+	// VariantNormal is the zero value — today's bit-for-bit behavior.
+	VariantNormal AttackVariant = iota
+	// VariantPower is a slower, heavier swing: 4.5s cost, ×1.5
+	// damage, -2 attack roll.
+	VariantPower
+	// VariantQuick is a faster, lighter swing: 1.8s cost, ×0.6
+	// damage (floored at 1), +1 attack roll.
+	VariantQuick
+)
+
+// variantCostFactor multiplies the base ActionAttack cost (3s).
+// 1.0 / 1.5 / 0.6 → 3.0s / 4.5s / 1.8s.
+func variantCostFactor(v AttackVariant) float64 {
+	switch v {
+	case VariantPower:
+		return 1.5
+	case VariantQuick:
+		return 0.6
+	default:
+		return 1.0
+	}
+}
+
+// VariantDamageFactor scales rolled damage after crit-mult. Quick
+// hits keep the ≥1 damage floor in RollDamage.
+func VariantDamageFactor(v AttackVariant) float64 {
+	switch v {
+	case VariantPower:
+		return 1.5
+	case VariantQuick:
+		return 0.6
+	default:
+		return 1.0
+	}
+}
+
+// VariantAttackBonus adds to the d20 + BAB + ability_mod roll.
+// Power pays -2 to trade for damage; Quick gains +1.
+func VariantAttackBonus(v AttackVariant) int {
+	switch v {
+	case VariantPower:
+		return -2
+	case VariantQuick:
+		return 1
+	default:
+		return 0
 	}
 }
 
@@ -48,8 +105,12 @@ const (
 // Action is one combatant's queued intent for the current round. The
 // owner field is implicit in the queue map key on Fight.Actions.
 type Action struct {
-	Kind   ActionKind
-	Target ActorRef
+	Kind ActionKind
+	// Variant qualifies an ActionAttack as Normal / Power / Quick.
+	// Zero value (VariantNormal) preserves pre-slice-61 behavior.
+	// Ignored when Kind != ActionAttack.
+	Variant AttackVariant
+	Target  ActorRef
 	// WeaponID is the item id of the equipped weapon at the moment the
 	// action was queued. Zero means unarmed. The resolver re-reads the
 	// weapon stats by id to support a `wield` mid-fight without
