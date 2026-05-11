@@ -217,29 +217,40 @@ func (m *Manager) actorSpeedFactor(ctx context.Context, ref ActorRef) float32 {
 	return creature.ProfileFor(ch.Race).SpeedFactor
 }
 
-// drainStamina deducts the action's stamina cost from a character
-// actor's pool. Mob actors and zero-cost kinds short-circuit. Repo
-// failures log-and-continue rather than abort the swing — combat
-// must keep flowing even if one stamina write hits a transient
-// error. Phase L slice 63.
-func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action) {
+// staminaCostFor resolves the effective per-action stamina cost a
+// character pays for one resolution of action and the actor's
+// StaminaCurrent at lookup time. applies is false when the cost
+// machinery is unengaged for this actor — mob actor, nil chars
+// repo, zero base cost, unconfigured StaminaMax pool, or a
+// transient repo load failure (loadErr non-nil). Callers should
+// short-circuit to their "no-op success" path when applies is
+// false; loadErr lets a caller log selectively (drainStamina logs
+// it, hasStaminaFor does not — drainStamina will log on the
+// real resolve pass).
+//
+// Single source of truth for the
+// DefaultActionStamina × feat StaminaCostMul pipeline; both
+// drainStamina (slice 63) and hasStaminaFor (slice 66) consume
+// it so the gate and the deduction can never diverge.
+func (m *Manager) staminaCostFor(ctx context.Context, ref ActorRef, action Action) (
+	cost int32, current int32, applies bool, loadErr error,
+) {
 	if ref.Kind != ActorKindCharacter || m.chars == nil {
-		return
+		return 0, 0, false, nil
 	}
-	cost := DefaultActionStamina(action.Kind, action.Variant)
+	cost = DefaultActionStamina(action.Kind, action.Variant)
 	if cost <= 0 {
-		return
+		return 0, 0, false, nil
 	}
 	ch, err := m.chars.GetByID(ctx, ref.ID)
 	if err != nil {
-		slog.Warn("combat: stamina load failed", "char", ref.ID, "error", err)
-		return
+		return 0, 0, false, err
 	}
 	// Skip drain on unconfigured pools (StaminaMax == 0). Mirrors the
 	// EnqueueAction gate so pre-0049 characters and test fixtures
 	// stay unmetered.
 	if ch.Core.StaminaMax <= 0 {
-		return
+		return 0, 0, false, nil
 	}
 	// Phase L slice 65: feat-driven cost-mul (Endurance = 0.8×).
 	// Identity mul = 1.0 → no change. Floor at 0 so a stacked discount
@@ -255,7 +266,24 @@ func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action)
 			cost = int32(scaled + 0.5)
 		}
 	}
-	next := ch.Core.StaminaCurrent - cost
+	return cost, ch.Core.StaminaCurrent, true, nil
+}
+
+// drainStamina deducts the action's stamina cost from a character
+// actor's pool. Mob actors and zero-cost kinds short-circuit. Repo
+// failures log-and-continue rather than abort the swing — combat
+// must keep flowing even if one stamina write hits a transient
+// error. Phase L slice 63.
+func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action) {
+	cost, current, applies, loadErr := m.staminaCostFor(ctx, ref, action)
+	if loadErr != nil {
+		slog.Warn("combat: stamina load failed", "char", ref.ID, "error", loadErr)
+		return
+	}
+	if !applies {
+		return
+	}
+	next := current - cost
 	if next < 0 {
 		next = 0
 	}
@@ -265,42 +293,19 @@ func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action)
 }
 
 // hasStaminaFor is a non-mutating "can this actor afford the next
-// swing" gate used by the iterative drain loop (Phase L #66). Mirrors
-// drainStamina's cost calculation — DefaultActionStamina × feat
-// StaminaCostMul, rounded, floored at 0 — but answers boolean instead
-// of writing. Mobs (no character row) and unconfigured pools
-// (StaminaMax <= 0) always return true so they swing freely; this
-// matches drainStamina's early-return behavior so the gate and the
-// drain agree on "did we pay anything."
+// swing" gate used by the iterative drain loop (Phase L #66).
+// Shares its cost formula with drainStamina via staminaCostFor so
+// the gate and the deduction can never disagree on what an action
+// would have cost. Mobs (no character row), unconfigured pools
+// (StaminaMax <= 0), and transient repo load failures all return
+// true so a chain isn't truncated by a hiccup — drainStamina
+// surfaces the load error on the real resolve pass.
 func (m *Manager) hasStaminaFor(ctx context.Context, ref ActorRef, action Action) bool {
-	if ref.Kind != ActorKindCharacter || m.chars == nil {
+	cost, current, applies, _ := m.staminaCostFor(ctx, ref, action)
+	if !applies {
 		return true
 	}
-	cost := DefaultActionStamina(action.Kind, action.Variant)
-	if cost <= 0 {
-		return true
-	}
-	ch, err := m.chars.GetByID(ctx, ref.ID)
-	if err != nil {
-		// Same fail-safe stance as drainStamina: a transient repo
-		// hiccup shouldn't truncate the chain. Let the swing proceed;
-		// drainStamina will log if the write also fails.
-		return true
-	}
-	if ch.Core.StaminaMax <= 0 {
-		return true
-	}
-	if m.cat != nil {
-		fm := ResolveFeatModifiers(ch.Feats, m.cat)
-		if fm.StaminaCostMul > 0 && fm.StaminaCostMul != 1.0 {
-			scaled := float32(cost) * fm.StaminaCostMul
-			if scaled < 0 {
-				scaled = 0
-			}
-			cost = int32(scaled + 0.5)
-		}
-	}
-	return ch.Core.StaminaCurrent >= cost
+	return current >= cost
 }
 
 // resolveEquipment fetches the actor's current Equipment snapshot.
