@@ -153,13 +153,19 @@ func NewThrow(
 }
 
 // itemMatchesKeyword tests a single item against a keyword using the
-// same token-prefix rules as MatchItem. Lets the throw verb confirm
-// "the wielded item matches what the player typed" without walking
-// the whole inventory list.
+// same token-prefix rules as MatchItem. Strips a leading "<n>." ordinal
+// prefix so a player typing `throw 2.knife <target>` still matches the
+// one wielded knife (V1 throw only resolves the primary wield slot, so
+// the ordinal can't disambiguate beyond that — we just don't refuse on
+// a non-fatal typing habit).
 func itemMatchesKeyword(it repo.Item, keyword string) bool {
 	keyword = strings.ToLower(strings.TrimSpace(keyword))
 	if keyword == "" {
 		return false
 	}
-	return nameMatches(it.Name, keyword)
+	_, kw := parseOrdinal(keyword)
+	if kw == "" {
+		return false
+	}
+	return nameMatches(it.Name, kw)
 }

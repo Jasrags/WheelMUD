@@ -199,10 +199,16 @@ type CombatDodgeAvoided struct {
 	Defense  int16 // defender Defense after +4 dodge bonus
 }
 
-// CombatThrow fires when an ActionThrow resolves. The cmd-layer uses
-// this to emit a "you fling the dagger" lead-in line; the underlying
-// hit/miss is published as a separate CombatHit / CombatMiss so the
-// existing damage-echo subscribers don't need to special-case ranged.
+// CombatThrow fires when an ActionThrow resolves, AFTER the wielded
+// weapon has been cleared from the actor's primary wield slot and
+// AFTER the hit/miss publish. Subscribers reading defender HP or the
+// attacker's equipment slot can trust both reflect the post-throw
+// state. RollHit is the bare hit/miss outcome of the roll; subscribers
+// that need the actual damage should read CombatHit (fired immediately
+// before this on a successful throw) — RollHit does NOT promise the
+// item was successfully consumed (the equipment-clear path log-and-
+// continues on a repo failure; see resolveThrow).
+//
 // ItemName is captured at resolve time so subscribers don't have to
 // round-trip the item repo after the item has been moved.
 type CombatThrow struct {
@@ -211,7 +217,7 @@ type CombatThrow struct {
 	Defender ActorRef
 	ItemID   int64
 	ItemName string
-	Landed   bool // true if the swing rolled a hit (damage may still be 0 from DR)
+	RollHit  bool
 }
 
 // CombatFlee fires when an ActionFlee resolves — whether the actor

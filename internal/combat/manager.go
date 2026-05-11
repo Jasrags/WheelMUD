@@ -612,20 +612,23 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		return
 	}
 
-	if !roll.Hit {
-		// Dodge: if the swing would have hit against base Defense but
-		// missed only because of the +4 bonus, publish the dedicated
-		// CombatDodgeAvoided event so subscribers can render the
-		// active evasion line. Consume the stance regardless of which
-		// branch triggered — one swing's worth of evasion.
-		dodgeTriggered := defenderDodging && roll.Total >= int(defEff.Defense)
-		if defenderDodging {
-			m.mu.Lock()
-			if f, ok := m.fights[roomID]; ok {
-				delete(f.DodgeUntil, action.Target)
-			}
-			m.mu.Unlock()
+	// Consume the dodge stance now — one swing, one dodge, regardless
+	// of hit/miss branch. Single delete-point keeps the consumption
+	// invariant trivially auditable (vs. the prior two-site pattern,
+	// which only worked under single-goroutine-per-room semantics).
+	// dodgeTriggered captures the "swing would have landed without the
+	// +4 bonus" pre-condition so the miss-branch publish can pick the
+	// CombatDodgeAvoided event over a plain CombatMiss.
+	dodgeTriggered := defenderDodging && !roll.Hit && roll.Total >= int(defEff.Defense)
+	if defenderDodging {
+		m.mu.Lock()
+		if f, ok := m.fights[roomID]; ok {
+			delete(f.DodgeUntil, action.Target)
 		}
+		m.mu.Unlock()
+	}
+
+	if !roll.Hit {
 		if m.bus != nil {
 			if dodgeTriggered {
 				m.bus.Publish(ctx, CombatDodgeAvoided{
@@ -647,16 +650,6 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			}
 		}
 		return
-	}
-	// Hit path: dodge stance still consumes if it didn't flip the
-	// outcome (e.g. a nat-20 or a roll above Defense+4 still lands).
-	// One swing, one dodge.
-	if defenderDodging {
-		m.mu.Lock()
-		if f, ok := m.fights[roomID]; ok {
-			delete(f.DodgeUntil, action.Target)
-		}
-		m.mu.Unlock()
 	}
 
 	// Persist mutated HP/subdual back to the live row so subsequent
@@ -997,34 +990,15 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 	}
 	m.rngMu.Unlock()
 
-	// Publish CombatThrow before hit/miss so the cmd-layer lead-in line
-	// renders ahead of the damage echo.
-	if m.bus != nil {
-		m.bus.Publish(ctx, CombatThrow{
-			RoomID:   roomID,
-			Attacker: actor,
-			Defender: action.Target,
-			ItemID:   action.WeaponID,
-			ItemName: itemName,
-			Landed:   roll.Hit,
-		})
-	}
-
-	// Consume the wielded weapon: clear the primary wield slot and
-	// persist the updated equipment_json. Character actors only —
+	// Consume the wielded weapon first: clear the primary wield slot
+	// and persist the updated equipment_json. Character actors only —
 	// mob actors don't have an Equipment surface today (deferred).
-	if actor.Kind == ActorKindCharacter && m.chars != nil {
-		ch, err := m.chars.GetByID(ctx, actor.ID)
-		if err == nil {
-			if ch.Equipment.Get(creature.SlotPrimaryWield) == action.WeaponID {
-				ch.Equipment.Set(creature.SlotPrimaryWield, 0)
-				if err := m.chars.RecordEquipment(ctx, actor.ID, ch.Equipment); err != nil {
-					slog.Warn("combat: throw equipment persist failed",
-						"room", roomID, "char", actor.ID, "error", err)
-				}
-			}
-		}
-	}
+	// Ordering matters: subscribers to the events published below must
+	// observe the actor's slot already empty, so the equipment-clear
+	// runs before any publish. A repo failure here log-and-continues
+	// (the swing has already resolved); leaks an in-hand item until
+	// the operator fixes it.
+	m.clearThrownWeapon(ctx, roomID, actor, action.WeaponID)
 
 	if !roll.Hit {
 		if m.bus != nil {
@@ -1035,6 +1009,14 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 				RollTotal: roll.Total,
 				Defense:   defEff.Defense,
 				Variant:   VariantNormal,
+			})
+			m.bus.Publish(ctx, CombatThrow{
+				RoomID:   roomID,
+				Attacker: actor,
+				Defender: action.Target,
+				ItemID:   action.WeaponID,
+				ItemName: itemName,
+				RollHit:  false,
 			})
 		}
 		// Item lands on the floor at the target's feet (== actor's room).
@@ -1088,6 +1070,14 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 			IsCrit:   roll.IsCrit,
 			Variant:  VariantNormal,
 		})
+		m.bus.Publish(ctx, CombatThrow{
+			RoomID:   roomID,
+			Attacker: actor,
+			Defender: action.Target,
+			ItemID:   action.WeaponID,
+			ItemName: itemName,
+			RollHit:  true,
+		})
 	}
 
 	if defCore.HPCurrent <= 0 {
@@ -1110,6 +1100,32 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 	}
 	// Survived the hit — item drops at the target's feet.
 	m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
+}
+
+// clearThrownWeapon empties the actor's primary wield slot when it
+// still holds weaponID, then persists the updated equipment_json.
+// Character actors only — mob equipment is deferred. Best-effort:
+// repo lookup or persist errors log-and-continue so the swing still
+// resolves. Idempotent: re-running on a slot that already changed is
+// a no-op.
+func (m *Manager) clearThrownWeapon(ctx context.Context, roomID int64, actor ActorRef, weaponID int64) {
+	if actor.Kind != ActorKindCharacter || m.chars == nil || weaponID == 0 {
+		return
+	}
+	ch, err := m.chars.GetByID(ctx, actor.ID)
+	if err != nil {
+		slog.Warn("combat: throw equipment lookup failed",
+			"room", roomID, "char", actor.ID, "error", err)
+		return
+	}
+	if ch.Equipment.Get(creature.SlotPrimaryWield) != weaponID {
+		return
+	}
+	ch.Equipment.Set(creature.SlotPrimaryWield, 0)
+	if err := m.chars.RecordEquipment(ctx, actor.ID, ch.Equipment); err != nil {
+		slog.Warn("combat: throw equipment persist failed",
+			"room", roomID, "char", actor.ID, "error", err)
+	}
 }
 
 // dropThrownItem moves a thrown weapon into a corpse (when corpseID
