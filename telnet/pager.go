@@ -1,6 +1,7 @@
 package telnet
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"sync"
@@ -119,18 +120,15 @@ func splitCRLFLines(body []byte) []string {
 	if len(body) == 0 {
 		return nil
 	}
-	s := string(body)
 	var out []string
-	for {
-		i := strings.Index(s, "\r\n")
+	for len(body) > 0 {
+		i := bytes.Index(body, []byte("\r\n"))
 		if i < 0 {
-			out = append(out, s)
+			out = append(out, string(body))
 			return out
 		}
-		out = append(out, s[:i+2])
-		s = s[i+2:]
-		if s == "" {
-			return out
-		}
+		out = append(out, string(body[:i+2]))
+		body = body[i+2:]
 	}
+	return out
 }

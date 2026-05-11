@@ -3,6 +3,7 @@ package telnet
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -12,53 +13,74 @@ import (
 	"time"
 )
 
-// pagerTestSession wires a Session to an in-process net.Pipe and
-// drains the client side into a thread-safe buffer in the
-// background. Returns the session, the captured-output snapshot
-// fn, and a cleanup. Mirrors the spirit of newPipeSession but with
-// the read side automated.
+// syncBufConn is a synchronous net.Conn whose Write appends to an
+// in-memory buffer under a mutex. Used by pagerTestSession so the
+// test thread observes bytes the instant WriteRaw returns — no
+// reader goroutine, no settle sleep.
+//
+// Write-only by design: Read always returns (0, io.EOF). A future
+// test that drives RunSession through this conn will see an
+// immediate EOF and exit the read loop — wire a proper bidirectional
+// conn (net.Pipe or a buffered Read side) before reusing.
+type syncBufConn struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	closed bool
+}
+
+func (c *syncBufConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return 0, errors.New("write on closed conn")
+	}
+	return c.buf.Write(p)
+}
+
+func (c *syncBufConn) Read(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return 0, io.EOF
+	}
+	return 0, io.EOF
+}
+
+func (c *syncBufConn) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	return nil
+}
+
+func (c *syncBufConn) LocalAddr() net.Addr                { return dummyAddr{} }
+func (c *syncBufConn) RemoteAddr() net.Addr               { return dummyAddr{} }
+func (c *syncBufConn) SetDeadline(time.Time) error        { return nil }
+func (c *syncBufConn) SetReadDeadline(time.Time) error    { return nil }
+func (c *syncBufConn) SetWriteDeadline(time.Time) error   { return nil }
+
+func (c *syncBufConn) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+type dummyAddr struct{}
+
+func (dummyAddr) Network() string { return "syncbuf" }
+func (dummyAddr) String() string  { return "syncbuf" }
+
+// pagerTestSession wires a Session to a synchronous in-memory conn
+// and returns the session plus a snapshot fn that reads the captured
+// output. Writes are observed deterministically: WriteRaw acquires
+// writeMu, conn.Write copies into the buffer under its own mu, and
+// returns — no reader goroutine, no sleep.
 func pagerTestSession(t *testing.T) (*Session, func() string) {
 	t.Helper()
-	server, client := net.Pipe()
-	s := NewSession(server)
-
-	var (
-		mu  sync.Mutex
-		buf bytes.Buffer
-	)
-	doneRead := make(chan struct{})
-	go func() {
-		defer close(doneRead)
-		tmp := make([]byte, 1024)
-		for {
-			n, err := client.Read(tmp)
-			if n > 0 {
-				mu.Lock()
-				buf.Write(tmp[:n])
-				mu.Unlock()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	t.Cleanup(func() {
-		server.Close()
-		client.Close()
-		<-doneRead
-	})
-
-	snapshot := func() string {
-		// Brief settle for the reader goroutine. Pipe writes are
-		// synchronous so by the time WriteRaw returns the bytes have
-		// been read, but Go scheduling can leave them sitting in the
-		// reader's local var briefly. A 5ms yield is generous.
-		time.Sleep(5 * time.Millisecond)
-		mu.Lock()
-		defer mu.Unlock()
-		return buf.String()
-	}
-	return s, snapshot
+	conn := &syncBufConn{}
+	s := NewSession(conn)
+	t.Cleanup(func() { _ = conn.Close() })
+	return s, conn.String
 }
 
 func TestSplitCRLFLines(t *testing.T) {
@@ -233,5 +255,74 @@ func TestPagerTestSession_Smoke(t *testing.T) {
 	s, _ := pagerTestSession(t)
 	if err := s.WriteRaw([]byte("hi\r\n")); err != nil && err != io.EOF {
 		t.Errorf("WriteRaw: %v", err)
+	}
+}
+
+// TestPager_Integration_WritePagedWrapped exercises the cfmt + wrap
+// + page chain end-to-end: a body with cfmt color tags wider than
+// Session.Width gets rendered, wrapped, CRLF-normalized, split, and
+// paginated. Asserts that the first page lands, that an empty input
+// (space-equivalent) advances, and that `q` pops the mode and
+// discards the remainder.
+func TestPager_Integration_WritePagedWrapped(t *testing.T) {
+	s, out := pagerTestSession(t)
+	s.Height = 6 // pageSize = 5
+	s.Width = 40
+
+	// 12 short cfmt-styled lines, comfortably under the wrap width
+	// so wrap is a no-op but the cfmt render path still runs.
+	var b strings.Builder
+	for i := 1; i <= 12; i++ {
+		b.WriteString("{{line ")
+		b.WriteString(strconv.Itoa(i))
+		b.WriteString("}}::yellow\n")
+	}
+	if err := s.WritePagedWrapped(b.String()); err != nil {
+		t.Fatalf("WritePagedWrapped: %v", err)
+	}
+
+	// Pager should be active — 12 lines into a 5-line page won't
+	// fit in one shot.
+	mode := s.CurrentMode()
+	if mode == nil {
+		t.Fatal("expected pager pushed")
+	}
+	pm, ok := mode.(*pagerMode)
+	if !ok {
+		t.Fatalf("top mode is %T, want *pagerMode", mode)
+	}
+	page1 := out()
+	if !strings.Contains(page1, "line 1") || !strings.Contains(page1, "line 5") {
+		t.Errorf("first page missing expected lines: %q", page1)
+	}
+	if strings.Contains(page1, "line 6") {
+		t.Errorf("first page leaked into second: %q", page1)
+	}
+
+	// Empty input advances one page (space-equivalent).
+	if err := pm.Handle(context.Background(), s, ""); err != nil {
+		t.Fatalf("Handle advance: %v", err)
+	}
+	page2 := out()
+	if !strings.Contains(page2, "line 6") || !strings.Contains(page2, "line 10") {
+		t.Errorf("second page missing expected lines: %q", page2)
+	}
+	if strings.Contains(page2, "line 11") {
+		t.Errorf("second page leaked into third: %q", page2)
+	}
+	if s.CurrentMode() == nil {
+		t.Fatal("expected pager still active after second page (2 lines remain)")
+	}
+
+	// `q` discards the remainder.
+	if err := pm.Handle(context.Background(), s, "q"); err != nil {
+		t.Fatalf("Handle q: %v", err)
+	}
+	if s.CurrentMode() != nil {
+		t.Errorf("expected pager popped on q")
+	}
+	final := out()
+	if strings.Contains(final, "line 11") || strings.Contains(final, "line 12") {
+		t.Errorf("q should have discarded lines 11-12: %q", final)
 	}
 }

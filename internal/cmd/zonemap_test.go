@@ -118,6 +118,9 @@ func runZoneMapCmd(t *testing.T, fix zoneMapFix, currentRoomID int64, raw string
 	s, conn := bufSession(t)
 	s.AuthLevel = telnet.AuthAdmin
 	s.CurrentRoomID = currentRoomID
+	// Opt out of pagination so the full body lands in the buffer —
+	// these tests assert on the whole render.
+	s.Height = 0
 	cmd := NewZoneMap(fix.rooms, fix.exits, fix.zones)
 	args, err := telnet.Tokenize(raw)
 	if err != nil {

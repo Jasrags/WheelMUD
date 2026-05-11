@@ -43,7 +43,7 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 				return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
 			}
 			if m, ok := MatchMob(target, mobsList); ok {
-				return c.Session.WriteString(renderMob(m))
+				return c.Session.WritePagedWrapped(renderMob(m))
 			}
 
 			itemsList, err := items.ListInRoom(c.Ctx, c.Session.CurrentRoomID)
@@ -52,7 +52,7 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 				return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
 			}
 			if it, ok := MatchItem(target, itemsList); ok {
-				return c.Session.WriteString(renderItem(it))
+				return c.Session.WritePagedWrapped(renderItem(it))
 			}
 
 			if c.Session.CharacterID != 0 {
@@ -62,7 +62,7 @@ func NewExamine(items repo.ItemRepo, mobs repo.MobInstanceRepo) *telnet.Command 
 					return c.Session.WriteString("{{You cannot focus on anything right now.}}::red\r\n")
 				}
 				if it, ok := MatchItem(target, inv); ok {
-					return c.Session.WriteString(renderItem(it))
+					return c.Session.WritePagedWrapped(renderItem(it))
 				}
 			}
 

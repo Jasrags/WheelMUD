@@ -676,6 +676,11 @@ func (s *Session) WriteAsync(text string) error {
 // OnEnter returns an error the push is rolled back so the stack stays
 // consistent (the caller treats a failed push as "not on the stack").
 //
+// Partial-write caveat: if OnEnter wrote bytes to the conn before
+// erroring (e.g. the pager's first page partially landed), those bytes
+// are already on the wire — the rollback only unwinds the stack, not
+// the I/O. Callers that care must surface the error to the player.
+//
 // The cached prompt is dropped on every transition: the new mode's
 // Prompt() is called next dispatcher tick and refreshes the cache;
 // during the gap an async write would otherwise replay a prompt from

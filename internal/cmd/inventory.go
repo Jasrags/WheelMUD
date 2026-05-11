@@ -78,7 +78,7 @@ func NewInventory(items repo.ItemRepo, characters repo.CharacterRepo) *telnet.Co
 				b.WriteString(char.Coin.Format())
 				b.WriteString("}}::white\r\n")
 			}
-			return s.WriteString(b.String())
+			return s.WritePagedWrapped(b.String())
 		},
 	}
 }

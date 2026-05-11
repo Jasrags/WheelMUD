@@ -109,7 +109,7 @@ func renderQuestList(s *telnet.Session, char repo.Character, cat *quest.Catalog)
 			fmt.Fprintf(&b, "  {{%s}}::gray\r\n", defangCfmt(q.Name))
 		}
 	}
-	return s.WriteString(b.String())
+	return s.WritePagedWrapped(b.String())
 }
 
 func renderQuestInfo(s *telnet.Session, char repo.Character, cat *quest.Catalog, id string) error {
@@ -158,7 +158,7 @@ func renderQuestInfo(s *telnet.Session, char repo.Character, cat *quest.Catalog,
 			fmt.Fprintf(&b, "  %d copper\r\n", q.Rewards.Copper)
 		}
 	}
-	return s.WriteString(b.String())
+	return s.WritePagedWrapped(b.String())
 }
 
 func abandonQuest(c *telnet.Context, engine *quest.Engine, char repo.Character, id string, audits repo.AdminAuditRepo) error {

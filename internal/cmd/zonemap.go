@@ -135,7 +135,7 @@ func runZoneMap(c *telnet.Context, rooms repo.RoomRepo, exits repo.ExitRepo,
 	b.WriteString("\r\n")
 	b.WriteString(zoneMapLegend())
 	b.WriteString(zoneMapFooter(c.Ctx, zone.ID, cells, edges, byID, zoneNames, exits))
-	return c.Session.WriteString(b.String())
+	return c.Session.WritePagedWrapped(b.String())
 }
 
 // resolveZoneAndSeed picks the zone and the BFS seed from the args.
