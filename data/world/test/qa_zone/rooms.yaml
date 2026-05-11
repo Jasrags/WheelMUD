@@ -57,7 +57,15 @@
          get dagger ; wield dagger
          score                    (Combat line shows 0.80x)
          attack the dummy quick   (~1.4s between swings)
-       Dummy respawns every 60s."
+       Dummy respawns every 60s.
+
+       Phase L #63 — racial speed + stamina pool. Recipe:
+         score                    (Stamina row shows X / Max)
+         attack the dummy power   (drains 12 stamina per swing)
+         repeat until 'You're too winded.' refusal
+         wait one Regen pulse (30s)
+         score                    (stamina ticks back up)
+         wear plate ; score       (regen halves to +N/2)"
   exits:
     d: test.qa.hub
   flags:

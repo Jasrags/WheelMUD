@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/combat"
@@ -31,6 +32,9 @@ func NewFlee(mgr *combat.Manager) *telnet.Command {
 			if err := mgr.EnqueueAction(s.CurrentRoomID, actor, combat.Action{
 				Kind: combat.ActionFlee,
 			}); err != nil {
+				if errors.Is(err, combat.ErrInsufficientStamina) {
+					return s.WriteString("{{You're too winded to flee.}}::yellow\r\n")
+				}
 				return s.WriteString("{{You can't flee right now.}}::red\r\n")
 			}
 			return s.WriteString("{{You look for an opening to flee.}}::yellow\r\n")

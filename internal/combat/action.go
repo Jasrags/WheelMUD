@@ -1,6 +1,9 @@
 package combat
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // DefaultActionCost returns the wall-clock interval an actor must
 // wait after resolving an action of the given kind before they can
@@ -79,6 +82,32 @@ func VariantAttackBonus(v AttackVariant) int {
 	}
 }
 
+// DefaultActionStamina is the stamina-pool cost of one action of the
+// given (kind, variant). Pure function — Phase L slice 63 mirrors
+// DefaultActionCost so the cost table lives next to the cadence table.
+//
+// Values per docs/PLAN.md slice 63: Attack/Normal=5, Power=12, Quick=3,
+// Parry=4, Flee=8. ActionNone is 0 so idle pulses never drain the pool.
+func DefaultActionStamina(kind ActionKind, variant AttackVariant) int32 {
+	switch kind {
+	case ActionAttack:
+		switch variant {
+		case VariantPower:
+			return 12
+		case VariantQuick:
+			return 3
+		default:
+			return 5
+		}
+	case ActionParry:
+		return 4
+	case ActionFlee:
+		return 8
+	default:
+		return 0
+	}
+}
+
 // ActionKind tags a queued combat action. Slice 1 ships only Attack;
 // future kinds (flee, kick, weave, ready, defend) slot in here without
 // changing the queue plumbing.
@@ -119,10 +148,21 @@ type Action struct {
 }
 
 // EnqueueAction stores an action for actor in the active fight in
-// roomID. Returns ErrFightNotFound when no fight is active. The
-// previous action (if any) is overwritten — re-issuing `attack` mid-
-// round simply re-targets without piling up actions.
+// roomID. Returns ErrFightNotFound when no fight is active, or
+// ErrInsufficientStamina when the character actor's StaminaCurrent
+// is below DefaultActionStamina(a.Kind, a.Variant). The previous
+// action (if any) is overwritten — re-issuing `attack` mid-round
+// simply re-targets without piling up actions.
+//
+// The stamina check runs OUTSIDE m.mu to keep the (potentially slow)
+// repo lookup off the manager's critical section. We re-check the
+// fight presence under the lock after the gate clears so an End in
+// the gap surfaces as ErrFightNotFound, not a stale enqueue. Mob
+// actors skip the gate today (V1 has no NPC variant selection).
 func (m *Manager) EnqueueAction(roomID int64, actor ActorRef, a Action) error {
+	if err := m.staminaGate(actor, a); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	f, ok := m.fights[roomID]
@@ -133,6 +173,38 @@ func (m *Manager) EnqueueAction(roomID int64, actor ActorRef, a Action) error {
 		f.Actions = make(map[ActorRef]Action)
 	}
 	f.Actions[actor] = a
+	return nil
+}
+
+// staminaGate enforces the Phase L slice 63 stamina budget for a
+// character actor. Mob actors and zero-cost actions short-circuit;
+// repo lookup failures degrade to allow (we'd rather let the fight
+// continue than refuse on a transient SQL hiccup).
+func (m *Manager) staminaGate(actor ActorRef, a Action) error {
+	if actor.Kind != ActorKindCharacter {
+		return nil
+	}
+	cost := DefaultActionStamina(a.Kind, a.Variant)
+	if cost <= 0 {
+		return nil
+	}
+	if m.chars == nil {
+		return nil
+	}
+	ch, err := m.chars.GetByID(context.Background(), actor.ID)
+	if err != nil {
+		return nil
+	}
+	// StaminaMax == 0 means "stamina not configured for this actor."
+	// Pre-0049 characters and unit-test fixtures land here; they keep
+	// the unmetered pre-slice-63 behavior so the gate can't refuse a
+	// row that never had a racial profile stamped.
+	if ch.Core.StaminaMax <= 0 {
+		return nil
+	}
+	if ch.Core.StaminaCurrent < cost {
+		return ErrInsufficientStamina
+	}
 	return nil
 }
 

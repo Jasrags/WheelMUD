@@ -30,6 +30,39 @@ func ActionCost(base time.Duration, weaponWeight float64, armorWeightClass strin
 	return time.Duration(float64(base) * factor)
 }
 
+// ApplySpeedFactor multiplies a duration by a per-actor speed
+// multiplier. Phase L slice 63 — the racial cadence pass folds the
+// RaceProfile's SpeedFactor on top of the gear-derived cost so an
+// Ogier's 1.2× tax stacks with their armor and weapon weights.
+//
+// speedFactor <= 0 returns d unchanged so a missing / zero profile
+// can't accidentally collapse cadence to zero or make it negative.
+func ApplySpeedFactor(d time.Duration, speedFactor float32) time.Duration {
+	if speedFactor <= 0 {
+		return d
+	}
+	return time.Duration(float64(d) * float64(speedFactor))
+}
+
+// EffectiveStaminaRegen returns the per-pulse stamina regen after
+// the heavy-armor penalty. Phase L slice 63 — wearing heavy body
+// armor halves regen (rounded down, floored at 1 when the base is
+// positive so a regen of 1 doesn't disappear entirely). Light /
+// medium / no armor return base unchanged. Pure; no I/O.
+func EffectiveStaminaRegen(base int32, armorWeightClass string) int32 {
+	if base <= 0 {
+		return base
+	}
+	if armorWeightClass != "heavy" {
+		return base
+	}
+	half := base / 2
+	if half < 1 {
+		return 1
+	}
+	return half
+}
+
 // weaponSpeedFactor maps weight in pounds onto a cadence multiplier.
 // The bands match the WoT-d20 weapon table loosely: daggers / clubs
 // at the low end, longswords / maces in the medium band, battleaxes
@@ -78,9 +111,16 @@ func armorSpeedFactor(class string) float64 {
 // Returned by ResolveGearFactors so the score sheet and the combat
 // resolver share one code path. Zero value is "unarmed and naked"
 // (1.0× cadence — no penalty, no bonus).
+//
+// ArmorWeightClass carries the canonical string token ("light" /
+// "medium" / "heavy") for the worn body armor so downstream consumers
+// (score's stamina-regen hint, future feat / status displays) can
+// branch on the source value rather than re-inferring it from
+// ArmorFactor. Empty when no body armor is worn.
 type GearFactors struct {
-	WeaponFactor float64
-	ArmorFactor  float64
+	WeaponFactor     float64
+	ArmorFactor      float64
+	ArmorWeightClass string
 }
 
 // Multiplier is the combined factor applied to a base action cost.
@@ -110,6 +150,7 @@ func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Eq
 		if it, err := items.GetByID(ctx, aid); err == nil {
 			if as, ok := it.Stats.(*repo.ArmorStats); ok {
 				g.ArmorFactor = armorSpeedFactor(as.WeightClass)
+				g.ArmorWeightClass = as.WeightClass
 			}
 		} else {
 			slog.Warn("combat: armor lookup failed; treating as unarmored",
@@ -120,18 +161,69 @@ func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Eq
 }
 
 // actorActionCost combines DefaultActionCost with the actor's gear
-// factors. Called from tickRoom after a swing resolves to stamp
-// NextActAt. resolveAction-time gear is "as of now" — re-wielding
-// mid-fight changes the cadence of the next queued action, matching
-// how combat verbs already re-read weapon stats by id.
+// factors and racial speed multiplier. Called from tickRoom after a
+// swing resolves to stamp NextActAt. resolveAction-time gear is
+// "as of now" — re-wielding mid-fight changes the cadence of the
+// next queued action, matching how combat verbs already re-read
+// weapon stats by id. Race is immutable per actor so the lookup
+// caches via the repo's normal char fetch.
 func (m *Manager) actorActionCost(ctx context.Context, ref ActorRef, action Action) time.Duration {
 	base := DefaultActionCost(action.Kind, action.Variant)
-	eq, ok := m.resolveEquipment(ctx, ref)
-	if !ok {
-		return base
+	cost := base
+	if eq, ok := m.resolveEquipment(ctx, ref); ok {
+		g := ResolveGearFactors(ctx, m.items, eq)
+		cost = time.Duration(float64(cost) * g.Multiplier())
 	}
-	g := ResolveGearFactors(ctx, m.items, eq)
-	return time.Duration(float64(base) * g.Multiplier())
+	cost = ApplySpeedFactor(cost, m.actorSpeedFactor(ctx, ref))
+	return cost
+}
+
+// actorSpeedFactor returns the RaceProfile.SpeedFactor for the actor,
+// or 1.0 when the actor isn't a character or the lookup fails. Mob
+// SpeedFactor is intentionally 1.0 today — racial cadence is a
+// player-side mechanic in V1.
+func (m *Manager) actorSpeedFactor(ctx context.Context, ref ActorRef) float32 {
+	if ref.Kind != ActorKindCharacter || m.chars == nil {
+		return 1.0
+	}
+	ch, err := m.chars.GetByID(ctx, ref.ID)
+	if err != nil {
+		return 1.0
+	}
+	return creature.ProfileFor(ch.Race).SpeedFactor
+}
+
+// drainStamina deducts the action's stamina cost from a character
+// actor's pool. Mob actors and zero-cost kinds short-circuit. Repo
+// failures log-and-continue rather than abort the swing — combat
+// must keep flowing even if one stamina write hits a transient
+// error. Phase L slice 63.
+func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action) {
+	if ref.Kind != ActorKindCharacter || m.chars == nil {
+		return
+	}
+	cost := DefaultActionStamina(action.Kind, action.Variant)
+	if cost <= 0 {
+		return
+	}
+	ch, err := m.chars.GetByID(ctx, ref.ID)
+	if err != nil {
+		slog.Warn("combat: stamina load failed", "char", ref.ID, "error", err)
+		return
+	}
+	// Skip drain on unconfigured pools (StaminaMax == 0). Mirrors the
+	// EnqueueAction gate so pre-0049 characters and test fixtures
+	// stay unmetered.
+	if ch.Core.StaminaMax <= 0 {
+		return
+	}
+	next := ch.Core.StaminaCurrent - cost
+	if next < 0 {
+		next = 0
+	}
+	if err := m.chars.RecordStamina(ctx, ref.ID, next); err != nil {
+		slog.Warn("combat: stamina write failed", "char", ref.ID, "error", err)
+	}
 }
 
 // resolveEquipment fetches the actor's current Equipment snapshot.

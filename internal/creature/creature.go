@@ -353,6 +353,15 @@ type Core struct {
 	HPMax     int32
 	Subdual   int32 // separate non-lethal pool
 
+	// Stamina is the action-cost pool added in Phase L slice 63.
+	// Combat actions drain StaminaCurrent (see DefaultActionStamina);
+	// the Regen ticker tops it back toward StaminaMax at
+	// StaminaRegen/pulse, halved while wearing heavy armor. Per-race
+	// values are stamped at chargen finalize from RaceProfile.
+	StaminaCurrent int32
+	StaminaMax     int32
+	StaminaRegen   int32
+
 	HitDice string // "4d8+8" — text for now; parser later
 
 	// Defense replaces D&D's AC: class bonus + Dex + size + armor +

@@ -110,6 +110,15 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gea
 			return err
 		}
 	}
+	if ch.Core.StaminaMax > 0 {
+		effRegen := combat.EffectiveStaminaRegen(ch.Core.StaminaRegen, gear.ArmorWeightClass)
+		if err := display.FieldRow(s, "Stamina",
+			fmt.Sprintf("%d / %d  (+%d/pulse)",
+				ch.Core.StaminaCurrent, ch.Core.StaminaMax, effRegen),
+			scoreLabelGutter); err != nil {
+			return err
+		}
+	}
 	if err := display.FieldRow(s, "Combat",
 		fmt.Sprintf("%.2fx (%.2f weapon x %.2f armor)",
 			gear.Multiplier(), gear.WeaponFactor, gear.ArmorFactor),

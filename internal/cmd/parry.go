@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -47,6 +48,9 @@ func NewParry(mgr *combat.Manager, characters repo.CharacterRepo, sessions *sess
 				Kind:     combat.ActionParry,
 				WeaponID: weaponID,
 			}); err != nil {
+				if errors.Is(err, combat.ErrInsufficientStamina) {
+					return s.WriteString("{{You're too winded to parry.}}::yellow\r\n")
+				}
 				return s.WriteString("{{You can't parry right now.}}::red\r\n")
 			}
 			actorName := safeActor(s)

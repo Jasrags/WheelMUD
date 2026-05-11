@@ -1187,6 +1187,47 @@ will need on top of those tables.
       Power; 1.8 × 0.9 = 1.62 s Quick) — the base table tested in
       `TestDefaultActionCost_Variants` stays unchanged.
 
+      **Slice 63 (racial speed + stamina pool) landed 2026-05-11.**
+      Migration 0049 adds `stamina_current` / `stamina_max` /
+      `stamina_regen` int32 columns to `characters` (mirroring the
+      HP shape from 0009); `creature.Core` gains the same trio.
+      New `creature.ProfileFor(Race) RaceProfile` is a pure-Go
+      lookup table (no chargen YAML catalog yet — the live roster
+      is a 2-value enum; Aiel/Trolloc/Myrddraal land when chargen
+      grows the surface): Human is 1.0× / 100 / 2, Ogier is
+      1.2× / 150 / 1. New `combat.ApplySpeedFactor(d, factor)` is
+      folded into `actorActionCost` after gear factors so an
+      Ogier's 1.2× tax stacks with weapon + armor weight. New
+      `combat.DefaultActionStamina(kind, variant)` is the per-
+      action cost table (Attack/Normal=5, Power=12, Quick=3,
+      Parry=4, Flee=8); `EnqueueAction` refuses with
+      `ErrInsufficientStamina` when a character's
+      `StaminaCurrent` is below the cost. Pre-0049 characters and
+      tests with `StaminaMax==0` are treated as "unconfigured
+      pool" and skip the gate so existing rows still fight without
+      a re-finalize. `resolveAction` calls `drainStamina(ctx, ref,
+      action)` at the top so parry / flee pay their cost on
+      resolution. New `repo.CharacterRepo.RecordStamina(ctx, id,
+      current)` is the narrow write (mirrors `RecordHP`) used by
+      both the drain and the regen ticker. New
+      `combat.NewStaminaTicker(candidates, chars, items, log)`
+      subscribes to `tick.Buckets.Regen` (30 s) and tops
+      `StaminaCurrent` toward `StaminaMax` at `StaminaRegen` per
+      pulse, halved (rounded down, floored at 1) by heavy body
+      armor via `combat.EffectiveStaminaRegen(base, class)`;
+      regen halts while `HPCurrent <= 0`. `internal/cmd/score.go`
+      renders a new `Stamina: cur / max (+N/pulse)` row between
+      `Speed` and `Combat`, showing the *effective* regen so the
+      sheet matches what the player observes. Chargen finalize
+      stamps the racial profile onto the new character's Core
+      (pool starts full). Verbs surface refusals distinctly:
+      attack → "You're too winded."; parry/flee → "You're too
+      winded to parry|flee." QA fixture: the existing
+      `test.qa.speed_range` placard gained a slice-63 recipe block
+      (drain via repeated power swings, observe the winded
+      refusal, wait one Regen pulse, then wear plate to verify the
+      halved regen).
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

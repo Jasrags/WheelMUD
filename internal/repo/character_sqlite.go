@@ -184,6 +184,20 @@ func (r *SQLiteCharacterRepo) RecordHP(ctx context.Context, id int64, hp, subdua
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordStamina(ctx context.Context, id int64, current int32) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET stamina_current = ? WHERE id = ?`,
+		current, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record stamina: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordInventory(ctx context.Context, id int64, ids []int64) error {
 	js, err := marshalJSONSlice(ids)
 	if err != nil {

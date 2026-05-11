@@ -121,6 +121,66 @@ func TestScore_RendersIdentityVitalsAbilitiesWealth(t *testing.T) {
 	}
 }
 
+// TestScore_ShowsStaminaAndEffectiveRegen verifies the Phase L slice
+// 63 stamina row renders cur/max plus the *effective* regen — i.e.
+// halved when wearing heavy plate. Naked baseline shows the raw
+// regen rate.
+func TestScore_ShowsStaminaAndEffectiveRegen(t *testing.T) {
+	chars := repo.NewMemoryCharacterRepo()
+	in := repo.Character{
+		AccountID: 300,
+		Name:      "Stam",
+		Race:      creature.RaceHuman,
+		ClassLevels: map[creature.Class]int8{
+			creature.ClassArmsman: 1,
+		},
+		Core: creature.Core{
+			HPCurrent: 10, HPMax: 10,
+			StaminaCurrent: 87, StaminaMax: 100, StaminaRegen: 4,
+		},
+		AuthLevel: repo.AuthLevelPlayer,
+	}
+	if _, err := chars.Create(context.Background(), in); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s, out := bufSession(t)
+	s.AuthLevel = telnet.AuthPlayer
+	s.CharacterName = "Stam"
+	s.Width = 80
+	runCmd(t, NewScore(chars, nil, nil), s, "")
+	got := out.String()
+	for _, w := range []string{"Stamina:", "87 / 100", "(+4/pulse)"} {
+		if !strings.Contains(got, w) {
+			t.Fatalf("missing %q in score output:\n%s", w, got)
+		}
+	}
+
+	// Same character with heavy plate should show the halved regen
+	// (4 → 2). Score reads the gear via items repo, so seed one.
+	items := repo.NewMemoryItemRepo()
+	plate, _ := items.Create(context.Background(), repo.Item{
+		ExternalID: "test.plate", Name: "plate",
+		Type: repo.ItemTypeArmor, Weight: 50,
+		Stats: &repo.ArmorStats{WeightClass: "heavy"},
+	})
+	eq := creature.Equipment{}
+	eq.Set(creature.SlotArmor, plate.ID)
+	if err := chars.RecordEquipment(context.Background(), 1, eq); err != nil {
+		t.Fatalf("equip plate: %v", err)
+	}
+
+	s2, out2 := bufSession(t)
+	s2.AuthLevel = telnet.AuthPlayer
+	s2.CharacterName = "Stam"
+	s2.Width = 80
+	runCmd(t, NewScore(chars, items, nil), s2, "")
+	got2 := out2.String()
+	if !strings.Contains(got2, "(+2/pulse)") {
+		t.Fatalf("plate regen = no halving in score:\n%s", got2)
+	}
+}
+
 func TestScore_ChannelerBlockShowsPracticeAndState(t *testing.T) {
 	chars := repo.NewMemoryCharacterRepo()
 	in := repo.Character{

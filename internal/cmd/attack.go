@@ -234,6 +234,9 @@ func runAttack(c *telnet.Context, deps attackDeps, target string, variant combat
 		Target:   defender,
 		WeaponID: weaponID,
 	}); err != nil {
+		if errors.Is(err, combat.ErrInsufficientStamina) {
+			return s.WriteString("{{You're too winded.}}::yellow\r\n")
+		}
 		slog.Warn("attack: enqueue failed", "room", s.CurrentRoomID, "error", err)
 		return s.WriteString("{{You can't engage right now.}}::red\r\n")
 	}

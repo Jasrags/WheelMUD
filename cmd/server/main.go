@@ -616,6 +616,34 @@ func main() {
 	)
 	buckets.Regen.Subscribe(channelingTicker.Tick)
 
+	// Phase L slice 63: stamina regen ticker. Tops StaminaCurrent
+	// toward StaminaMax at the racial StaminaRegen rate (halved by
+	// heavy armor) on every Regen pulse. Subscribed alongside the
+	// channeling ticker so the action-cost pool refills at the same
+	// cadence the channeling pools refresh.
+	staminaCandidates := func() []combat.StaminaCandidate {
+		snap := sessions.Snapshot()
+		out := make([]combat.StaminaCandidate, 0, len(snap))
+		for _, s := range snap {
+			if s == nil {
+				continue
+			}
+			charID, _, roomID := s.InWorld()
+			if charID == 0 {
+				continue
+			}
+			out = append(out, combat.StaminaCandidate{CharacterID: charID, RoomID: roomID})
+		}
+		return out
+	}
+	staminaTicker := combat.NewStaminaTicker(
+		staminaCandidates,
+		characters,
+		items,
+		slog.Default(),
+	)
+	buckets.Regen.Subscribe(staminaTicker.Tick)
+
 	// Phase F #29: trigger / event dispatch. Loads every YAML-seeded
 	// triggers row into an in-memory Registry, then subscribes to the
 	// existing event bus + Phase bucket so on_enter / on_say /

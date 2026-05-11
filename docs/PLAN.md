@@ -984,8 +984,8 @@ any slice and the game still works.
       dagger (1 lb) / plate (heavy). Mob-side equipment authoring
       deferred — would need a new migration on `mob_templates`.
 
-63. **Racial speed + stamina pool.** First "your race matters"
-    pass; biggest schema lift in the phase.
+63. ~~**Racial speed + stamina pool.** First "your race matters"
+    pass; biggest schema lift in the phase.~~ Landed 2026-05-11.
     - Migration: `characters.stamina_cur` + `.stamina_max` +
       `.stamina_regen` (int16; mirror HP shape). `creature.Core`
       gains the three fields. Mob templates get the same trio

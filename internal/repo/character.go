@@ -210,6 +210,12 @@ type CharacterRepo interface {
 	// silently overwrite a Condition bit set concurrently by combat
 	// (the ticker holds a stale snapshot of conditions/position).
 	RecordHP(ctx context.Context, id int64, hpCurrent, subdual int32) error
+	// RecordStamina narrowly persists stamina_current. Phase L slice 63
+	// — combat drains it on every action and the Regen ticker tops it
+	// back up; both call sites only need the current pool, so this
+	// avoids re-writing max/regen (those are stamped at chargen
+	// finalize and only change when a future verb mutates them).
+	RecordStamina(ctx context.Context, id int64, current int32) error
 	// RecordChannelSettings persists the per-channel mute map after
 	// a toggle. The channel command writes through immediately so
 	// the setting survives logout even if autosave hasn't fired.

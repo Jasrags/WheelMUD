@@ -170,6 +170,18 @@ func (r *MemoryCharacterRepo) RecordHP(_ context.Context, id int64, hp, subdual 
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordStamina(_ context.Context, id int64, current int32) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.Core.StaminaCurrent = current
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordInventory(_ context.Context, id int64, ids []int64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

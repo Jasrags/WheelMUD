@@ -1409,6 +1409,14 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 	core.HPCurrent = hp
 	core.Defense = defense
 	core.Saves = saves
+	// Phase L slice 63: stamp the racial stamina pool. Pool starts
+	// full so a fresh character can act immediately. Speed factor is
+	// looked up at combat time via creature.ProfileFor(Race) — no
+	// need to persist it on Core.
+	rp := creature.ProfileFor(race)
+	core.StaminaMax = rp.StaminaMax
+	core.StaminaCurrent = rp.StaminaMax
+	core.StaminaRegen = rp.StaminaRegen
 
 	c, err := m.repo.Create(ctx, repo.Character{
 		AccountID:      s.AccountID,

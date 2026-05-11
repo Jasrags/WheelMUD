@@ -542,6 +542,38 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_stamina_persists", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Wind",
+			Core: creature.Core{
+				HPCurrent: 10, HPMax: 10,
+				StaminaCurrent: 100, StaminaMax: 100, StaminaRegen: 2,
+			}})
+		if err := cr.RecordStamina(ctx, c.ID, 37); err != nil {
+			t.Fatalf("RecordStamina: %v", err)
+		}
+		got, err := cr.FindByName(ctx, "Wind")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		// Narrow write: only stamina_current changes; max + regen
+		// untouched.
+		if got.Core.StaminaCurrent != 37 || got.Core.StaminaMax != 100 ||
+			got.Core.StaminaRegen != 2 {
+			t.Fatalf("RecordStamina did not persist correctly: %+v", got.Core)
+		}
+	})
+
+	t.Run(name+"/record_stamina_unknown_returns_not_found", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		err := cr.RecordStamina(context.Background(), 9999, 0)
+		if !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("err = %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/record_level_up_persists", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

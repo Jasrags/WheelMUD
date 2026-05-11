@@ -29,6 +29,13 @@ var ErrNoParticipants = errors.New("combat: at least one participant required")
 // active fight.
 var ErrFightNotFound = errors.New("combat: no fight in this room")
 
+// ErrInsufficientStamina is returned by EnqueueAction when the actor's
+// StaminaCurrent is below the action's DefaultActionStamina cost.
+// Phase L slice 63 — verbs surface this as "you're too winded" rather
+// than the generic "you can't engage right now" so the player knows
+// to wait for the Regen tick.
+var ErrInsufficientStamina = errors.New("combat: insufficient stamina")
+
 // Manager owns the per-process map of active Fights. It is the
 // single source of truth for combat state — every verb (slice 2+)
 // reads and writes through this interface. Concurrent-safe.
@@ -468,6 +475,13 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			})
 		}
 	}()
+	// Phase L slice 63: stamina drain. Runs ahead of the action-kind
+	// dispatch so a parry / flee pays its cost on resolution even
+	// when those branches return early. Mob actors and zero-cost
+	// kinds short-circuit; repo failures log-and-continue (the swing
+	// still resolves — we'd rather pay the action than refuse on a
+	// transient SQL hiccup mid-fight).
+	m.drainStamina(ctx, actor, action)
 	switch action.Kind {
 	case ActionParry:
 		m.resolveParry(ctx, roomID, round, actor)
