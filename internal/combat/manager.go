@@ -711,13 +711,24 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 					Defense:  defForRoll.Defense,
 				})
 			} else {
+				// Fumble side-effect: nat-1 from a character attacker
+				// drops their primary-wield weapon to the floor. Mob
+				// fumble is a flavor-only flag (no persisted equipment
+				// in V1). Resolved before the publish so the event
+				// carries the dropped weapon id.
+				droppedID := int64(0)
+				if roll.Fumble {
+					droppedID = m.handleFumble(ctx, roomID, actor)
+				}
 				m.bus.Publish(ctx, CombatMiss{
-					RoomID:    roomID,
-					Attacker:  actor,
-					Defender:  action.Target,
-					RollTotal: roll.Total,
-					Defense:   defEff.Defense,
-					Variant:   action.Variant,
+					RoomID:          roomID,
+					Attacker:        actor,
+					Defender:        action.Target,
+					RollTotal:       roll.Total,
+					Defense:         defEff.Defense,
+					Variant:         action.Variant,
+					Fumble:          roll.Fumble,
+					WeaponDroppedID: droppedID,
 				})
 			}
 		}
@@ -1177,6 +1188,41 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 	}
 	// Survived the hit — item drops at the target's feet.
 	m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
+}
+
+// handleFumble drops the attacker's primary-wield weapon to the room
+// floor on a natural-1 attack roll. Character actors only — mob
+// equipment has no persisted layer in V1 (Phase L #62 followup).
+// Returns the dropped item id, or 0 when nothing was dropped
+// (unarmed, mob attacker, or repo error). Best-effort: equipment-
+// persist or SetRoom failures slog.Warn and surface as a 0 return
+// so the miss still publishes and combat doesn't desync.
+func (m *Manager) handleFumble(ctx context.Context, roomID int64, actor ActorRef) int64 {
+	if actor.Kind != ActorKindCharacter || m.chars == nil || m.items == nil {
+		return 0
+	}
+	ch, err := m.chars.GetByID(ctx, actor.ID)
+	if err != nil {
+		slog.Warn("combat: fumble equipment lookup failed",
+			"room", roomID, "char", actor.ID, "error", err)
+		return 0
+	}
+	weaponID := ch.Equipment.Get(creature.SlotPrimaryWield)
+	if weaponID == 0 {
+		return 0
+	}
+	ch.Equipment.Set(creature.SlotPrimaryWield, 0)
+	if err := m.chars.RecordEquipment(ctx, actor.ID, ch.Equipment); err != nil {
+		slog.Warn("combat: fumble equipment persist failed",
+			"room", roomID, "char", actor.ID, "error", err)
+		return 0
+	}
+	if err := m.items.SetRoom(ctx, weaponID, roomID); err != nil {
+		slog.Warn("combat: fumble item-to-floor failed",
+			"room", roomID, "item", weaponID, "error", err)
+		return 0
+	}
+	return weaponID
 }
 
 // clearThrownWeapon empties the actor's primary wield slot when it

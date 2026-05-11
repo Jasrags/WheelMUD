@@ -81,6 +81,14 @@ type CombatMiss struct {
 	// (Normal / Power / Quick). Subscribers compose variant-flavored
 	// echo lines off this field.
 	Variant AttackVariant
+	// Fumble is true when the raw d20 was a natural 1. Subscribers
+	// render a "fumble" flavor line on top of the regular miss.
+	Fumble bool
+	// WeaponDroppedID is the item id the fumble side-effect moved
+	// from the attacker's SlotPrimaryWield to the room floor.
+	// Zero when no drop occurred (unarmed attacker, mob attacker —
+	// mob equipment has no persistence layer in V1).
+	WeaponDroppedID int64
 }
 
 // ActionResolved fires whether the queued action was an attack that

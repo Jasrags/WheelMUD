@@ -28,6 +28,7 @@ type AttackRoll struct {
 	Hit    bool // Total >= defender Defense (or natural-20 auto-hit)
 	Threat bool // Raw >= weapon ThreatLow (default 20) AND Hit
 	IsCrit bool // Threat && confirm roll also hits
+	Fumble bool // Raw == 1 — auto-miss with side-effect surface (weapon drop)
 }
 
 // unarmedDamage is the fallback weapon stat block used when a
@@ -119,9 +120,11 @@ func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.Wea
 
 	defense := int(effectiveDefense(defender, flatFootedDefender))
 	hit := total >= defense
+	fumble := false
 	switch raw {
 	case 1:
 		hit = false
+		fumble = true
 	case 20:
 		hit = true
 	}
@@ -147,6 +150,7 @@ func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.Wea
 		Hit:    hit,
 		Threat: threat,
 		IsCrit: isCrit,
+		Fumble: fumble,
 	}
 }
 

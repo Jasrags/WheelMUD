@@ -486,21 +486,51 @@ func main() {
 
 	// CombatMiss: symmetric to Hit but no damage line; both
 	// participants and the room see the swing-and-miss beat.
+	// Fumble (nat-1) replaces the regular miss line with a fumble
+	// flavor line. When the side-effect dropped a weapon
+	// (WeaponDroppedID != 0), the weapon name is interpolated so
+	// every audience sees what hit the floor.
 	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatMiss) {
 		atkName := combatActorName(ctx, ev.Attacker, characters, mobs)
 		defName := combatActorName(ctx, ev.Defender, characters, mobs)
 		var atkSess, defSess *telnet.Session
 		if ev.Attacker.Kind == combat.ActorKindCharacter {
 			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
-			if atkSess != nil {
-				_ = atkSess.WriteAsync(fmt.Sprintf(variantMissSelfFormat(ev.Variant), defName))
-			}
 		}
 		if ev.Defender.Kind == combat.ActorKindCharacter {
 			defSess = cmd.LookupByCharacterID(sessions, ev.Defender.ID)
-			if defSess != nil {
-				_ = defSess.WriteAsync(fmt.Sprintf("{{%s swings at you and misses.}}::gray", atkName))
+		}
+		if ev.Fumble {
+			weaponName := ""
+			if ev.WeaponDroppedID != 0 {
+				if it, err := items.GetByID(ctx, ev.WeaponDroppedID); err == nil {
+					weaponName = it.Name
+				}
 			}
+			var selfMsg, defMsg, roomMsg string
+			if weaponName != "" {
+				selfMsg = fmt.Sprintf("{{You fumble your %s! It clatters to the ground.}}::yellow", weaponName)
+				defMsg = fmt.Sprintf("{{%s fumbles their %s!}}::yellow", atkName, weaponName)
+				roomMsg = fmt.Sprintf("{{%s fumbles their %s!}}::yellow\r\n", atkName, weaponName)
+			} else {
+				selfMsg = "{{You stumble badly.}}::yellow"
+				defMsg = fmt.Sprintf("{{%s stumbles badly.}}::yellow", atkName)
+				roomMsg = fmt.Sprintf("{{%s stumbles badly.}}::yellow\r\n", atkName)
+			}
+			if atkSess != nil {
+				_ = atkSess.WriteAsync(selfMsg)
+			}
+			if defSess != nil {
+				_ = defSess.WriteAsync(defMsg)
+			}
+			combatBroadcastSkip(ev.RoomID, roomMsg, atkSess, defSess)
+			return
+		}
+		if atkSess != nil {
+			_ = atkSess.WriteAsync(fmt.Sprintf(variantMissSelfFormat(ev.Variant), defName))
+		}
+		if defSess != nil {
+			_ = defSess.WriteAsync(fmt.Sprintf("{{%s swings at you and misses.}}::gray", atkName))
 		}
 		combatBroadcastSkip(ev.RoomID,
 			fmt.Sprintf("{{%s swings at %s and misses.}}::gray\r\n", atkName, defName),

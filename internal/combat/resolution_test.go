@@ -29,6 +29,31 @@ func TestRollAttack_NaturalOneAlwaysMisses(t *testing.T) {
 	if roll.Hit {
 		t.Fatalf("nat 1 must miss: %+v", roll)
 	}
+	if !roll.Fumble {
+		t.Fatalf("nat 1 must set Fumble: %+v", roll)
+	}
+}
+
+func TestRollAttack_FumbleOnlyOnNaturalOne(t *testing.T) {
+	// Sample a handful of non-1 raws against a defender easy enough
+	// to flip Hit on the high end; Fumble must stay false in every
+	// case (including non-hit non-1 like raw=2 vs Defense=99).
+	cases := []struct {
+		raw     int
+		defense int16
+	}{
+		{raw: 2, defense: 99},  // miss, not fumble
+		{raw: 10, defense: 10}, // hit, not fumble
+		{raw: 19, defense: 5},  // hit, not fumble
+		{raw: 20, defense: 99}, // nat-20 hit, not fumble
+	}
+	for _, tc := range cases {
+		rng := rand.New(rand.NewSource(stubSeedForRoll(tc.raw)))
+		roll := RollAttack(rng, newAttacker(10, 0), newDefender(tc.defense), repo.WeaponStats{}, false, 0)
+		if roll.Fumble {
+			t.Fatalf("raw=%d must not set Fumble: %+v", tc.raw, roll)
+		}
+	}
 }
 
 // stubSeedForRoll finds a seed for rand.Intn(20) returning desired-1.
