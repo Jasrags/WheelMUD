@@ -43,6 +43,26 @@ func stubSeedForRoll(want int) int64 {
 	return 1
 }
 
+// stubSeedFor2Rolls finds a seed producing the given d20 pair on the
+// first two rand.Intn(20)+1 calls. Used by crit-confirmation tests so
+// both the initial attack roll and the confirm roll are deterministic.
+// Brute force up to ~1M seeds — every (1..20, 1..20) pair is reachable
+// well within that window.
+func stubSeedFor2Rolls(t *testing.T, first, second int) int64 {
+	t.Helper()
+	for s := int64(1); s < 1_000_000; s++ {
+		r := rand.New(rand.NewSource(s))
+		if r.Intn(20)+1 != first {
+			continue
+		}
+		if r.Intn(20)+1 == second {
+			return s
+		}
+	}
+	t.Fatalf("no seed found for (%d,%d)", first, second)
+	return 0
+}
+
 func TestRollAttack_NaturalTwentyAlwaysHits(t *testing.T) {
 	rng := rand.New(rand.NewSource(stubSeedForRoll(20)))
 	// Attacker with 0 BAB / 0 Str-mod against a 999 defense — only
@@ -68,18 +88,141 @@ func TestRollAttack_Threshold(t *testing.T) {
 	}
 }
 
-func TestRollAttack_CritThreshold(t *testing.T) {
+func TestRollAttack_ThreatThreshold(t *testing.T) {
+	// Pre-confirmation Threat flag is set iff Raw >= ThreatLow AND Hit.
+	// We seed the second roll to a guaranteed-confirm value (20) so
+	// this test isolates the threat-range gate from the confirm logic
+	// — confirm correctness is exercised by the dedicated tests below.
 	stats := repo.WeaponStats{ThreatLow: 18}
 	for _, raw := range []int{17, 18, 19, 20} {
-		rng := rand.New(rand.NewSource(stubSeedForRoll(raw)))
+		var seed int64
+		if raw >= 18 {
+			// Two rolls happen — second is the confirm; force success.
+			seed = stubSeedFor2Rolls(t, raw, 20)
+		} else {
+			// One roll happens — no confirm attempted.
+			seed = stubSeedForRoll(raw)
+		}
+		rng := rand.New(rand.NewSource(seed))
 		roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false, 0)
 		if !roll.Hit {
 			t.Fatalf("raw=%d expected hit: %+v", raw, roll)
 		}
-		wantCrit := raw >= 18
-		if roll.IsCrit != wantCrit {
-			t.Fatalf("raw=%d crit=%v want=%v", raw, roll.IsCrit, wantCrit)
+		wantThreat := raw >= 18
+		if roll.Threat != wantThreat {
+			t.Fatalf("raw=%d Threat=%v want=%v", raw, roll.Threat, wantThreat)
 		}
+		// With a guaranteed confirm, threats here also confirm.
+		if roll.IsCrit != wantThreat {
+			t.Fatalf("raw=%d IsCrit=%v want=%v (confirm forced)", raw, roll.IsCrit, wantThreat)
+		}
+	}
+}
+
+func TestRollAttack_CritConfirmation_HighBABConfirms(t *testing.T) {
+	// Raw 19 threatens; confirm raw 15 + 20 BAB = 35 >> Defense 0,
+	// so the crit confirms.
+	stats := repo.WeaponStats{ThreatLow: 18}
+	seed := stubSeedFor2Rolls(t, 19, 15)
+	rng := rand.New(rand.NewSource(seed))
+	roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false, 0)
+	if !roll.Hit || !roll.Threat || !roll.IsCrit {
+		t.Fatalf("expected Hit+Threat+IsCrit: %+v", roll)
+	}
+}
+
+func TestRollAttack_CritConfirmation_LowBABFailsToConfirm(t *testing.T) {
+	// Raw 18 threatens (initial hit forced by Hit override: total
+	// 18+0+0=18 >= Defense 15 → hit). Confirm raw 2 + 0 = 2 < 15 →
+	// fails. Result: regular hit, Threat=true, IsCrit=false.
+	stats := repo.WeaponStats{ThreatLow: 18}
+	seed := stubSeedFor2Rolls(t, 18, 2)
+	rng := rand.New(rand.NewSource(seed))
+	roll := RollAttack(rng, newAttacker(10, 0), newDefender(15), stats, false, 0)
+	if !roll.Hit {
+		t.Fatalf("expected Hit (raw 18 + 0 vs Defense 15): %+v", roll)
+	}
+	if !roll.Threat {
+		t.Fatalf("expected Threat: %+v", roll)
+	}
+	if roll.IsCrit {
+		t.Fatalf("expected !IsCrit (confirm of 2 should miss): %+v", roll)
+	}
+}
+
+func TestRollAttack_CritConfirmation_Natural20AutoConfirms(t *testing.T) {
+	// First raw 19 against a Defense the attacker can otherwise beat;
+	// confirm raw 20 auto-confirms even when the modifiers wouldn't.
+	stats := repo.WeaponStats{ThreatLow: 18}
+	seed := stubSeedFor2Rolls(t, 19, 20)
+	rng := rand.New(rand.NewSource(seed))
+	// 0 BAB / 0 Str against Defense 999: only the confirm's natural-20
+	// short-circuit lets IsCrit fire.
+	roll := RollAttack(rng, newAttacker(10, 0), newDefender(999), stats, false, 0)
+	if !roll.Hit {
+		// First roll was 19, total 19, vs 999 → would miss without nat-20.
+		// We assert IsCrit only when Hit is true; if the first roll
+		// doesn't land, the threat never happens. So switch fixture:
+		// natural-20 first to force the hit, natural-20 confirm to
+		// force the crit.
+		seed = stubSeedFor2Rolls(t, 20, 20)
+		rng = rand.New(rand.NewSource(seed))
+		roll = RollAttack(rng, newAttacker(10, 0), newDefender(999), stats, false, 0)
+	}
+	if !roll.Hit || !roll.Threat || !roll.IsCrit {
+		t.Fatalf("expected nat-20 confirm to auto-succeed: %+v", roll)
+	}
+}
+
+func TestRollAttack_CritConfirmation_Natural1AutoFails(t *testing.T) {
+	// First raw 20 (auto-hit, threatens with any ThreatLow ≤ 20);
+	// confirm raw 1 auto-fails even when the modifiers would beat
+	// Defense.
+	stats := repo.WeaponStats{ThreatLow: 18}
+	seed := stubSeedFor2Rolls(t, 20, 1)
+	rng := rand.New(rand.NewSource(seed))
+	// 20 BAB against Defense 0 — total of confirm (1 + 20 = 21) would
+	// beat Defense if not for the nat-1 short-circuit.
+	roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false, 0)
+	if !roll.Hit || !roll.Threat {
+		t.Fatalf("expected Hit+Threat: %+v", roll)
+	}
+	if roll.IsCrit {
+		t.Fatalf("expected !IsCrit (nat-1 confirm must fail): %+v", roll)
+	}
+}
+
+// countingSource wraps a *rand.Rand-compatible source so a test can
+// assert the number of d20 rolls drawn by RollAttack. Used to pin the
+// "no confirm roll when not in threat range" invariant.
+type countingSource struct {
+	inner rand.Source64
+	calls int
+}
+
+func (c *countingSource) Int63() int64 {
+	c.calls++
+	return c.inner.Int63()
+}
+func (c *countingSource) Uint64() uint64 {
+	c.calls++
+	return c.inner.Uint64()
+}
+func (c *countingSource) Seed(s int64) { c.inner.Seed(s) }
+
+func TestRollAttack_NoConfirmRollWhenNotThreat(t *testing.T) {
+	// Raw 17 with ThreatLow 18 → no threat, no confirm roll. The
+	// underlying source must only be drawn once.
+	stats := repo.WeaponStats{ThreatLow: 18}
+	inner := rand.NewSource(stubSeedForRoll(17)).(rand.Source64)
+	counter := &countingSource{inner: inner}
+	rng := rand.New(counter)
+	roll := RollAttack(rng, newAttacker(10, 20), newDefender(0), stats, false, 0)
+	if !roll.Hit || roll.Threat || roll.IsCrit {
+		t.Fatalf("expected plain hit: %+v", roll)
+	}
+	if counter.calls != 1 {
+		t.Fatalf("expected 1 source draw, got %d", counter.calls)
 	}
 }
 

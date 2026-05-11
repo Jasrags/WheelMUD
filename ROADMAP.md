@@ -910,7 +910,11 @@ will need on top of those tables.
       (d20 + BAB + Str-mod vs Defense; nat-1 always misses, nat-20
       always hits; crit threshold from `WeaponStats.ThreatLow`,
       multiplier from `CritMult`) and `RollDamage` (weapon dice +
-      Str-mod, multiplied on crit, floored at 1). Per-`Fight`
+      Str-mod, multiplied on crit, floored at 1). **Crit
+      confirmation landed 2026-05-11** — SRD-style second d20 +
+      same modifiers vs the same Defense; `AttackRoll.Threat`
+      carries the raw threat-range flag, `IsCrit` only fires on
+      confirm-success. Per-`Fight`
       `Actions map[ActorRef]Action` queue with
       `Manager.EnqueueAction`; `Tick` resolves the active actor's
       queued action and writes HP back via

@@ -452,9 +452,16 @@ func main() {
 	eventbus.Subscribe(bus, func(ctx context.Context, ev combat.CombatHit) {
 		atkName := combatActorName(ctx, ev.Attacker, characters, mobs)
 		defName := combatActorName(ctx, ev.Defender, characters, mobs)
+		// SRD-style critical confirmation (Phase D #18 polish): a
+		// threatened crit that confirms renders the existing "(critical!)"
+		// tail; a threat that fails to confirm tells the player why a
+		// natural 20 didn't multiply damage. Non-threat hits get no tail.
 		critTail := ""
-		if ev.IsCrit {
+		switch {
+		case ev.IsCrit:
 			critTail = " {{(critical!)}}::yellow|bold"
+		case ev.Threat:
+			critTail = " {{(threat — but fails to confirm)}}::yellow"
 		}
 		var atkSess, defSess *telnet.Session
 		if ev.Attacker.Kind == combat.ActorKindCharacter {

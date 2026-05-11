@@ -55,7 +55,13 @@ type CombatHit struct {
 	Defender ActorRef
 	Damage   int32
 	Weapon   int64
-	IsCrit   bool
+	// Threat is true when the raw d20 landed in the weapon's threat
+	// range (≥ ThreatLow). IsCrit is true only when the SRD-style
+	// confirmation roll also hit; subscribers render Threat &&
+	// !IsCrit as "threat — fails to confirm" so the player sees why
+	// a natural 20 didn't multiply.
+	Threat bool
+	IsCrit bool
 	// Variant carries the attack variant resolved this swing
 	// (Normal / Power / Quick). Subscribers compose variant-flavored
 	// echo lines off this field.

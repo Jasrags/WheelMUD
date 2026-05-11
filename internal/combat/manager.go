@@ -775,6 +775,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			Defender: action.Target,
 			Damage:   dealt,
 			Weapon:   action.WeaponID,
+			Threat:   roll.Threat,
 			IsCrit:   roll.IsCrit,
 			Variant:  action.Variant,
 		})
@@ -1142,6 +1143,7 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 			Defender: action.Target,
 			Damage:   dealt,
 			Weapon:   action.WeaponID,
+			Threat:   roll.Threat,
 			IsCrit:   roll.IsCrit,
 			Variant:  VariantNormal,
 		})

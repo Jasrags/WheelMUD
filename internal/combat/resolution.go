@@ -13,11 +13,21 @@ import (
 // AttackRoll bundles the components of a melee attack roll. Returned
 // from RollAttack so the manager can publish CombatHit / CombatMiss
 // with the right values without re-rolling.
+//
+// SRD-style critical confirmation: when the raw d20 lands in the
+// weapon's threat range, RollAttack rolls a second d20 + the same
+// modifiers vs the same Defense. `Threat` records that the first roll
+// was in the threat range (event renderers use it for the "threat —
+// fails to confirm" wording); `IsCrit` is set only when the confirm
+// roll also hits, and is what the damage layer reads for the
+// multiplier. `Threat && !IsCrit && Hit` is a regular (non-multiplied)
+// hit with a distinct event line.
 type AttackRoll struct {
 	Raw    int  // raw d20, 1..20
 	Total  int  // d20 + bab + abilityMod
 	Hit    bool // Total >= defender Defense (or natural-20 auto-hit)
-	IsCrit bool // Raw >= weapon ThreatLow (default 20)
+	Threat bool // Raw >= weapon ThreatLow (default 20) AND Hit
+	IsCrit bool // Threat && confirm roll also hits
 }
 
 // unarmedDamage is the fallback weapon stat block used when a
@@ -90,17 +100,25 @@ func critMult(stats repo.WeaponStats) int {
 // RollAttack rolls d20 + BAB + Str-mod (+ bonus) against
 // defender.Defense. A natural 1 always misses; a natural 20 always
 // hits. A roll in the weapon's threat range (defaulting to 20) flags
-// IsCrit. When flatFootedDefender is true the defender's effective
-// Defense is reduced by max(0, DexMod) — the standard WoT/d20
-// flat-footed AC penalty. bonus is the slice-61 variant attack-roll
-// adjustment (Normal 0 / Power -2 / Quick +1); future slices fold
-// feat / stance / status modifiers into the same term.
+// Threat and triggers a confirmation roll vs the same Defense; the
+// multiplier-applying IsCrit flag is set only when that confirm also
+// hits (SRD rules — natural 20 on confirm auto-succeeds, natural 1
+// auto-fails).
+//
+// When flatFootedDefender is true the defender's effective Defense is
+// reduced by max(0, DexMod) — the standard WoT/d20 flat-footed AC
+// penalty. bonus is the slice-61 variant attack-roll adjustment
+// (Normal 0 / Power -2 / Quick +1); future slices fold feat / stance
+// / status modifiers into the same term. The bonus also applies to
+// the confirmation roll (the SRD lets feats like Power Critical add a
+// separate confirm-only bonus; that surface is deferred).
 func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.WeaponStats, flatFootedDefender bool, bonus int) AttackRoll {
 	raw := rng.Intn(20) + 1
 	abilityMod := int(attacker.Abilities.StrMod())
 	total := raw + int(attacker.BAB) + abilityMod + bonus
 
-	hit := total >= int(effectiveDefense(defender, flatFootedDefender))
+	defense := int(effectiveDefense(defender, flatFootedDefender))
+	hit := total >= defense
 	switch raw {
 	case 1:
 		hit = false
@@ -108,11 +126,27 @@ func RollAttack(rng *rand.Rand, attacker, defender creature.Core, stats repo.Wea
 		hit = true
 	}
 
+	threat := hit && raw >= threatLow(stats)
+	isCrit := false
+	if threat {
+		confirmRaw := rng.Intn(20) + 1
+		confirmTotal := confirmRaw + int(attacker.BAB) + abilityMod + bonus
+		switch confirmRaw {
+		case 1:
+			isCrit = false
+		case 20:
+			isCrit = true
+		default:
+			isCrit = confirmTotal >= defense
+		}
+	}
+
 	return AttackRoll{
 		Raw:    raw,
 		Total:  total,
 		Hit:    hit,
-		IsCrit: hit && raw >= threatLow(stats),
+		Threat: threat,
+		IsCrit: isCrit,
 	}
 }
 
