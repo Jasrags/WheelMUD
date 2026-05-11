@@ -1289,6 +1289,29 @@ will need on top of those tables.
       `score` and the hot path go through the same resolver so
       the rendered list matches what's firing.
 
+      **Slice 66 (iterative attacks via cadence drain) landed
+      2026-05-11.** Replaces the D&D 3.x "+6 BAB unlocks a second
+      attack at -5" mechanic with cadence math: when a high-BAB
+      attacker's `NextActAt` fires, `tickRoom` resolves the queued
+      Attack `1 + IterativeCount` times back-to-back at successive
+      -0/-5/-10/-15 attack-roll penalties, accumulating costs so
+      `NextActAt` advances by `swings × actorActionCost`.
+      `combat.IterativeBonusesFor(bab int16) []int16` is the pure
+      tier table (BAB 1–5→1 swing, 6–10→2, 11–15→3, 16+→4); pinned
+      onto `ActorEntry.PendingSwings` + `IterativeBonuses` at
+      `Start` from `core.BAB`. `resolveAction` gains a trailing
+      `extraAttackBonus int` parameter threaded to `RollAttack`
+      atop the existing variant bonus — defensive / movement kinds
+      (Parry/Dodge/Flee/Throw/Sidestep) ignore the param and stay
+      single-resolution. `Manager.hasStaminaFor` mirrors
+      `drainStamina`'s cost math non-mutating; the drain loop's
+      pre-swing gate breaks the chain when stamina is dry or when
+      the target died/fled on a prior swing (`iterativeTargetGone`
+      reads `Fight.Dead`/`Fled`/`Order` under `m.mu`). First swing
+      always fires — the EnqueueAction gate already approved it.
+      `score` sheet's Combat block adds a `Swings: N (-5/-10)`
+      line when the tier exceeds 1.
+
 ## 12. Skills, spells & progression
 
 - [ ] Class / archetype model — table-driven `classes` (id, name,

@@ -264,6 +264,45 @@ func (m *Manager) drainStamina(ctx context.Context, ref ActorRef, action Action)
 	}
 }
 
+// hasStaminaFor is a non-mutating "can this actor afford the next
+// swing" gate used by the iterative drain loop (Phase L #66). Mirrors
+// drainStamina's cost calculation — DefaultActionStamina × feat
+// StaminaCostMul, rounded, floored at 0 — but answers boolean instead
+// of writing. Mobs (no character row) and unconfigured pools
+// (StaminaMax <= 0) always return true so they swing freely; this
+// matches drainStamina's early-return behavior so the gate and the
+// drain agree on "did we pay anything."
+func (m *Manager) hasStaminaFor(ctx context.Context, ref ActorRef, action Action) bool {
+	if ref.Kind != ActorKindCharacter || m.chars == nil {
+		return true
+	}
+	cost := DefaultActionStamina(action.Kind, action.Variant)
+	if cost <= 0 {
+		return true
+	}
+	ch, err := m.chars.GetByID(ctx, ref.ID)
+	if err != nil {
+		// Same fail-safe stance as drainStamina: a transient repo
+		// hiccup shouldn't truncate the chain. Let the swing proceed;
+		// drainStamina will log if the write also fails.
+		return true
+	}
+	if ch.Core.StaminaMax <= 0 {
+		return true
+	}
+	if m.cat != nil {
+		fm := ResolveFeatModifiers(ch.Feats, m.cat)
+		if fm.StaminaCostMul > 0 && fm.StaminaCostMul != 1.0 {
+			scaled := float32(cost) * fm.StaminaCostMul
+			if scaled < 0 {
+				scaled = 0
+			}
+			cost = int32(scaled + 0.5)
+		}
+	}
+	return ch.Core.StaminaCurrent >= cost
+}
+
 // resolveEquipment fetches the actor's current Equipment snapshot.
 // Sibling to resolveCore; lookup errors degrade to the zero
 // Equipment (treated as unarmed/naked by ResolveGearFactors).

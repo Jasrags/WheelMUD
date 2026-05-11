@@ -135,6 +135,19 @@ func renderScore(s *telnet.Session, ch repo.Character, cat *chargen.Catalog, gea
 	if err := display.FieldRow(s, "Combat", combatLine, scoreLabelGutter); err != nil {
 		return err
 	}
+	// Phase L slice 66: iterative-attack tier from BAB. Only render
+	// when the character has at least one bonus swing — a level-1
+	// fighter at BAB 1 would otherwise see "Swings: 1" noise.
+	if bonuses := combat.IterativeBonusesFor(ch.Core.BAB); len(bonuses) > 1 {
+		penalties := make([]string, 0, len(bonuses)-1)
+		for _, b := range bonuses[1:] {
+			penalties = append(penalties, fmt.Sprintf("%d", b))
+		}
+		swingsLine := fmt.Sprintf("%d  (%s)", len(bonuses), strings.Join(penalties, "/"))
+		if err := display.FieldRow(s, "Swings", swingsLine, scoreLabelGutter); err != nil {
+			return err
+		}
+	}
 
 	if err := display.Subsection(s, "Abilities"); err != nil {
 		return err

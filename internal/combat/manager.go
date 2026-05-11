@@ -340,6 +340,11 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 	type readyEntry struct {
 		ref   ActorRef
 		round int
+		// iter is the per-swing iterative attack-roll bonuses for this
+		// actor (Phase L #66). Pinned at Start; copied here under
+		// m.mu so the drain loop can read it without re-locking.
+		// Always non-empty (at minimum []int16{0}).
+		iter []int16
 	}
 	ready := make([]readyEntry, 0, len(f.Order))
 	for i := range f.Order {
@@ -347,7 +352,14 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 			continue
 		}
 		f.Round++
-		ready = append(ready, readyEntry{ref: f.Order[i].Ref, round: f.Round})
+		bonuses := f.Order[i].IterativeBonuses
+		if len(bonuses) == 0 {
+			// Pre-#66 fights (e.g. tests that construct Fight directly)
+			// observed a nil slice — default to one swing at no penalty
+			// so the loop below still fires exactly once.
+			bonuses = []int16{0}
+		}
+		ready = append(ready, readyEntry{ref: f.Order[i].Ref, round: f.Round, iter: bonuses})
 	}
 	if len(ready) == 0 {
 		m.mu.Unlock()
@@ -375,27 +387,68 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 			})
 		}
 		action := pendings[r.ref]
-		if hasActions[r.ref] {
-			m.resolveAction(ctx, roomID, r.round, r.ref, action)
+
+		// Phase L #66: iterative attacks via cadence drain. A
+		// high-BAB attacker swings 1 + IterativeCount times back-to-
+		// back on a single pulse; each successive swing pays an
+		// attack-roll penalty (0/-5/-10/-15) and a fresh stamina
+		// cost. The chain truncates when stamina runs dry or the
+		// target dies/flees mid-chain. Costs accumulate so
+		// NextActAt is set after the *last* swing.
+		//
+		// Non-Attack kinds (Parry/Dodge/Flee/Throw/Sidestep) stay
+		// single-resolution — iteratives are an attack mechanic
+		// only.
+		swings := 1
+		if hasActions[r.ref] && action.Kind == ActionAttack {
+			swings = len(r.iter)
 		}
+
+		totalCost := time.Duration(0)
+		// Phase L #62: cadence is gear-driven. actorActionCost reads
+		// the actor's wielded weapon weight + worn armor weight class
+		// at "now", so a `wield` mid-fight changes the cadence of the
+		// next swing. Lookup happens outside the manager lock to keep
+		// the SQL hit off the critical section. Re-evaluated each
+		// swing so a mid-chain gear swap (shouldn't happen — actor
+		// is busy — but cheap insurance) is observable.
+		if hasActions[r.ref] {
+			for i := 0; i < swings; i++ {
+				if i > 0 {
+					// Pre-swing truncation gate: stamina dry or target
+					// no longer in the fight (died/fled on the prior
+					// swing).
+					if !m.hasStaminaFor(ctx, r.ref, action) {
+						break
+					}
+					if m.iterativeTargetGone(roomID, action.Target) {
+						break
+					}
+				}
+				bonus := 0
+				if action.Kind == ActionAttack && i < len(r.iter) {
+					bonus = int(r.iter[i])
+				}
+				m.resolveAction(ctx, roomID, r.round, r.ref, action, bonus)
+				totalCost += m.actorActionCost(ctx, r.ref, action)
+			}
+		} else {
+			// No queued action — still advance the clock so the actor
+			// doesn't busy-spin on this slot. Single base cost.
+			totalCost = m.actorActionCost(ctx, r.ref, action)
+		}
+
 		// Stamp the actor's next-ready time under the lock so a
 		// concurrent EnqueueAction can't observe a stale schedule.
 		// resolveAction may have mutated Order (death prune is
 		// deferred to next pulse, but Fled is queued during flee
 		// resolution) so re-resolve the entry by Ref.
-		//
-		// Phase L #62: cadence is gear-driven. actorActionCost reads
-		// the actor's wielded weapon weight + worn armor weight class
-		// at "now", so a `wield` mid-fight changes the cadence of the
-		// next swing. Lookup happens outside the manager lock to keep
-		// the SQL hit off the critical section.
-		cost := m.actorActionCost(ctx, r.ref, action)
 		m.mu.Lock()
 		if f2, ok := m.fights[roomID]; ok {
 			for i := range f2.Order {
 				if f2.Order[i].Ref == r.ref {
 					f2.Order[i].LastActedAt = now
-					f2.Order[i].NextActAt = now.Add(cost)
+					f2.Order[i].NextActAt = now.Add(totalCost)
 					break
 				}
 			}
@@ -477,7 +530,13 @@ func (m *Manager) tickParticipantAffects(ctx context.Context, roomID int64) {
 // logged and swallowed — combat continues, the swing just doesn't
 // land. This mirrors the spawn / item-transfer "fail-safe, log
 // loudly" stance.
-func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, actor ActorRef, action Action) {
+//
+// extraAttackBonus is the per-swing iterative penalty (Phase L #66)
+// added to the attack roll on the ActionAttack branch — 0 on the
+// first swing, -5 / -10 / -15 on successive swings inside the same
+// pulse. Defensive / movement kinds (Parry, Dodge, Flee, Throw,
+// Sidestep) ignore the parameter.
+func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, actor ActorRef, action Action, extraAttackBonus int) {
 	defer func() {
 		if m.bus != nil {
 			m.bus.Publish(ctx, ActionResolved{
@@ -586,7 +645,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		defForRoll.Defense += 4
 	}
 	m.rngMu.Lock()
-	roll := RollAttack(m.rng, atkEff, defForRoll, stats, defenderFlatFooted, VariantAttackBonus(action.Variant))
+	roll := RollAttack(m.rng, atkEff, defForRoll, stats, defenderFlatFooted, VariantAttackBonus(action.Variant)+extraAttackBonus)
 	parried := false
 	parryTotal := 0
 	if roll.Hit && defenderParrying {
@@ -744,10 +803,13 @@ func (m *Manager) rollInitiative(ref ActorRef, core creature.Core) ActorEntry {
 	roll := m.rng.Intn(20) + 1 // 1..20
 	dexMod := int(core.Abilities.DexMod())
 	init := roll + dexMod + int(core.InitMod)
+	bonuses := IterativeBonusesFor(core.BAB)
 	return ActorEntry{
-		Ref:        ref,
-		Initiative: init,
-		Tiebreak:   int32(roll),
+		Ref:              ref,
+		Initiative:       init,
+		Tiebreak:         int32(roll),
+		PendingSwings:    len(bonuses),
+		IterativeBonuses: bonuses,
 	}
 }
 

@@ -26,6 +26,18 @@ type ActorEntry struct {
 	Tiebreak    int32 // raw d20 captured at Start
 	NextActAt   time.Time
 	LastActedAt time.Time
+
+	// PendingSwings is the per-pulse swing count derived from BAB at
+	// Start (Phase L #66). 1 for BAB<6, 2 for 6–10, 3 for 11–15,
+	// 4 for 16+. Equals len(IterativeBonuses).
+	PendingSwings int
+
+	// IterativeBonuses are the per-swing attack-roll deltas applied
+	// to successive swings inside a single pulse. Pinned at Start
+	// from creature.Core.BAB via IterativeBonusesFor — mid-fight BAB
+	// shifts (affects, level-ups) do not recompute, mirroring the
+	// "Initiative pinned at Start" precedent.
+	IterativeBonuses []int16
 }
 
 // Fight is the per-room combat aggregate. One Fight per RoomID at a

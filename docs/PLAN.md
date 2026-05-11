@@ -1089,9 +1089,9 @@ any slice and the game still works.
       paying the gear baseline; Iron Constitution renders
       `(+3/pulse)` over a base of 2; full suite race-clean.
 
-66. **Iterative attacks via cadence drain.** Replaces the D&D
+66. ~~**Iterative attacks via cadence drain.** Replaces the D&D
     3.x "+6 BAB gives a second attack at -5" mechanic with
-    cadence math.
+    cadence math.~~ Landed 2026-05-11.
     - `ActorEntry` gains `PendingSwings int` and
       `IterativeBonuses []int16` (e.g. `[0, -5, -10]` for a
       BAB+11 fighter). Computed at `Start` from `core.BAB`.
