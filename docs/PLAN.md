@@ -907,21 +907,36 @@ Lower urgency; do whichever lands free time.
 
 ---
 
-## Phase J — Ops, CI, packaging (run in parallel from Phase B onward)
+## Phase J — Ops, CI, packaging — LANDED 2026-05-12
 
-Never gate gameplay but the cost compounds if you wait.
+Shipped across slices J1–J7. See `ROADMAP.md` §7 / §19 / §20 / §21 / §22
+for the per-item completion notes.
 
-52. **GitHub Actions CI matrix** (§21) + **coverage target** (§21).
-    Do this **first** — every later phase produces more code to
-    break.
-53. **Config file (TOML/YAML) + per-env overrides + `.env.example`**
-    (§20).
-54. **Metrics + pprof on private `:9090`** (§19).
-55. **Request/command audit log per character** (§19).
-56. **Backup rotation (`VACUUM INTO`)** (§7).
-57. **Telnet integration test driving the protocol** (§21).
-58. **Fuzz tests on IAC parser + tokenizer** (§21).
-59. **`goreleaser` + systemd unit + healthcheck** (§22).
+52. ~~**GitHub Actions CI matrix** (§21) + **coverage target** (§21).~~
+    Landed J1 (commit `38544bd`): ubuntu+macos matrix, race + atomic
+    coverage profile, staticcheck job (non-blocking). Baseline 72.5%.
+53. ~~**Config file (TOML/YAML) + per-env overrides + `.env.example`**
+    (§20).~~ Landed J2 (commit `b698b40`): YAML over defaults with env
+    overrides, `-config` flag, `config.example.yaml` + `.env.example`.
+54. ~~**Metrics + pprof on private `:9090`** (§19).~~ Landed J5 (commit
+    `195d352`): Prometheus registry, `/metrics` `/healthz`
+    `/debug/pprof/*`, loopback default.
+55. ~~**Request/command audit log per character** (§19).~~ Landed J3
+    (commit `8c921a3`): migration 0052 + repo + Game audit hook,
+    opt-in via `audit.commands_enabled`.
+56. ~~**Backup rotation (`VACUUM INTO`)** (§7).~~ Landed J4 (commit
+    `938579f`): wall-clock ticker, mtime-based retention, gated on
+    `db.backup_dir` + interval.
+57. ~~**Telnet integration test driving the protocol** (§21).~~ Landed
+    J6 (commit `cbd3a24`): subprocess-based end-to-end smoke under
+    `-tags=integration`.
+58. ~~**Fuzz tests on IAC parser + tokenizer** (§21).~~ Landed J1
+    (commit `38544bd`): `FuzzReadIAC` + `FuzzTokenize` +
+    `FuzzSplitOnSemicolon`, nightly workflow with per-target matrix.
+59. ~~**`goreleaser` + systemd unit + healthcheck** (§22).~~ Landed
+    J7 (commit `d86665c`): `.goreleaser.yaml`, hardened Dockerfile,
+    `deploy/systemd/wheelmud.service`, `release.yml` workflow with
+    multi-arch GHCR push.
 
 ---
 
@@ -1204,8 +1219,8 @@ have mechanically supported playstyles.
 
 ## Sequencing rules
 
-- **Run #52 (CI matrix) right now**, before anything else. It doesn't
-  gate gameplay, but it stops regressions in everything below it.
+- ~~**Run #52 (CI matrix) right now**, before anything else.~~ Phase J
+  (#52–#59) landed 2026-05-12; CI matrix + coverage are live.
 - **Don't start Phase D (combat) without Phase C (chargen) finished.**
   Combat math reads `Core.Defense` / `BAB` / `Saves` / `Abilities`,
   all of which are class- and ability-driven; without chargen those

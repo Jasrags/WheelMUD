@@ -422,10 +422,17 @@ constants and helpers in `telnet/iac.go`.
       moves) is already write-through, so the dirty-bit pattern
       only matters for state that ticks faster than we want to
       round-trip per mutation.
-- [ ] Backup rotation — nightly `VACUUM INTO` of the SQLite DB into
-      `backups/wheelmud-YYYYMMDD.db`; keep 7 daily / 4 weekly /
-      12 monthly. Triggered from the scheduler so no external cron
-      dep. Optional gzip of older snapshots.
+- [x] Backup rotation — `internal/backup.Manager` writes
+      `VACUUM INTO` snapshots to `db.backup_dir` on a wall-clock
+      cadence (decoupled from `tick.Buckets` so a paused world
+      can't pause backups). Filename
+      `wheelmud-YYYYMMDD-HHMMSS.db`; retention prunes by file
+      prefix beyond `db.backup_retention`. Gated on a non-empty
+      `db.backup_dir` + positive `db.backup_interval_hours`; the
+      Manager runs under the server-lifetime ctx via
+      `safego.Go("backup-manager", ...)`. Phase J slice J4 (#56),
+      commit `938579f` (2026-05-12). Deferred: tiered retention
+      (daily / weekly / monthly), gzip compression.
 
 ## 8. Game loop & scheduling
 
@@ -1972,15 +1979,32 @@ will need on top of those tables.
       default to `info` with a warning. Pending: a `loglevel
       <name>` admin command that swaps the level at runtime via
       an `slog.LevelVar`.
-- [ ] Request/command audit log per character — append-only
-      `command_log` table (`character_id`, `verb`, `args`, `at`,
-      `latency_us`, `outcome`) gated by a config flag (off in dev).
-      Keep N days, then prune. Useful for griefer post-mortems.
-- [ ] Metrics endpoint (Prometheus) — separate `:9090` HTTP listener
-      exposing `/metrics`. Counters: connections_total, commands_
-      total{verb,outcome}, telnet_iac_total{kind}. Histograms:
-      dispatch_latency_seconds, tick_lag_seconds. Gauges: sessions,
-      bucket_subscribers{bucket}.
+- [x] Request/command audit log per character — migration 0052
+      adds `character_audit` (append-only, indexed on
+      `(character_id, ts)` + `ts`). `internal/repo` ships
+      sqlite + memory impls; raw column soft-capped at 4096
+      bytes at insert. `internal/mode/game.go::CommandAuditFn`
+      fires after every `Registry.Dispatch` (success + refusals)
+      when the hook is installed. `cmd/server/main.go` gates on
+      `audit.commands_enabled`; `audit.commands_exclude` filters
+      high-frequency verbs (`look`, `prompt`). Phase J slice J3
+      (#55), commit `8c921a3` (2026-05-12). Deferred: buffered
+      async writes, retention/rotation.
+- [x] Metrics endpoint (Prometheus) — `internal/metrics` registers
+      a fresh `prometheus.Registry`, exposes `/metrics` (text
+      format), `/healthz` (200 once `SetReady(true)` + DB ping
+      succeeds; 503 otherwise), and `/debug/pprof/*` via stdlib
+      `net/http/pprof`. Collectors: `wheelmud_commands_total
+      {verb,result}`, `wheelmud_sessions_active`,
+      `wheelmud_db_open_conns`, `wheelmud_build_info
+      {version,commit,date,go_version}`, plus the Go + Process
+      collectors. Bound to `cfg.Server.MetricsAddr` (loopback
+      default). Lifecycle: `SetReady(true)` after telnet listener
+      binds; `SetReady(false)` + `Shutdown` at drain start.
+      `mode.Game.SetMetricHook` keeps `internal/mode` free of the
+      metrics import. Phase J slice J5 (#54), commit `195d352`
+      (2026-05-12). Deferred: `combat_swings_total`,
+      `eventbus_published_total`, latency histograms.
 - [~] Crash recovery — `internal/safego.Go(name, fn)` shipped:
       defers a `recover()` that logs panic + name + stack at
       `LevelError`. Wraps the shutdown-watcher, accept-loop's
@@ -1994,72 +2018,113 @@ will need on top of those tables.
       Prometheus endpoint) and any restart-on-panic policy
       (deliberate: a panic that survives recover means a logic
       bug to fix, not silently restart).
-- [ ] Profiling endpoints (`net/http/pprof`) — same private :9090
-      mux, gated behind `PPROF_ENABLED=1`. `/debug/pprof/*` routes
-      registered via `import _ "net/http/pprof"`.
+- [x] Profiling endpoints (`net/http/pprof`) — mounted on the
+      metrics HTTP server's mux at `/debug/pprof/*` (Index +
+      Cmdline + Profile + Symbol + Trace). Loopback default keeps
+      pprof off the public net without a separate enable flag.
+      Phase J slice J5 (#54), commit `195d352` (2026-05-12).
 
 ## 20. Configuration
 
 - [x] `LISTEN_ADDR` env var
 - [x] `DB_DSN` env var (default `wheelmud.db`; `:memory:` supported)
-- [ ] Config file (TOML/YAML) for ports, paths, feature flags —
-      `config.yaml` parsed at startup into a typed `Config` struct;
-      env vars override individual fields (`WMUD_LISTEN_ADDR`,
-      `WMUD_DB_DSN`). Feature flags grouped under `features:` block
-      so wiring in MCCP/GMCP/etc. flips one bool.
-- [ ] Per-environment overrides (dev/stage/prod) — `config.yaml` +
-      `config.<env>.yaml` deep-merged based on `WMUD_ENV` env var.
-      Production refuses to start if dev-only flags (e.g. wide-open
-      pprof) are set.
-- [ ] Secrets via env, never committed — `.env.example` checked in,
-      `.env` gitignored. Required secrets validated at startup
-      (`bcrypt_pepper`, `tls_key_path` if TLS enabled) — fail fast
-      with a clear message rather than crashing later.
+- [x] Config file (YAML) for ports, paths, feature flags —
+      `internal/config` ships `Config` struct + `Load(path)` with
+      precedence "defaults → YAML file → env". `cmd/server/main.go`
+      takes a `-config <path>` flag (optional; env-only deployments
+      are supported). Schema covers `server.listen_addr` /
+      `server.metrics_addr` / `db.dsn` / `db.backup_dir` /
+      `db.backup_interval_hours` / `db.backup_retention` /
+      `world.dir` / `log.level` / `audit.commands_enabled` /
+      `audit.commands_exclude`. Phase J slice J2 (#53), commit
+      `b698b40` (2026-05-12). Deferred: per-environment file
+      merging (`config.<env>.yaml`), feature-flag block,
+      `auth.bcrypt_cost` (test-only knob today).
+- [~] Per-environment overrides (dev/stage/prod) — env vars
+      already override the YAML file for every supported field
+      (J2). File-based per-env merging (`config.<env>.yaml`) and a
+      production-mode safety guard are deferred.
+- [x] Secrets via env, never committed — `.env.example` checked
+      in at the repo root, mirrors every env var the server
+      consumes; `.env` stays gitignored. Phase J slice J2 (#53),
+      commit `b698b40` (2026-05-12). Deferred: required-secret
+      validation at startup (no pepper / TLS key surface today).
 
 ## 21. Testing & CI
 
 - [x] Unit + contract tests across `telnet`, `internal/auth`,
       `internal/db`, `internal/mode`, `internal/repo`, `internal/session`
 - [x] Dependabot config (`.github/dependabot.yml`)
-- [ ] GitHub Actions — `.github/workflows/ci.yml` matrix on Go
-      `1.24.x` running `go vet ./...`, `go test -race -coverprofile=
-      coverage.out ./...`, `staticcheck ./...`, `gosec ./...`. Cache
-      `~/go/pkg/mod` keyed on `go.sum`. Upload coverage artifact;
-      block merge on red.
-- [ ] Integration test that drives the telnet protocol against a
-      real listener — `internal/integration` package starts a
-      server on a random port with a `:memory:` DB and embedded
-      world, dials in with a plain `net.Dial`, and scripts
-      `expect`/`send` exchanges (login, look, move, quit).
-- [ ] Fuzz tests on the IAC parser and command tokenizer —
-      `FuzzReadIAC` feeds arbitrary byte streams into a pipe and
-      asserts no panics + bounded memory; `FuzzTokenize` checks
-      round-trip stability and quote handling. Run in CI under
-      `go test -fuzz=Fuzz -fuzztime=30s` on PR.
-- [ ] 80% coverage target tracked in CI — `go tool cover` parsed
-      in a small script that fails the job below threshold; per-
-      package floors documented so legacy gaps don't get worse.
+- [x] GitHub Actions — `.github/workflows/go.yml` matrix on
+      ubuntu + macos (Go `1.25.x`) running `go vet`, `gofmt -l`,
+      `go build`, and `go test -race -count=1 -covermode=atomic
+      -coverprofile=coverage.out ./...`. Coverage summary printed
+      and uploaded as an artifact (ubuntu leg). Separate
+      `integration` job runs `go test -tags=integration` against
+      `./test/integration/...`. Non-blocking `staticcheck` job
+      surfaces findings without churning the queue. Phase J slice
+      J1 (#52), commit `38544bd` (2026-05-12). Deferred: gosec,
+      coverage gate threshold (baseline 72.5%; tighten later).
+- [x] Integration test that drives the telnet protocol against a
+      real listener — `test/integration/` (build-tag
+      `integration`) spawns `cmd/server` as a subprocess with
+      ephemeral ports + a tmp DB pointing at the real
+      `./data/world` tree, waits for `/healthz=200`, then asserts
+      `/metrics` emits the V1 collector set and a telnet
+      connection sees the first-mode `Username` prompt after IAC
+      negotiation. `TelnetClient.ReadUntil` strips IAC
+      WILL/WONT/DO/DONT + SB…SE inline. Phase J slice J6 (#57),
+      commit `cbd3a24` (2026-05-12). Deferred: chargen-flow
+      scripting + minimal fixture world (today the test depends
+      on the production world tree).
+- [x] Fuzz tests on the IAC parser and command tokenizer —
+      `telnet/iac_fuzz_test.go` ships `FuzzReadIAC`;
+      `telnet/tokenize_fuzz_test.go` ships `FuzzTokenize` (with
+      a per-token re-quote idempotence invariant) and
+      `FuzzSplitOnSemicolon` (asserts no empty segments).
+      `.github/workflows/fuzz.yml` runs each target nightly at
+      06:00 UTC, 5 min default (override via `workflow_dispatch`).
+      Phase J slice J1 (#58), commit `38544bd` (2026-05-12).
+- [~] Coverage target tracked in CI — coverage summary printed
+      per-leg (baseline 72.5% repo-wide). The hard gate
+      threshold is deferred to a followup once the matrix is
+      stable.
 
 ## 22. Packaging & deploy
 
 - [x] `Dockerfile` + `docker-compose.yml`
 - [x] `Makefile` targets (`build/server`, `run/server`, `run/live/server`)
 - [x] Hot reload via `air` for dev
-- [ ] Versioned releases / `goreleaser` — `.goreleaser.yaml`
-      builds linux/darwin amd64+arm64, embeds version via
-      `-ldflags "-X main.Version=..."`, uploads tarballs +
-      checksums + a Docker image to ghcr.io on tag push. Changelog
-      from conventional-commit messages.
-- [ ] Systemd unit / deploy doc — `deploy/wheelmud.service`
-      template (`User=wheelmud`, `WorkingDirectory`, `EnvironmentFile=
-      /etc/wheelmud/env`, `Restart=always`). `docs/deploy.md` walks
-      a clean Debian install: user creation, dir layout, log
-      rotation via `journald`, backup cron pointing at §7 rotation.
-- [ ] Healthcheck endpoint or telnet-level liveness probe —
-      `/healthz` on the metrics listener returns 200 if the accept
-      loop and scheduler are alive (heartbeat counter advanced
-      within last 5 s); 503 otherwise. Telnet variant: short-lived
-      probe that opens a connection, expects the banner, closes.
+- [x] Versioned releases / `goreleaser` — `.goreleaser.yaml`
+      (v2 schema) builds linux/darwin × amd64/arm64 with
+      `CGO_ENABLED=0` + `-trimpath` and ldflags injecting
+      `main.buildVersion` / `buildCommit` / `buildDate`. Archives
+      ship tarball binaries plus `LICENSE`, `README`,
+      `config.example.yaml`, `.env.example`, the `data/world`
+      tree, and the systemd unit. SHA-256 checksums.
+      `.github/workflows/release.yml` triggers on `v*` tags:
+      `goreleaser release --clean` plus a buildx job pushing a
+      multi-arch image to `ghcr.io/${owner}/wheelmud` tagged via
+      `docker/metadata-action`. Phase J slice J7 (#59), commit
+      `d86665c` (2026-05-12).
+- [x] Systemd unit / deploy doc — `deploy/systemd/wheelmud.service`
+      ships a hardened unit (`Type=simple`, `User=wheelmud`,
+      `Restart=on-failure`, `NoNewPrivileges`,
+      `ProtectSystem=strict`, `ReadWritePaths` whitelist for
+      `/var/lib/wheelmud` + `/var/backups/wheelmud`, journald via
+      `SyslogIdentifier=wheelmud`). `deploy/README.md` walks
+      Docker + bare-metal installs, the env-override table, the
+      observability surface (metrics / healthz / pprof / backups /
+      audit), and the upgrade-with-backup ritual. Phase J slice
+      J7 (#59), commit `d86665c` (2026-05-12).
+- [x] Healthcheck endpoint — `/healthz` on the metrics listener
+      (J5). 200 once `SetReady(true)` fires (after telnet listener
+      binds) AND a 500ms DB ping succeeds; 503 otherwise.
+      `SetReady(false)` flips at shutdown drain start so a
+      probe-driven load balancer drains cleanly. Docker
+      HEALTHCHECK + compose healthcheck both probe this endpoint
+      via wget. Phase J slice J5 (#54), commit `195d352`
+      (2026-05-12). Deferred: telnet-level liveness probe.
 
 ---
 
