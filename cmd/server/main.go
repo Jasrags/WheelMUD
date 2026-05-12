@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/affects"
+	"github.com/Jasrags/WheelMUD/internal/backup"
 	"github.com/Jasrags/WheelMUD/internal/channeling"
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
@@ -1042,6 +1043,28 @@ func main() {
 	}
 
 	scheduler.Start(ctx)
+
+	// Backup manager (Phase J slice J4 / #56). Gated on a non-empty
+	// db.backup_dir AND a positive interval; otherwise backups stay
+	// off without surfacing an error. The Manager takes its own
+	// background goroutine and observes the server-lifetime ctx so a
+	// SIGTERM / admin shutdown drains cleanly.
+	if cfg.DB.BackupDir != "" && cfg.DB.BackupIntervalHours > 0 {
+		mgr, berr := backup.New(conn, backup.Config{
+			Dir:           cfg.DB.BackupDir,
+			IntervalHours: cfg.DB.BackupIntervalHours,
+			Retention:     cfg.DB.BackupRetention,
+		})
+		if berr != nil {
+			slog.Error("Backup manager init failed", "error", berr)
+			os.Exit(1)
+		}
+		slog.Info("Backup manager enabled",
+			"dir", cfg.DB.BackupDir,
+			"interval_h", cfg.DB.BackupIntervalHours,
+			"retention", cfg.DB.BackupRetention)
+		safego.Go("backup-manager", func() { mgr.Run(ctx) })
+	}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
