@@ -38,7 +38,8 @@ type Game struct {
 	Rooms      repo.RoomRepo
 	Template   string
 
-	audit CommandAuditFn
+	audit  CommandAuditFn
+	metric CommandMetricFn
 }
 
 // CommandAuditFn is the closure invoked once per dispatched line when
@@ -48,6 +49,11 @@ type Game struct {
 // the forensic table has full coverage). Bound at startup from the
 // cmd-layer to a CharacterAuditRepo + exclude set.
 type CommandAuditFn func(ctx context.Context, s *telnet.Session, line string, dispatchErr error)
+
+// CommandMetricFn is invoked once per dispatched line and lets the
+// cmd-layer bump Prometheus counters without coupling internal/mode
+// to internal/metrics. Bound at startup; nil disables.
+type CommandMetricFn func(line string, dispatchErr error)
 
 // NewGame builds a Game with the given registry and prompt deps. An
 // empty template falls back to the legacy "> " literal so callers
@@ -66,10 +72,18 @@ func NewGame(r *telnet.Registry, chars repo.CharacterRepo, rooms repo.RoomRepo, 
 // goroutine reads from this Game.
 func (g *Game) SetAudit(fn CommandAuditFn) { g.audit = fn }
 
+// SetMetricHook installs a per-command metric hook (e.g.
+// internal/metrics commands_total counter). nil disables. Set once
+// at startup.
+func (g *Game) SetMetricHook(fn CommandMetricFn) { g.metric = fn }
+
 func (g *Game) Handle(ctx context.Context, s *telnet.Session, line string) error {
 	err := g.Registry.Dispatch(ctx, s, line)
 	if g.audit != nil {
 		g.audit(ctx, s, line, err)
+	}
+	if g.metric != nil {
+		g.metric(line, err)
 	}
 	return err
 }

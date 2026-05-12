@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
@@ -33,6 +34,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
+	"github.com/Jasrags/WheelMUD/internal/metrics"
 	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
@@ -54,6 +56,16 @@ import (
 const (
 	shutdownDrainTimeout  = 10 * time.Second
 	defaultPromptTemplate = "<%h/%H hp> "
+)
+
+// Build metadata stamped at link time via goreleaser ldflags (Phase J
+// slice J7). Empty when built without ldflags (e.g. `go build`); the
+// build_info metric still emits an empty-label series in that case so
+// scrapers don't see a missing target.
+var (
+	buildVersion = ""
+	buildCommit  = ""
+	buildDate    = ""
 )
 
 // server bundles the long-lived dependencies a connection needs. New
@@ -84,6 +96,8 @@ type server struct {
 	triggers   *trigger.Dispatcher
 	quest      *quest.Engine
 	luaRunner  *luaeng.Runner
+	metrics    *metrics.Metrics
+	metricsHTTP *http.Server
 	newInitial func() telnet.Mode
 
 	wg     sync.WaitGroup
@@ -1024,6 +1038,34 @@ func main() {
 		slog.Info("Per-character command audit enabled",
 			"exclude", cfg.Audit.CommandsExclude)
 	}
+
+	// Metrics + pprof + healthz (Phase J slice J5 / #54). Empty
+	// metrics_addr disables the HTTP server entirely. Bound to
+	// loopback by default so an unprotected listener doesn't leak
+	// pprof to the public internet.
+	if cfg.Server.MetricsAddr != "" {
+		srv.metrics = metrics.New(metrics.Config{
+			DB:           conn,
+			SessionCount: func() int { return len(sessions.Snapshot()) },
+			BuildInfo: metrics.BuildInfo{
+				Version: buildVersion,
+				Commit:  buildCommit,
+				Date:    buildDate,
+			},
+		})
+		gameMode.SetMetricHook(buildCommandMetricFn(srv.metrics))
+		srv.metricsHTTP = &http.Server{
+			Addr:              cfg.Server.MetricsAddr,
+			Handler:           srv.metrics.Handler(),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		safego.Go("metrics-http", func() {
+			slog.Info("Metrics server listening", "addr", cfg.Server.MetricsAddr)
+			if err := srv.metricsHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("Metrics server failed", "error", err)
+			}
+		})
+	}
 	srv.newInitial = func() telnet.Mode {
 		login := mode.NewLogin(accounts, characters, sessions, gameMode)
 		login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
@@ -1073,6 +1115,10 @@ func main() {
 	}
 
 	slog.Info("Server started", "address", addr, "db", dsn)
+
+	if srv.metrics != nil {
+		srv.metrics.SetReady(true)
+	}
 
 	safego.Go("shutdown-watcher", func() {
 		<-ctx.Done()
@@ -1140,6 +1186,14 @@ func (srv *server) acceptLoop(ln net.Listener) {
 }
 
 func (srv *server) shutdown() {
+	if srv.metrics != nil {
+		srv.metrics.SetReady(false)
+	}
+	if srv.metricsHTTP != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = srv.metricsHTTP.Shutdown(ctx)
+		cancel()
+	}
 	slog.Info("Draining active sessions", "timeout", shutdownDrainTimeout)
 	done := make(chan struct{})
 	safego.Go("shutdown-drain", func() {
@@ -1346,6 +1400,26 @@ func buildCommandAuditFn(audits repo.CharacterAuditRepo, exclude []string) mode.
 			slog.Warn("character_audit record failed",
 				"character", charName, "verb", verbKey, "error", err)
 		}
+	}
+}
+
+// buildCommandMetricFn returns a Game metric hook that bumps the
+// commands_total counter on every dispatch. The verb is the
+// lowercased first whitespace-separated token; result is "ok" when
+// dispatchErr is nil, "error" otherwise. Empty lines (whitespace-only
+// input) are skipped so the counter doesn't accumulate empty-label
+// noise.
+func buildCommandMetricFn(m *metrics.Metrics) mode.CommandMetricFn {
+	return func(line string, err error) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			return
+		}
+		verb := trimmed
+		if idx := strings.IndexAny(trimmed, " \t"); idx >= 0 {
+			verb = trimmed[:idx]
+		}
+		m.ObserveCommand(strings.ToLower(verb), err == nil)
 	}
 }
 
