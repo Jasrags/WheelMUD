@@ -15,7 +15,8 @@ chat channels. A YAML world loader (`internal/world/`) seeds the DB from
 MUD subsystems and is the source of truth for "what's done."
 `docs/PLAN.md` is the source of truth for "what's next" — it sequences the
 roadmap into ordered phases (A: quick wins, B: equipment/economy, C: combat,
-D: progression, E: NPCs/quests, F: OLC, G/H/I: comms/network/ops). When
+D: progression, E: NPCs/quests, F: OLC, G/H/I: comms/network/ops, J: ops/CI/
+packaging — Phase J landed 2026-05-12 across slices J1–J7). When
 ROADMAP and PLAN disagree about *status*, ROADMAP wins; about *order*, PLAN
 wins. Re-derive PLAN from ROADMAP whenever a phase finishes or scope shifts.
 Token-lean architecture maps for AI context live in `docs/CODEMAPS/`.
@@ -32,28 +33,49 @@ docker compose up      # build + run, exposes :2323
 
 Connect with: `telnet localhost 2323` (or `nc localhost 2323`).
 
-Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
-`:memory:` works), `LOG_LEVEL` (`debug`/`info`/`warn`/`error`, default
-`debug`), `WORLD_DIR` (default `./data/world`).
+Configuration: pass `-config <path>` to load a YAML file (see
+`config.example.yaml`) or rely on env vars only — both paths are supported.
+Env overrides take precedence over file values. Env surface:
+`LISTEN_ADDR` (default `:2323`), `METRICS_ADDR` (default `127.0.0.1:9090`;
+empty disables the metrics + pprof + healthz HTTP server), `DB_DSN`
+(default `wheelmud.db`, `:memory:` works), `BACKUP_DIR` (empty disables
+backup snapshots; otherwise wall-clock `VACUUM INTO` cadence controlled
+by `db.backup_interval_hours` / `db.backup_retention` in YAML), `LOG_LEVEL`
+(`debug`/`info`/`warn`/`error`, default `debug`), `WORLD_DIR` (default
+`./data/world`), `AUDIT_COMMANDS_ENABLED` (default `false`) +
+`AUDIT_COMMANDS_EXCLUDE` (comma-separated verb list when enabled).
+Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR`)
+remain env-only and bypass the YAML config — they switch each embedded-FS
+catalog to an on-disk override.
 
 ## Architecture
 
-- **`cmd/server/main.go`** — entrypoint. Reads env, opens the DB via
-  `internal/db.Open` (runs embedded migrations 0001–0048), constructs every
-  repo (accounts, characters, rooms, exits, items, mob_instances,
-  mob_templates, mob_trails, zones, channels), loads the news catalog
+- **`cmd/server/main.go`** — entrypoint. Parses the `-config <path>` /
+  `-version` flags, loads YAML+env via `internal/config.Load`, opens the
+  DB via `internal/db.Open` (runs embedded migrations 0001–0052),
+  constructs every repo (accounts, characters, rooms, exits, items,
+  mob_instances, mob_templates, mob_trails, zones, channels,
+  admin_audit, character_audit, account_logins, shops, bankers,
+  trainers, weave_teachers), loads the news catalog
   (`internal/news`), the chargen catalog (`internal/chargen`),
   and the quest catalog (`internal/quest`),
   runs `world.LoadAndSync` to seed the DB from
   `WORLD_DIR`, builds the command registry plus a `server` struct
   holding long-lived deps, starts `tick.Scheduler` + `tick.Buckets`
-  and the `persist.Manager` autosaver, then accepts TCP connections.
+  and the `persist.Manager` autosaver, conditionally starts the
+  Phase J slice J4 backup manager (`internal/backup.Manager` —
+  gated on `cfg.DB.BackupDir` + positive interval) and the Phase J
+  slice J5 metrics HTTP server (`internal/metrics` — gated on
+  non-empty `cfg.Server.MetricsAddr`), then accepts TCP connections.
   Each connection gets a `telnet.Session`, the connect splash is
   written, the initial login mode is pushed, and `telnet.RunSession`
   drives it. After login, `news.WriteMOTDBlock` renders any unseen
   MOTD/news entries (gated by `characters.last_news_seen_at` from
   migration 0027). New long-lived dependencies belong on the
-  `server` struct.
+  `server` struct. Package-level `buildVersion` / `buildCommit` /
+  `buildDate` strings are populated by goreleaser ldflags (Phase J
+  slice J7) and feed the `-version` flag + the
+  `wheelmud_build_info` metric.
 
 - **`telnet/`** — protocol primitives + per-connection driver.
   - `session.go`: `Session` struct (conn, terminal type, width/height,
@@ -157,7 +179,7 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   `persist.Manager` Save bucket layers periodic + shutdown flushes for
   fields that aren't covered (e.g. `last_played_at`).
 
-- **`internal/db/migrations/`** — embedded migrations 0001–0047. Each
+- **`internal/db/migrations/`** — embedded migrations 0001–0052. Each
   migration is forward-only (no down). 0008 introduced the polymorphic
   creature/mob_template/mob_instance/channeling tables; 0010 dropped
   the legacy `mobs` table; 0011 added the chat-channel catalog +
@@ -462,6 +484,17 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   risk); the `talk` verb takes a `cmd.PushDialogueFn` closure
   that `cmd/server/main.go` constructs after both packages
   resolve.
+  0052 added the `character_audit` table backing Phase J slice
+  J3 (#55) — append-only forensic log of in-game commands
+  dispatched by post-login players, keyed on `(character_id, ts)`
+  with a `room_id` + `character_name` snapshot at write time and a
+  `raw` column soft-capped at 4096 bytes at insert. Off by default;
+  toggled via `audit.commands_enabled` in config (or
+  `AUDIT_COMMANDS_ENABLED` env). `audit.commands_exclude` (or the
+  matching env var) filters high-frequency verbs like `look` /
+  `prompt`. Writes happen synchronously in the `mode.Game`
+  `CommandAuditFn` hook after `Registry.Dispatch` returns; insert
+  errors log warn-level and never tear down the dispatcher.
 
 - **`internal/scripts/`** — Phase F #32 slice 1 script catalog:
   one `*.lua` file per script under `internal/scripts/default/`,
@@ -643,6 +676,44 @@ Environment: `LISTEN_ADDR` (default `:2323`), `DB_DSN` (default `wheelmud.db`,
   scheduler + named buckets, periodic+shutdown autosave manager, and a
   panic-recovery goroutine wrapper (`safego.Go("name", fn)`) used for
   every long-lived goroutine.
+
+- **`internal/config/`** — Phase J slice J2 (#53) YAML+env config
+  loader. `Config` struct + `Load(path string) (Config, error)` with
+  precedence "struct defaults → YAML file → env". Empty path is
+  supported (env-only deployments); a missing or malformed file
+  returns a wrapped error so a startup typo doesn't silently fall
+  back to defaults. Schema covers `server.{listen_addr,metrics_addr}`,
+  `db.{dsn,backup_dir,backup_interval_hours,backup_retention}`,
+  `world.dir`, `log.level`, and `audit.{commands_enabled,
+  commands_exclude}`. Env overrides cover the same surface plus
+  `AUDIT_COMMANDS_ENABLED` / `AUDIT_COMMANDS_EXCLUDE`.
+
+- **`internal/metrics/`** — Phase J slice J5 (#54) Prometheus +
+  pprof + healthz. Registers a fresh `prometheus.Registry` and
+  exposes `Handler()` mounting `/metrics`, `/healthz`, and
+  `/debug/pprof/*` (stdlib `net/http/pprof`). Caller owns the
+  `http.Server` lifecycle. Collectors: `wheelmud_commands_total
+  {verb,result}`, `wheelmud_sessions_active`,
+  `wheelmud_db_open_conns`, `wheelmud_build_info{version,commit,
+  date,go_version}`, plus the Go + Process collectors. `SetReady`
+  atomic flag drives the healthz response (200 ok once ready AND
+  the DB ping passes within 500ms; 503 otherwise). `mode.Game`
+  takes a `CommandMetricFn` hook (sibling to `CommandAuditFn`) so
+  `internal/mode` doesn't import the metrics package. Default
+  bind is loopback (`127.0.0.1:9090`); the Dockerfile keeps the
+  same default so pprof never leaks to the public net by accident.
+
+- **`internal/backup/`** — Phase J slice J4 (#56) wall-clock
+  `VACUUM INTO` snapshots + retention pruning. `Manager.Run(ctx)`
+  takes an initial snapshot on entry then loops on a
+  `time.Ticker` (decoupled from `tick.Buckets` so a paused world
+  can't pause backups); `RunOnce(ctx)` is the testable entry
+  point. Filenames are `wheelmud-YYYYMMDD-HHMMSS.db`; pruning
+  identifies snapshots by `FilePrefix + FileSuffix` and calls
+  `os.Lstat` before `os.Remove` to refuse symlinks / non-regular
+  files (defense against a world-writable backup dir). Snapshot
+  errors log at warn and the loop continues — a transient
+  disk-full / VACUUM contention shouldn't tear down the server.
 
 - **`internal/auth/`** — bcrypt password hashing (with a tunable cost
   knob; see `auth_followups.md` memory for the SetCost issues).
@@ -842,9 +913,25 @@ Telnet-package tests reuse `newPipeSession(t)` / `bufSession(t)` /
 `bufConn` from `telnet/command_test.go`. Cmd-package tests reuse
 `commPair` / `runCmd` from `internal/cmd/comm_test.go`.
 
+Phase J adds three new test packages: `internal/config` (file +
+env precedence, malformed YAML), `internal/backup` (round-trip,
+retention pruning, symlink refusal, ctx cancel), `internal/metrics`
+(healthz lifecycle, registered collector surface, pprof index).
+`telnet/iac_fuzz_test.go` + `telnet/tokenize_fuzz_test.go` carry
+`FuzzReadIAC`, `FuzzTokenize`, `FuzzSplitOnSemicolon` — the
+nightly `.github/workflows/fuzz.yml` runs each for 5 minutes by
+default. `test/integration/` (build-tag `integration`) ships a
+subprocess-based end-to-end smoke that boots a real `cmd/server`
+binary against `./data/world`, waits for `/healthz=200`, and
+exercises the telnet handshake + IAC negotiation. Run with
+`go test -tags=integration -timeout=120s ./test/integration/...`.
+
 ## Module
 
 `github.com/Jasrags/WheelMUD`. Direct deps: `github.com/i582/cfmt`
 (styling), `golang.org/x/crypto` (bcrypt), `gopkg.in/yaml.v3` (world
-loader), `modernc.org/sqlite` (pure-Go SQLite). See
-`docs/CODEMAPS/dependencies.md` for the full picture.
++ config loader), `modernc.org/sqlite` (pure-Go SQLite),
+`github.com/yuin/gopher-lua` (sandboxed Lua runtime for Phase F
+triggers / dialogue scripts), `github.com/prometheus/client_golang`
+(Phase J metrics endpoint). See `docs/CODEMAPS/dependencies.md` for
+the full picture.

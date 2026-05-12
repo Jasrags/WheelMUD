@@ -29,10 +29,16 @@ width-aware reflow.
 > APIs for say/emote/log/quest/push_mode/apply_affect/give_item/
 > target/room/clock), and admin tooling (`spawn`/`teleport`/`goto`/
 > `transfer`/`summon`/`wizinvis`/`shutdown`/`reboot`/`affect`/
-> `cooldown`/news authoring) with append-only audit log. Full OLC,
-> mail/boards, broader network protocols (GMCP/MSSP/MCCP/TLS/WS),
-> and CI matrix are pending. See [`ROADMAP.md`](ROADMAP.md) for the
-> full punch list.
+> `cooldown`/news authoring) with append-only audit log. Phase J
+> (ops/CI/packaging) shipped 2026-05-12: YAML+env config loader,
+> per-character command audit, scheduled `VACUUM INTO` backups
+> with retention pruning, Prometheus metrics + pprof + healthz on
+> a private listener, GitHub Actions matrix + nightly fuzz on the
+> IAC parser + tokenizer, telnet integration smoke, goreleaser +
+> multi-arch Docker image + hardened systemd unit. Full OLC,
+> mail/boards, and broader network protocols (GMCP/MSSP/MCCP/TLS/
+> WS) are pending. See [`ROADMAP.md`](ROADMAP.md) for the full
+> punch list.
 
 ## Quick start
 
@@ -54,14 +60,26 @@ nc localhost 2323
 
 ## Configuration
 
-Environment variables, all optional:
+Two paths, both optional and stackable: pass `-config <path>` to load a
+YAML file (see [`config.example.yaml`](config.example.yaml)) and/or
+export environment variables (see [`.env.example`](.env.example)). Env
+overrides file values; both fall back to package defaults.
 
-| Var           | Default          | Purpose                                            |
-| ------------- | ---------------- | -------------------------------------------------- |
-| `LISTEN_ADDR` | `:2323`          | TCP listen address                                 |
-| `DB_DSN`      | `wheelmud.db`    | SQLite DSN; `:memory:` for ephemeral runs          |
-| `LOG_LEVEL`   | `debug`          | `debug` / `info` / `warn` / `error`                |
-| `WORLD_DIR`   | `./data/world`   | YAML zone tree the world loader syncs into the DB  |
+| Var                        | Default            | Purpose                                                      |
+| -------------------------- | ------------------ | ------------------------------------------------------------ |
+| `LISTEN_ADDR`              | `:2323`            | TCP listen address                                           |
+| `METRICS_ADDR`             | `127.0.0.1:9090`   | Prometheus + pprof + healthz HTTP bind; empty disables       |
+| `DB_DSN`                   | `wheelmud.db`      | SQLite DSN; `:memory:` for ephemeral runs                    |
+| `BACKUP_DIR`               | _(empty)_          | When set, scheduled `VACUUM INTO` snapshots land here        |
+| `LOG_LEVEL`                | `debug`            | `debug` / `info` / `warn` / `error`                          |
+| `WORLD_DIR`                | `./data/world`     | YAML zone tree the world loader syncs into the DB            |
+| `AUDIT_COMMANDS_ENABLED`   | `false`            | Per-character command audit log to `character_audit` table   |
+| `AUDIT_COMMANDS_EXCLUDE`   | _(empty)_          | Comma-separated verb filter when audit is enabled            |
+
+Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR`)
+remain env-only and switch each embedded-FS catalog to an on-disk
+override. Run `wheelmud-server -version` for the build triple stamped
+by goreleaser ldflags.
 
 ## Layout
 
@@ -78,8 +96,8 @@ internal/mode/        login, character_select, character_create, account_menu, p
                       game, dialogue
 internal/repo/        account, character, room, exit, item, mob_template, mob_instance,
                       mob_trail, zone, channel, news, shop, banker, trainer, weave_teacher,
-                      trigger, admin_audit, account_login
-internal/db/          sql.DB open + embedded migrations 0001–0048
+                      trigger, admin_audit, character_audit, account_login
+internal/db/          sql.DB open + embedded migrations 0001–0052
 internal/world/       YAML loader + sync to DB; Restocker, ZoneResetter, Clock, day/night
 internal/chargen/     YAML content catalog (backgrounds/classes/feats/skills/weaves)
 internal/news/        embedded MOTD/news catalog
@@ -101,10 +119,15 @@ internal/persist/     periodic + shutdown autosave manager
 internal/tick/        scheduler + named buckets (Save, Combat, Regen, Affects, AreaReset, ...)
 internal/safego/      panic-recovery goroutine wrapper
 internal/auth/        bcrypt password hashing
+internal/config/      YAML + env config loader (Phase J slice J2)
+internal/metrics/     Prometheus + pprof + healthz on a private HTTP listener (J5)
+internal/backup/      scheduled VACUUM INTO snapshots + retention pruning (J4)
 internal/creature/    Core stat block, Channeling weave model, Equipment slot map
 internal/currency/    copper-piece amount type
+test/integration/     subprocess-based telnet smoke (build-tag `integration`, J6)
 data/world/           authored zone YAML — hierarchical (continent/nation/region/settlement/
                       building); Emond's Field is the reference. See data/world/README.md.
+deploy/               systemd unit + deploy/README.md ops runbook (J7)
 docs/CODEMAPS/        token-lean architecture maps for AI context
 docs/PLAN.md          sequenced plan of attack across roadmap phases
 docs/reference/       game-system reference docs (abilities, classes, ...)
@@ -118,6 +141,8 @@ docs/reference/       game-system reference docs (abilities, classes, ...)
 - [`docs/CODEMAPS/`](docs/CODEMAPS/) — architecture, command catalog, data model, dependencies, telnet protocol
 - [`docs/reference/`](docs/reference/) — game-system rules ported from the WoT RPG
 - [`data/world/README.md`](data/world/README.md) — zone YAML schema, room ID conventions, currency format, item taxonomy
+- [`deploy/README.md`](deploy/README.md) — Docker + systemd deployment runbook
+- [`config.example.yaml`](config.example.yaml) / [`.env.example`](.env.example) — full configuration surface
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev workflow, testing, commit conventions
 
 ## License
