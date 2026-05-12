@@ -19,18 +19,18 @@ import (
 // captured Hit/Miss events under a shared mutex, and the seeded ids
 // so callers can assert on schedule / drop / cadence.
 type twoHandRig struct {
-	mgr           *Manager
-	chars         *repo.MemoryCharacterRepo
-	items         *repo.MemoryItemRepo
-	charID        int64
-	primaryID     int64
-	offHandID     int64
-	mobID         int64
-	roomID        int64
-	mu            *sync.Mutex
-	hits          *[]CombatHit
-	misses        *[]CombatMiss
-	parts         []ActorRef
+	mgr       *Manager
+	chars     *repo.MemoryCharacterRepo
+	items     *repo.MemoryItemRepo
+	charID    int64
+	primaryID int64
+	offHandID int64
+	mobID     int64
+	roomID    int64
+	mu        *sync.Mutex
+	hits      *[]CombatHit
+	misses    *[]CombatMiss
+	parts     []ActorRef
 }
 
 func newTwoHandRig(t *testing.T, bab int16, equipOffHand bool) *twoHandRig {
@@ -133,10 +133,10 @@ func newTwoHandRig(t *testing.T, bab int16, equipOffHand bool) *twoHandRig {
 // wielded. Primary-only schedules are unchanged.
 func TestSchedule_OffHandAppendsToChain(t *testing.T) {
 	cases := []struct {
-		name        string
-		bab         int16
-		offHand     bool
-		wantSwings  []SwingPlan
+		name       string
+		bab        int16
+		offHand    bool
+		wantSwings []SwingPlan
 	}{
 		{
 			name: "bab0_no_offhand",
@@ -506,7 +506,7 @@ func TestActorActionCost_TwoWeaponGraceHalvesOffHand(t *testing.T) {
 	graceHash := chargen.HashID("feat_two_weapon_grace")
 	ch, err := chars.Create(ctx, repo.Character{
 		AccountID: acc.ID, Name: "Graced",
-		Feats:     []int32{graceHash},
+		Feats: []int32{graceHash},
 		Core: creature.Core{
 			HPCurrent: 50, HPMax: 50,
 			Abilities: creature.Abilities{Str: creature.AbilityScore{Current: 10}},

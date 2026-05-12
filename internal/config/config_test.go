@@ -187,4 +187,3 @@ func TestLoad_MalformedYAML(t *testing.T) {
 		t.Errorf("error wrap = %q, want 'parse config'", err.Error())
 	}
 }
-

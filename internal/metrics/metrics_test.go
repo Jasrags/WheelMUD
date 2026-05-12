@@ -62,7 +62,7 @@ func TestHandler_HealthzDBPing(t *testing.T) {
 
 func TestHandler_MetricsEndpointEmitsRegisteredMetrics(t *testing.T) {
 	m := New(Config{
-		BuildInfo: BuildInfo{Version: "v0.test", Commit: "abc123", Date: "2026-05-12"},
+		BuildInfo:    BuildInfo{Version: "v0.test", Commit: "abc123", Date: "2026-05-12"},
 		SessionCount: func() int { return 3 },
 	})
 	m.ObserveCommand("look", true)

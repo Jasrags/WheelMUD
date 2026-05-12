@@ -53,11 +53,11 @@ func (c *syncBufConn) Close() error {
 	return nil
 }
 
-func (c *syncBufConn) LocalAddr() net.Addr                { return dummyAddr{} }
-func (c *syncBufConn) RemoteAddr() net.Addr               { return dummyAddr{} }
-func (c *syncBufConn) SetDeadline(time.Time) error        { return nil }
-func (c *syncBufConn) SetReadDeadline(time.Time) error    { return nil }
-func (c *syncBufConn) SetWriteDeadline(time.Time) error   { return nil }
+func (c *syncBufConn) LocalAddr() net.Addr              { return dummyAddr{} }
+func (c *syncBufConn) RemoteAddr() net.Addr             { return dummyAddr{} }
+func (c *syncBufConn) SetDeadline(time.Time) error      { return nil }
+func (c *syncBufConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *syncBufConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (c *syncBufConn) String() string {
 	c.mu.Lock()

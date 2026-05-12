@@ -122,7 +122,7 @@ func TestTick_IterativeChainAllThreeSwings(t *testing.T) {
 	mgr, _, _, bus, attacker, defender := iterativeFixture(t, 11, 100)
 
 	var (
-		mu      sync.Mutex
+		mu       sync.Mutex
 		resolves []ActionResolved
 	)
 	eventbus.Subscribe[ActionResolved](bus, func(_ context.Context, ev ActionResolved) {

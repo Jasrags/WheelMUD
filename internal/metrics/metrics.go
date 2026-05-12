@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -130,9 +131,11 @@ func New(cfg Config) *Metrics {
 
 	// Process collector (memory, FDs, CPU, uptime) is useful enough
 	// to justify the dep cost. Go collector ships goroutines, GC, and
-	// alloc histograms.
-	m.reg.MustRegister(prometheus.NewGoCollector())
-	m.reg.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	// alloc histograms. Use the collectors subpackage — the
+	// top-level prometheus.NewGoCollector / NewProcessCollector were
+	// deprecated in client_golang v1.12+ (staticcheck SA1019).
+	m.reg.MustRegister(collectors.NewGoCollector())
+	m.reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	return m
 }

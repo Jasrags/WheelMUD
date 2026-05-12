@@ -34,8 +34,8 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
-	"github.com/Jasrags/WheelMUD/internal/metrics"
 	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
+	"github.com/Jasrags/WheelMUD/internal/metrics"
 	"github.com/Jasrags/WheelMUD/internal/mob"
 	"github.com/Jasrags/WheelMUD/internal/mode"
 	"github.com/Jasrags/WheelMUD/internal/news"
@@ -77,28 +77,28 @@ var (
 // across sessions. Stateless modes (Game) can be reused; the factory
 // just returns the same pointer.
 type server struct {
-	accounts   repo.AccountRepo
-	characters repo.CharacterRepo
-	rooms      repo.RoomRepo
-	exits      repo.ExitRepo
-	items      repo.ItemRepo
-	mobs       repo.MobInstanceRepo
-	audits     repo.AdminAuditRepo
-	sessions   *session.Registry
-	scheduler  *tick.Scheduler
-	buckets    *tick.Buckets
-	bus        *eventbus.Bus
-	saves      *persist.Manager
-	news       *news.Catalog
-	chargen    *chargen.Catalog
-	combat     *combat.Manager
-	groups     *group.Manager
-	triggers   *trigger.Dispatcher
-	quest      *quest.Engine
-	luaRunner  *luaeng.Runner
-	metrics    *metrics.Metrics
+	accounts    repo.AccountRepo
+	characters  repo.CharacterRepo
+	rooms       repo.RoomRepo
+	exits       repo.ExitRepo
+	items       repo.ItemRepo
+	mobs        repo.MobInstanceRepo
+	audits      repo.AdminAuditRepo
+	sessions    *session.Registry
+	scheduler   *tick.Scheduler
+	buckets     *tick.Buckets
+	bus         *eventbus.Bus
+	saves       *persist.Manager
+	news        *news.Catalog
+	chargen     *chargen.Catalog
+	combat      *combat.Manager
+	groups      *group.Manager
+	triggers    *trigger.Dispatcher
+	quest       *quest.Engine
+	luaRunner   *luaeng.Runner
+	metrics     *metrics.Metrics
 	metricsHTTP *http.Server
-	newInitial func() telnet.Mode
+	newInitial  func() telnet.Mode
 
 	wg     sync.WaitGroup
 	closed chan struct{}

@@ -212,4 +212,3 @@ func (m *Manager) ApplyHealing(ctx context.Context, target ActorRef, amount int3
 	}
 	return fmt.Errorf("combat: ApplyHealing: unknown actor kind %v", target.Kind)
 }
-
