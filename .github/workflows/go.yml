@@ -46,7 +46,12 @@ jobs:
         run: go build ./...
 
       - name: Test (race + coverage)
-        run: go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+        # Default per-package timeout is 10m. internal/repo runs the
+        # full sqlite + memory contract suite (~9m on a fresh macOS
+        # runner) — race + atomic coverage push it over the cliff
+        # intermittently. Bump to 20m so transient runner slowness
+        # doesn't fail the matrix.
+        run: go test -race -count=1 -timeout=20m -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
