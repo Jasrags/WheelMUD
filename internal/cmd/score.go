@@ -41,7 +41,7 @@ func NewScore(characters repo.CharacterRepo, items repo.ItemRepo, cat *chargen.C
 				return c.Session.WriteString(
 					"{{Could not load your character.}}::red\r\n")
 			}
-			gear := combat.ResolveGearFactors(c.Ctx, items, ch.Equipment)
+			gear := combat.ResolveGearFactors(c.Ctx, items, ch.Equipment, creature.SlotPrimaryWield)
 			fm := combat.ResolveFeatModifiers(ch.Feats, cat)
 			gear = combat.ApplyFeatGearAttenuation(gear, fm)
 			return renderScore(c.Session, ch, cat, gear, fm)

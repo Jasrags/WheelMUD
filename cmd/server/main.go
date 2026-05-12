@@ -463,12 +463,20 @@ func main() {
 		case ev.Threat:
 			critTail = " {{(threat — but fails to confirm)}}::yellow"
 		}
+		// Phase D slice 4: off-hand swings carry an "(off-hand)" tag on
+		// the attacker and room broadcast lines so dual-wielders can
+		// tell their chains apart. Defender line stays unchanged — the
+		// target doesn't care which hand bit them.
+		offTag := ""
+		if ev.OffHand {
+			offTag = " {{(off-hand)}}::gray"
+		}
 		var atkSess, defSess *telnet.Session
 		if ev.Attacker.Kind == combat.ActorKindCharacter {
 			atkSess = cmd.LookupByCharacterID(sessions, ev.Attacker.ID)
 			if atkSess != nil {
 				_ = atkSess.WriteAsync(fmt.Sprintf(variantHitSelfFormat(ev.Variant),
-					defName, ev.Damage, critTail))
+					defName, ev.Damage, critTail) + offTag)
 			}
 		}
 		if ev.Defender.Kind == combat.ActorKindCharacter {
@@ -479,8 +487,8 @@ func main() {
 			}
 		}
 		combatBroadcastSkip(ev.RoomID,
-			fmt.Sprintf("{{%s hits %s for %d damage.}}::yellow%s\r\n",
-				atkName, defName, ev.Damage, critTail),
+			fmt.Sprintf("{{%s hits %s for %d damage.}}::yellow%s%s\r\n",
+				atkName, defName, ev.Damage, critTail, offTag),
 			atkSess, defSess)
 	})
 
@@ -526,14 +534,18 @@ func main() {
 			combatBroadcastSkip(ev.RoomID, roomMsg, atkSess, defSess)
 			return
 		}
+		offTag := ""
+		if ev.OffHand {
+			offTag = " {{(off-hand)}}::gray"
+		}
 		if atkSess != nil {
-			_ = atkSess.WriteAsync(fmt.Sprintf(variantMissSelfFormat(ev.Variant), defName))
+			_ = atkSess.WriteAsync(fmt.Sprintf(variantMissSelfFormat(ev.Variant), defName) + offTag)
 		}
 		if defSess != nil {
 			_ = defSess.WriteAsync(fmt.Sprintf("{{%s swings at you and misses.}}::gray", atkName))
 		}
 		combatBroadcastSkip(ev.RoomID,
-			fmt.Sprintf("{{%s swings at %s and misses.}}::gray\r\n", atkName, defName),
+			fmt.Sprintf("{{%s swings at %s and misses.}}::gray%s\r\n", atkName, defName, offTag),
 			atkSess, defSess)
 	})
 

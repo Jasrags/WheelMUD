@@ -126,19 +126,22 @@ type GearFactors struct {
 // Multiplier is the combined factor applied to a base action cost.
 func (g GearFactors) Multiplier() float64 { return g.WeaponFactor * g.ArmorFactor }
 
-// ResolveGearFactors reads the primary-wield and armor slots and
-// returns the cadence factors for the actor. Items repo is optional —
-// nil yields the unarmed/naked baseline (used by tests). Lookup
-// failures degrade to the same baseline rather than panicking combat.
+// ResolveGearFactors reads the named weapon slot plus the armor slot
+// and returns the cadence factors for the actor. weaponSlot is the
+// slot the current swing is sourced from — SlotPrimaryWield for the
+// primary chain, SlotOffHand for off-hand swings (Phase D slice 4).
+// Items repo is optional — nil yields the unarmed/naked baseline
+// (used by tests). Lookup failures degrade to the same baseline
+// rather than panicking combat.
 //
 // ctx is propagated to the repo calls; in combat-resolution paths it
 // is the per-tick ctx, in score rendering it is the dispatcher ctx.
-func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Equipment) GearFactors {
+func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Equipment, weaponSlot creature.Slot) GearFactors {
 	g := GearFactors{WeaponFactor: 0.90, ArmorFactor: 1.00}
 	if items == nil {
 		return g
 	}
-	if wid := eq.Get(creature.SlotPrimaryWield); wid != 0 {
+	if wid := eq.Get(weaponSlot); wid != 0 {
 		if it, err := items.GetByID(ctx, wid); err == nil {
 			g.WeaponFactor = weaponSpeedFactor(it.Weight)
 		} else {
@@ -174,14 +177,21 @@ func ResolveGearFactors(ctx context.Context, items repo.ItemRepo, eq creature.Eq
 // speed multiplier folds in. Stacking on the racial side would let
 // an Aiel-with-Light-Step double-discount armor in a way the score
 // sheet's bracketed contributors would no longer reflect.
-func (m *Manager) actorActionCost(ctx context.Context, ref ActorRef, action Action) time.Duration {
+func (m *Manager) actorActionCost(ctx context.Context, ref ActorRef, action Action, slot creature.Slot) time.Duration {
 	base := DefaultActionCost(action.Kind, action.Variant)
 	cost := base
 	fm := m.resolveFeatModifiers(ctx, ref)
 	if eq, ok := m.resolveEquipment(ctx, ref); ok {
-		g := ResolveGearFactors(ctx, m.items, eq)
+		g := ResolveGearFactors(ctx, m.items, eq, slot)
 		g = ApplyFeatGearAttenuation(g, fm)
 		cost = time.Duration(float64(cost) * g.Multiplier())
+	}
+	// Phase D slice 4 / Phase L #65: feat_two_weapon_grace lowers
+	// off-hand swing cadence (off_hand_cost_mul, identity 1.0).
+	// Applied after gear factors so the multiplicative chain reads
+	// gear → feat attenuation → off-hand discount → racial speed.
+	if slot == creature.SlotOffHand && fm.OffHandCostMul > 0 && fm.OffHandCostMul != 1.0 {
+		cost = time.Duration(float64(cost) * float64(fm.OffHandCostMul))
 	}
 	cost = ApplySpeedFactor(cost, m.actorSpeedFactor(ctx, ref))
 	return cost

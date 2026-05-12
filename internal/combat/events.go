@@ -66,6 +66,11 @@ type CombatHit struct {
 	// (Normal / Power / Quick). Subscribers compose variant-flavored
 	// echo lines off this field.
 	Variant AttackVariant
+	// OffHand is true when this swing came from SlotOffHand (Phase D
+	// slice 4). Subscribers prefix the attacker / room broadcast
+	// lines with an "(off-hand)" tag so dual-wielders can tell their
+	// chains apart.
+	OffHand bool
 }
 
 // CombatMiss fires when a queued attack rolls below the defender's
@@ -85,10 +90,14 @@ type CombatMiss struct {
 	// render a "fumble" flavor line on top of the regular miss.
 	Fumble bool
 	// WeaponDroppedID is the item id the fumble side-effect moved
-	// from the attacker's SlotPrimaryWield to the room floor.
-	// Zero when no drop occurred (unarmed attacker, mob attacker —
-	// mob equipment has no persistence layer in V1).
+	// from the swinging-slot wield to the room floor. Zero when no
+	// drop occurred (unarmed attacker, mob attacker — mob equipment
+	// has no persistence layer in V1).
 	WeaponDroppedID int64
+	// OffHand is true when this miss came from SlotOffHand (Phase D
+	// slice 4). Subscribers tag the broadcast lines so dual-wielders
+	// can tell their chains apart.
+	OffHand bool
 }
 
 // ActionResolved fires whether the queued action was an attack that

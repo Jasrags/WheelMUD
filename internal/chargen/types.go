@@ -142,6 +142,10 @@ type Feat struct {
 	ArmorWeightPenaltyMul  float32 `yaml:"armor_weight_penalty_mul,omitempty"`
 	StaminaCostMul         float32 `yaml:"stamina_cost_mul,omitempty"`
 	StaminaRegenAdd        int16   `yaml:"stamina_regen_add,omitempty"`
+	// Phase D slice 4 — off-hand swing cadence multiplier. Identity
+	// 1.0; <1.0 speeds the off-hand swing only. feat_two_weapon_grace
+	// is the seed consumer. Primary-wield cadence is unaffected.
+	OffHandCostMul float32 `yaml:"off_hand_cost_mul,omitempty"`
 }
 
 // Skill is one entry in the class-skill universe. Ability is the

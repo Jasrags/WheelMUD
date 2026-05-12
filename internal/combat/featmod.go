@@ -28,7 +28,11 @@ type FeatModifiers struct {
 	ArmorWeightPenaltyMul  float32
 	StaminaCostMul         float32
 	StaminaRegenAdd        int16
-	Active                 []string
+	// OffHandCostMul scales the cadence cost of off-hand swings only
+	// (Phase D slice 4). Identity 1.0; <1.0 speeds the off-hand
+	// chain. feat_two_weapon_grace is the seed consumer.
+	OffHandCostMul float32
+	Active         []string
 }
 
 // IdentityFeatModifiers returns the no-op aggregate. Used by callers
@@ -41,6 +45,7 @@ func IdentityFeatModifiers() FeatModifiers {
 		WeaponWeightPenaltyMul: 1.0,
 		ArmorWeightPenaltyMul:  1.0,
 		StaminaCostMul:         1.0,
+		OffHandCostMul:         1.0,
 	}
 }
 
@@ -76,6 +81,10 @@ func ResolveFeatModifiers(feats []int32, cat *chargen.Catalog) FeatModifiers {
 		}
 		if f.StaminaRegenAdd != 0 {
 			fm.StaminaRegenAdd += f.StaminaRegenAdd
+			contributes = true
+		}
+		if f.OffHandCostMul != 0 {
+			fm.OffHandCostMul *= f.OffHandCostMul
 			contributes = true
 		}
 		if contributes {

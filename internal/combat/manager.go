@@ -185,7 +185,7 @@ func (m *Manager) Start(ctx context.Context, roomID int64, participants []ActorR
 		if err != nil {
 			return nil, fmt.Errorf("resolve %s: %w", ref, err)
 		}
-		entries = append(entries, m.rollInitiative(ref, core))
+		entries = append(entries, m.rollInitiative(ctx, ref, core))
 	}
 	sortInitiative(entries)
 
@@ -340,11 +340,11 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 	type readyEntry struct {
 		ref   ActorRef
 		round int
-		// iter is the per-swing iterative attack-roll bonuses for this
-		// actor (Phase L #66). Pinned at Start; copied here under
-		// m.mu so the drain loop can read it without re-locking.
-		// Always non-empty (at minimum []int16{0}).
-		iter []int16
+		// swings is the per-pulse swing schedule for this actor (slot
+		// + per-swing attack-roll bonus). Pinned at Start; copied here
+		// under m.mu so the drain loop can read it without re-locking.
+		// Always non-empty (at minimum one primary swing at bonus 0).
+		swings []SwingPlan
 	}
 	ready := make([]readyEntry, 0, len(f.Order))
 	for i := range f.Order {
@@ -352,14 +352,15 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 			continue
 		}
 		f.Round++
-		bonuses := f.Order[i].IterativeBonuses
-		if len(bonuses) == 0 {
-			// Pre-#66 fights (e.g. tests that construct Fight directly)
-			// observed a nil slice — default to one swing at no penalty
-			// so the loop below still fires exactly once.
-			bonuses = []int16{0}
+		plan := f.Order[i].Swings
+		if len(plan) == 0 {
+			// Pre-slice-4 fights (e.g. tests that construct Fight directly
+			// without going through Start) observed an empty slice —
+			// default to one primary swing at no penalty so the loop
+			// below still fires exactly once.
+			plan = []SwingPlan{{Slot: creature.SlotPrimaryWield, Bonus: 0}}
 		}
-		ready = append(ready, readyEntry{ref: f.Order[i].Ref, round: f.Round, iter: bonuses})
+		ready = append(ready, readyEntry{ref: f.Order[i].Ref, round: f.Round, swings: plan})
 	}
 	if len(ready) == 0 {
 		m.mu.Unlock()
@@ -401,7 +402,7 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		// only.
 		swings := 1
 		if hasActions[r.ref] && action.Kind == ActionAttack {
-			swings = len(r.iter)
+			swings = len(r.swings)
 		}
 
 		totalCost := time.Duration(0)
@@ -412,6 +413,11 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 		// the SQL hit off the critical section. Re-evaluated each
 		// swing so a mid-chain gear swap (shouldn't happen — actor
 		// is busy — but cheap insurance) is observable.
+		//
+		// Phase D slice 4: per-swing slot. Each plan entry carries its
+		// own slot (SlotPrimaryWield or SlotOffHand); cadence reads
+		// that slot's wielded weapon weight, and resolveAction picks
+		// the same slot's weapon stats for the d20.
 		if hasActions[r.ref] {
 			for i := 0; i < swings; i++ {
 				if i > 0 {
@@ -425,17 +431,19 @@ func (m *Manager) tickRoom(ctx context.Context, roomID int64) {
 						break
 					}
 				}
+				slot := creature.SlotPrimaryWield
 				bonus := 0
-				if action.Kind == ActionAttack && i < len(r.iter) {
-					bonus = int(r.iter[i])
+				if action.Kind == ActionAttack && i < len(r.swings) {
+					slot = r.swings[i].Slot
+					bonus = int(r.swings[i].Bonus)
 				}
-				m.resolveAction(ctx, roomID, r.round, r.ref, action, bonus)
-				totalCost += m.actorActionCost(ctx, r.ref, action)
+				m.resolveAction(ctx, roomID, r.round, r.ref, action, bonus, slot)
+				totalCost += m.actorActionCost(ctx, r.ref, action, slot)
 			}
 		} else {
 			// No queued action — still advance the clock so the actor
 			// doesn't busy-spin on this slot. Single base cost.
-			totalCost = m.actorActionCost(ctx, r.ref, action)
+			totalCost = m.actorActionCost(ctx, r.ref, action, creature.SlotPrimaryWield)
 		}
 
 		// Stamp the actor's next-ready time under the lock so a
@@ -534,9 +542,15 @@ func (m *Manager) tickParticipantAffects(ctx context.Context, roomID int64) {
 // extraAttackBonus is the per-swing iterative penalty (Phase L #66)
 // added to the attack roll on the ActionAttack branch — 0 on the
 // first swing, -5 / -10 / -15 on successive swings inside the same
-// pulse. Defensive / movement kinds (Parry, Dodge, Flee, Throw,
+// pulse, with a flat -4 baked in for off-hand swings (Phase D slice
+// 4). Defensive / movement kinds (Parry, Dodge, Flee, Throw,
 // Sidestep) ignore the parameter.
-func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, actor ActorRef, action Action, extraAttackBonus int) {
+//
+// slot selects which equipment slot's weapon stats and side-effects
+// (fumble drop, cadence weight) apply for this swing —
+// SlotPrimaryWield for the regular chain, SlotOffHand for off-hand
+// swings. ActionAttack only; other kinds always behave as primary.
+func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, actor ActorRef, action Action, extraAttackBonus int, slot creature.Slot) {
 	defer func() {
 		if m.bus != nil {
 			m.bus.Publish(ctx, ActionResolved{
@@ -591,13 +605,33 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 		}
 		return
 	}
+	// Phase D slice 4: resolve weapon stats by slot. Primary uses the
+	// already-baked action.WeaponID; off-hand re-fetches from the
+	// attacker's SlotOffHand at swing time (mid-fight un-wield no-ops
+	// the swing gracefully — cadence still drained, but no event).
+	weaponID := action.WeaponID
+	if slot == creature.SlotOffHand {
+		weaponID = 0
+		if m.chars != nil && actor.Kind == ActorKindCharacter {
+			if ch, err := m.chars.GetByID(ctx, actor.ID); err == nil {
+				weaponID = ch.Equipment.Get(creature.SlotOffHand)
+			}
+		}
+		if weaponID == 0 {
+			// Off-hand un-wielded between Start and this swing — skip
+			// the publish entirely so the player doesn't see a phantom
+			// off-hand miss. Cadence already accounted for the slot.
+			return
+		}
+	}
 	stats := unarmedDamage
-	if action.WeaponID != 0 && m.items != nil {
-		it, err := m.items.GetByID(ctx, action.WeaponID)
+	if weaponID != 0 && m.items != nil {
+		it, err := m.items.GetByID(ctx, weaponID)
 		if err == nil {
 			stats = weaponStatsFor(&it)
 		}
 	}
+	offHand := slot == creature.SlotOffHand
 
 	// Snapshot defender FlatFooted flag and parrying stance under the
 	// manager lock so the gates observe a stable view; mutations below
@@ -712,13 +746,13 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 				})
 			} else {
 				// Fumble side-effect: nat-1 from a character attacker
-				// drops their primary-wield weapon to the floor. Mob
+				// drops the swinging-slot weapon to the floor. Mob
 				// fumble is a flavor-only flag (no persisted equipment
 				// in V1). Resolved before the publish so the event
 				// carries the dropped weapon id.
 				droppedID := int64(0)
 				if roll.Fumble {
-					droppedID = m.handleFumble(ctx, roomID, actor)
+					droppedID = m.handleFumble(ctx, roomID, actor, slot)
 				}
 				m.bus.Publish(ctx, CombatMiss{
 					RoomID:          roomID,
@@ -729,6 +763,7 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 					Variant:         action.Variant,
 					Fumble:          roll.Fumble,
 					WeaponDroppedID: droppedID,
+					OffHand:         offHand,
 				})
 			}
 		}
@@ -785,10 +820,11 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 			Attacker: actor,
 			Defender: action.Target,
 			Damage:   dealt,
-			Weapon:   action.WeaponID,
+			Weapon:   weaponID,
 			Threat:   roll.Threat,
 			IsCrit:   roll.IsCrit,
 			Variant:  action.Variant,
+			OffHand:  offHand,
 		})
 	}
 
@@ -806,22 +842,39 @@ func (m *Manager) resolveAction(ctx context.Context, roomID int64, round int, ac
 	}
 }
 
-// rollInitiative resolves one entry's d20 + modifiers. Locks the
-// rng so concurrent Starts (multiple rooms opening fights at the
-// same instant) don't race the source.
-func (m *Manager) rollInitiative(ref ActorRef, core creature.Core) ActorEntry {
+// rollInitiative resolves one entry's d20 + modifiers and builds the
+// per-pulse swing schedule. Locks the rng so concurrent Starts
+// (multiple rooms opening fights at the same instant) don't race the
+// source. Equipment is resolved out-of-lock via the regular repo
+// lookup so the dual-wield check at Start matches resolveAction's
+// "re-read by id" precedent.
+func (m *Manager) rollInitiative(ctx context.Context, ref ActorRef, core creature.Core) ActorEntry {
 	m.rngMu.Lock()
-	defer m.rngMu.Unlock()
 	roll := m.rng.Intn(20) + 1 // 1..20
+	m.rngMu.Unlock()
 	dexMod := int(core.Abilities.DexMod())
 	init := roll + dexMod + int(core.InitMod)
 	bonuses := IterativeBonusesFor(core.BAB)
+	swings := make([]SwingPlan, 0, len(bonuses)*2)
+	for _, b := range bonuses {
+		swings = append(swings, SwingPlan{Slot: creature.SlotPrimaryWield, Bonus: b})
+	}
+	// Phase D slice 4: append off-hand chain when the actor has a
+	// weapon in SlotOffHand at fight-open. Each off-hand swing pays
+	// the SRD "no Two-Weapon Fighting feat" -4 accuracy penalty on
+	// top of its iterative bonus. Mob actors skip — no persisted mob
+	// equipment yet (Phase L #62 followup).
+	if eq, ok := m.resolveEquipment(ctx, ref); ok && eq.Get(creature.SlotOffHand) != 0 {
+		for _, b := range bonuses {
+			swings = append(swings, SwingPlan{Slot: creature.SlotOffHand, Bonus: b - 4})
+		}
+	}
 	return ActorEntry{
-		Ref:              ref,
-		Initiative:       init,
-		Tiebreak:         int32(roll),
-		PendingSwings:    len(bonuses),
-		IterativeBonuses: bonuses,
+		Ref:           ref,
+		Initiative:    init,
+		Tiebreak:      int32(roll),
+		PendingSwings: len(swings),
+		Swings:        swings,
 	}
 }
 
@@ -1190,14 +1243,16 @@ func (m *Manager) resolveThrow(ctx context.Context, roomID int64, round int, act
 	m.dropThrownItem(ctx, action.WeaponID, roomID, 0, item)
 }
 
-// handleFumble drops the attacker's primary-wield weapon to the room
-// floor on a natural-1 attack roll. Character actors only — mob
-// equipment has no persisted layer in V1 (Phase L #62 followup).
+// handleFumble drops the swinging-slot weapon to the room floor on a
+// natural-1 attack roll. Character actors only — mob equipment has
+// no persisted layer in V1 (Phase L #62 followup). slot is the swing
+// plan's source slot (SlotPrimaryWield or SlotOffHand from Phase D
+// slice 4); the corresponding slot's weapon is cleared and dropped.
 // Returns the dropped item id, or 0 when nothing was dropped
 // (unarmed, mob attacker, or repo error). Best-effort: equipment-
 // persist or SetRoom failures slog.Warn and surface as a 0 return
 // so the miss still publishes and combat doesn't desync.
-func (m *Manager) handleFumble(ctx context.Context, roomID int64, actor ActorRef) int64 {
+func (m *Manager) handleFumble(ctx context.Context, roomID int64, actor ActorRef, slot creature.Slot) int64 {
 	if actor.Kind != ActorKindCharacter || m.chars == nil || m.items == nil {
 		return 0
 	}
@@ -1207,11 +1262,11 @@ func (m *Manager) handleFumble(ctx context.Context, roomID int64, actor ActorRef
 			"room", roomID, "char", actor.ID, "error", err)
 		return 0
 	}
-	weaponID := ch.Equipment.Get(creature.SlotPrimaryWield)
+	weaponID := ch.Equipment.Get(slot)
 	if weaponID == 0 {
 		return 0
 	}
-	ch.Equipment.Set(creature.SlotPrimaryWield, 0)
+	ch.Equipment.Set(slot, 0)
 	if err := m.chars.RecordEquipment(ctx, actor.ID, ch.Equipment); err != nil {
 		slog.Warn("combat: fumble equipment persist failed",
 			"room", roomID, "char", actor.ID, "error", err)

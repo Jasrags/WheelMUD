@@ -3,7 +3,22 @@ package combat
 import (
 	"sort"
 	"time"
+
+	"github.com/Jasrags/WheelMUD/internal/creature"
 )
+
+// SwingPlan is one entry in the per-pulse swing schedule. Slot is the
+// equipment slot the swing is sourced from (SlotPrimaryWield or
+// SlotOffHand); Bonus is the attack-roll delta applied to that swing
+// (iterative penalty plus the TWF -4 baked in for off-hand swings).
+//
+// The schedule is pinned at Start so a mid-fight wield change does
+// not retroactively alter the per-pulse swing count, mirroring how
+// IterativeBonusesFor used to pin off creature.BAB at Start.
+type SwingPlan struct {
+	Slot  creature.Slot
+	Bonus int16
+}
 
 // ActorEntry is one combatant's slot in the initiative order.
 // Initiative is the resolved roll (d20 + DexMod + InitMod). Tiebreak
@@ -27,17 +42,20 @@ type ActorEntry struct {
 	NextActAt   time.Time
 	LastActedAt time.Time
 
-	// PendingSwings is the per-pulse swing count derived from BAB at
-	// Start (Phase L #66). 1 for BAB<6, 2 for 6–10, 3 for 11–15,
-	// 4 for 16+. Equals len(IterativeBonuses).
+	// PendingSwings is the per-pulse swing count for this actor.
+	// Equals len(Swings). For a single-wielder this is just the
+	// iterative chain (1 / 2 / 3 / 4 by BAB tier). A dual-wielder
+	// doubles the count — see Swings.
 	PendingSwings int
 
-	// IterativeBonuses are the per-swing attack-roll deltas applied
-	// to successive swings inside a single pulse. Pinned at Start
-	// from creature.Core.BAB via IterativeBonusesFor — mid-fight BAB
-	// shifts (affects, level-ups) do not recompute, mirroring the
-	// "Initiative pinned at Start" precedent.
-	IterativeBonuses []int16
+	// Swings is the per-pulse swing schedule. The primary chain comes
+	// first, followed by the off-hand chain when the actor has a
+	// weapon in SlotOffHand at Start. Pinned at Start; mid-fight BAB
+	// shifts or off-hand wield changes do not retroactively rewrite
+	// the schedule (matching the "Initiative pinned at Start"
+	// precedent). The per-swing slot is consumed by resolveAction to
+	// pick which equipment slot's weapon stats apply.
+	Swings []SwingPlan
 }
 
 // Fight is the per-room combat aggregate. One Fight per RoomID at a

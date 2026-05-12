@@ -267,3 +267,14 @@
 
     +1 stamina regen per pulse.
   stamina_regen_add: 1
+- id: feat_two_weapon_grace
+  name: Two-Weapon Grace
+  background: false
+  description: |-
+    Years of paired-weapon drill — Sea Folk knife-and-shortsword
+    forms, Aiel spear-and-buckler, or the Warder twin-knife sets.
+    Your off-hand moves as readily as your main, and you wear out
+    no faster for the second blade.
+
+    Halves the cadence cost of off-hand swings.
+  off_hand_cost_mul: 0.5

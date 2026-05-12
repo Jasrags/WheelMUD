@@ -90,7 +90,7 @@ func TestActionCost_UnarmedNaked(t *testing.T) {
 // unarmed/naked baseline (0.9 × 1.0). Used by tests that don't wire
 // an ItemRepo and by score rendering when the cmd-layer hands in nil.
 func TestResolveGearFactors_NilRepo(t *testing.T) {
-	g := ResolveGearFactors(context.Background(), nil, creature.Equipment{})
+	g := ResolveGearFactors(context.Background(), nil, creature.Equipment{}, creature.SlotPrimaryWield)
 	if g.WeaponFactor != 0.90 || g.ArmorFactor != 1.00 {
 		t.Errorf("nil repo gear = (%.2f, %.2f), want (0.90, 1.00)",
 			g.WeaponFactor, g.ArmorFactor)
@@ -128,7 +128,7 @@ func TestResolveGearFactors_FullKit(t *testing.T) {
 	eq.Set(creature.SlotPrimaryWield, gs.ID)
 	eq.Set(creature.SlotArmor, pl.ID)
 
-	g := ResolveGearFactors(ctx, items, eq)
+	g := ResolveGearFactors(ctx, items, eq, creature.SlotPrimaryWield)
 	if g.WeaponFactor != 1.50 {
 		t.Errorf("weapon factor = %.2f, want 1.50", g.WeaponFactor)
 	}
@@ -191,10 +191,12 @@ func TestActorActionCost_BlademasterAttenuates(t *testing.T) {
 
 	bmCost := mgr.actorActionCost(ctx,
 		ActorRef{Kind: ActorKindCharacter, ID: bm.ID},
-		Action{Kind: ActionAttack, Variant: VariantNormal})
+		Action{Kind: ActionAttack, Variant: VariantNormal},
+		creature.SlotPrimaryWield)
 	plainCost := mgr.actorActionCost(ctx,
 		ActorRef{Kind: ActorKindCharacter, ID: plain.ID},
-		Action{Kind: ActionAttack, Variant: VariantNormal})
+		Action{Kind: ActionAttack, Variant: VariantNormal},
+		creature.SlotPrimaryWield)
 
 	// Plain: 3000ms × 1.5 (greatsword) × 1.0 (no armor) × 1.0 (human race) = 4500ms
 	// BM:    3000ms × (1+(1.5-1)*0.5) × 1.0 × 1.0 = 3750ms
@@ -277,10 +279,12 @@ func TestActorActionCost_HeavyVsLight(t *testing.T) {
 
 	heavyCost := mgr.actorActionCost(ctx,
 		ActorRef{Kind: ActorKindMob, ID: heavyMob.ID},
-		Action{Kind: ActionAttack, Variant: VariantNormal})
+		Action{Kind: ActionAttack, Variant: VariantNormal},
+		creature.SlotPrimaryWield)
 	lightCost := mgr.actorActionCost(ctx,
 		ActorRef{Kind: ActorKindMob, ID: lightMob.ID},
-		Action{Kind: ActionAttack, Variant: VariantNormal})
+		Action{Kind: ActionAttack, Variant: VariantNormal},
+		creature.SlotPrimaryWield)
 
 	// Heavy: 3s × 1.5 (two-handed) × 1.3 (heavy armor) = 5.85s
 	// Light: 3s × 0.8 (light weapon) × 1.0 (no armor)   = 2.40s

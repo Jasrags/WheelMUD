@@ -99,12 +99,15 @@ func TestStart_StampsIterativeBonuses(t *testing.T) {
 	if got.PendingSwings != len(want) {
 		t.Errorf("PendingSwings = %d, want %d", got.PendingSwings, len(want))
 	}
-	if len(got.IterativeBonuses) != len(want) {
-		t.Fatalf("IterativeBonuses = %v, want %v", got.IterativeBonuses, want)
+	if len(got.Swings) != len(want) {
+		t.Fatalf("Swings = %v, want %v", got.Swings, want)
 	}
-	for i, b := range got.IterativeBonuses {
-		if b != want[i] {
-			t.Errorf("IterativeBonuses[%d] = %d, want %d", i, b, want[i])
+	for i, sp := range got.Swings {
+		if sp.Bonus != want[i] {
+			t.Errorf("Swings[%d].Bonus = %d, want %d", i, sp.Bonus, want[i])
+		}
+		if sp.Slot != creature.SlotPrimaryWield {
+			t.Errorf("Swings[%d].Slot = %v, want SlotPrimaryWield", i, sp.Slot)
 		}
 	}
 }
@@ -158,7 +161,7 @@ func TestTick_IterativeChainAllThreeSwings(t *testing.T) {
 			break
 		}
 	}
-	base := mgr.actorActionCost(ctx, attacker, Action{Kind: ActionAttack, Target: defender})
+	base := mgr.actorActionCost(ctx, attacker, Action{Kind: ActionAttack, Target: defender}, creature.SlotPrimaryWield)
 	want := 3 * base
 	got := entry.NextActAt.Sub(time.Unix(0, 0).UTC())
 	if got != want {
