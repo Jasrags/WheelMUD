@@ -1774,6 +1774,37 @@ will need on top of those tables.
       (emote + deal_damage) and `divine_heal.lua` (say + heal).
       Wipe-list extended with the four new globals.
 
+      Phase F #32 slice 5b landed 2026-05-11. Three new APIs /
+      events: `wait(seconds, "script_name")` defers a fresh
+      `runner.Run` via `tick.AfterCtx` (range 1..300s; snapshots
+      firing EventCtx so the deferred run inherits actor / room
+      / event); `inventory(target_id)` returns a Lua table of
+      `{id, name, external_id}` (wraps `ItemRepo.ListInInventory`,
+      top-level only — container contents excluded); and the two
+      new trigger event kinds `on_login` / `on_logout`
+      (room-owned), backed by new `world.PlayerLoggedIn` /
+      `world.PlayerLoggedOut` events. Migration 0051 widens the
+      `triggers.event` CHECK via the SQLite table-rebuild dance
+      (preserves the 0046 fault columns + the 0044 indexes).
+      Login publish point: a package-level
+      `mode.SetLoginPublisher` hook wired by `main.go` at boot
+      and called from `promoteToGame` immediately after
+      `SetInWorld` — chosen over threading a bus through
+      promoteToGame's four call sites. Logout publish point:
+      `handleConnection`'s defer block, guarded on
+      `s.CharacterID != 0` so account-menu-only disconnects
+      don't publish phantoms. Late-binding for `wait()`'s
+      shutdown ctx: `main.go` declares a local var before the
+      luaHooks block and back-fills after `signal.NotifyContext`;
+      the wait factory captures a pointer and dereferences at
+      fire time. Dialogue scripts get `inventory()` but NOT
+      `wait()` (async inside interactive dialogue creates
+      surprising UX). Two demos shipped: `wait_demo.lua` and
+      `confiscate.lua`. Release wipe-list extended with `wait`,
+      `inventory`. Deferred: `wait()` from dialogue, sub-second
+      `wait()`, transitive `inventory()`, account-menu kick →
+      `on_logout`, login ordering vs. `on_enter`.
+
       Phase F #32 slice 3 landed 2026-05-10. Slice 3 broadens the API surface for content
       authors with three composing closures: `apply_affect(target_id,
       effect_id)` (resolves through the effects catalog + the §E

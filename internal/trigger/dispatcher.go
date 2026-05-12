@@ -45,6 +45,9 @@ func (d *Dispatcher) Start(ctx context.Context) {
 		eventbus.Subscribe[combat.CombatHit](d.bus, d.onCombatHit),
 		eventbus.Subscribe[combat.CombatDeath](d.bus, d.onCombatDeath),
 		eventbus.Subscribe[combat.CharacterDied](d.bus, d.onCharacterDied),
+		// Phase F #32 slice 5b — PC lifecycle events.
+		eventbus.Subscribe[world.PlayerLoggedIn](d.bus, d.onPlayerLoggedIn),
+		eventbus.Subscribe[world.PlayerLoggedOut](d.bus, d.onPlayerLoggedOut),
 	)
 	if d.bucket != nil {
 		d.cancelTk = d.bucket.Subscribe(d.onTick)
@@ -125,6 +128,39 @@ func (d *Dispatcher) onCombatDeath(ctx context.Context, ev combat.CombatDeath) {
 		// fall back to skipping if the lookup misses.
 		d.fireMobTemplate(ctx, ev.Victim.ID, ev.RoomID, ec)
 	}
+}
+
+// Phase F #32 slice 5b — onPlayerLoggedIn / onPlayerLoggedOut fan out
+// room-owned triggers when a character promotes into / disconnects
+// from the world. Both events carry the character's current room id;
+// zero room is a no-op (defensive — promoteToGame defaults to the
+// starter room, and the logout publish guards on s.CharacterID != 0
+// which implies CurrentRoomID is set).
+//
+// fanOutRoom is reused unchanged: room-owned triggers fire, and
+// mob-template owners get walked for the same event so a content
+// author can attach an `on_login` to a guard mob's template if they
+// want the guard to greet every newcomer regardless of room.
+func (d *Dispatcher) onPlayerLoggedIn(ctx context.Context, ev world.PlayerLoggedIn) {
+	if ev.RoomID == 0 {
+		return
+	}
+	ec := EventCtx{
+		Event: EventOnLogin, RoomID: ev.RoomID,
+		ActorKind: "character", ActorID: ev.CharacterID,
+	}
+	d.fanOutRoom(ctx, ev.RoomID, ec, EventOnLogin, nil)
+}
+
+func (d *Dispatcher) onPlayerLoggedOut(ctx context.Context, ev world.PlayerLoggedOut) {
+	if ev.RoomID == 0 {
+		return
+	}
+	ec := EventCtx{
+		Event: EventOnLogout, RoomID: ev.RoomID,
+		ActorKind: "character", ActorID: ev.CharacterID,
+	}
+	d.fanOutRoom(ctx, ev.RoomID, ec, EventOnLogout, nil)
 }
 
 func (d *Dispatcher) onCharacterDied(ctx context.Context, ev combat.CharacterDied) {

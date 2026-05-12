@@ -32,3 +32,27 @@ type PlayerSaid struct {
 	RoomID             int64
 	Text               string
 }
+
+// PlayerLoggedIn fires once when a character finishes promoteToGame —
+// i.e., the session has stamped CharacterID + CurrentRoomID and the
+// game mode is now driving input. Trigger dispatcher consumes this
+// to fire room-owned `on_login` triggers for the room the character
+// materialized in. Phase F #32 slice 5b. Published synchronously by
+// internal/mode/postauth.go's loginPublisher hook so any ordering
+// between this and PlayerEntered (which only fires on movement) is
+// deterministic — login does NOT currently publish a PlayerEntered.
+type PlayerLoggedIn struct {
+	CharacterID int64
+	RoomID      int64
+}
+
+// PlayerLoggedOut fires once when a session with an active character
+// disconnects. Published from handleConnection's defer block before
+// session.Registry.Unbind so trigger action handlers can still find
+// the session via the registry if they want a final write. Phase F
+// #32 slice 5b. Account-menu-only sessions (no character ever
+// selected) do NOT publish — the defer guards on s.CharacterID != 0.
+type PlayerLoggedOut struct {
+	CharacterID int64
+	RoomID      int64
+}

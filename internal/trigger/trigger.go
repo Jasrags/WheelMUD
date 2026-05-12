@@ -37,6 +37,9 @@ const (
 	EventOnAttack = repo.TriggerEventOnAttack
 	EventOnDeath  = repo.TriggerEventOnDeath
 	EventOnTick   = repo.TriggerEventOnTick
+	// Phase F #32 slice 5b — PC lifecycle events. Room-owned only.
+	EventOnLogin  = repo.TriggerEventOnLogin
+	EventOnLogout = repo.TriggerEventOnLogout
 )
 
 // OwnerRef is the resolved owner of a trigger at dispatch time. For

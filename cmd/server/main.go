@@ -185,6 +185,18 @@ func main() {
 	sessions := session.NewRegistry()
 	bus := eventbus.New()
 
+	// Phase F #32 slice 5b — wire the login publisher hook so
+	// promoteToGame publishes world.PlayerLoggedIn after each
+	// character finishes promotion. Single-shot setter; tests
+	// leave it nil. Wired before any listener starts so the first
+	// login publishes correctly.
+	mode.SetLoginPublisher(func(characterID, roomID int64) {
+		bus.Publish(context.Background(), world.PlayerLoggedIn{
+			CharacterID: characterID,
+			RoomID:      roomID,
+		})
+	})
+
 	newsCatalog, err := news.Load()
 	if err != nil {
 		slog.Error("Failed to load news catalog", "error", err)
@@ -808,6 +820,18 @@ func main() {
 	}
 	questEngine := quest.NewEngine(questCatalog, characters, rooms, audits, bus, sessions)
 
+	// Phase F #32 slice 5b — late-bound shutdown ctx for the wait()
+	// binding. The luaHooks block below builds the factory closure
+	// here, but srv.ctx (signal.NotifyContext) isn't assigned until
+	// after the registry is constructed. We capture a pointer to a
+	// local var here, populate it after the signal-ctx is created,
+	// and the factory dereferences at fire time. Safe because
+	// wait() can only be called from a script firing through the
+	// dispatcher — and the dispatcher's tick bucket doesn't start
+	// until scheduler.Start(ctx), which itself runs after
+	// signal.NotifyContext.
+	var srvShutdownCtx context.Context
+
 	triggerActions := trigger.DefaultActions()
 	luaHooks := trigger.LuaHooks{
 		ApplyAffect:   makeLuaApplyAffect(characters, effectsCatalog),
@@ -824,6 +848,9 @@ func main() {
 		Heal:         makeLuaHeal(combatMgr, characters, mobs),
 		TransferItem: makeLuaTransferItem(items),
 		DropItem:     makeLuaDropItem(items),
+		// Phase F #32 slice 5b — async + inventory iter.
+		Wait:      makeLuaWait(scheduler, luaRunner, &srvShutdownCtx),
+		Inventory: makeLuaInventory(items),
 	}
 	if questEngine != nil {
 		luaHooks.Accept = questEngine.AcceptQuest
@@ -965,6 +992,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	srv.stopSignal = stop
+	// Phase F #32 slice 5b — back-fill the late-bound shutdown ctx
+	// captured by the wait() factory's closure. The runner.Stop()
+	// in the shutdown drain will also interrupt any in-flight
+	// deferred script, but this propagates cancellation to pending
+	// timers via tick.AfterCtx's watcher goroutine BEFORE bus.Stop.
+	srvShutdownCtx = ctx
 
 	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
 	if err != nil {
@@ -1615,6 +1648,18 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 				}
 				return dropItem(ctx, itemID, s.CurrentRoomID)
 			}
+			// V5b surface for dialogue (Phase F #32 slice 5b) —
+			// inventory iter is wired so "do you have X?" gates
+			// work in dialogue. wait() is deliberately NOT wired
+			// here in V1: dialogue scripts are short interactive
+			// flows where async deferral creates surprising UX.
+			// Authors who want delayed effects from a dialogue
+			// should fire a trigger from a dialogue effect and
+			// schedule the wait from there.
+			inventoryHook := makeLuaInventory(items)
+			bindings.Inventory = func(targetID int64) ([]luaeng.InventoryEntry, error) {
+				return inventoryHook(ctx, targetID)
+			}
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
 			// classified Lua error makes the unbound state visible
@@ -1645,6 +1690,19 @@ func (srv *server) handleConnection(s *telnet.Session) {
 	// no-op. Sessions that never authenticated have AccountID == 0
 	// and the registry has no entry to remove.
 	defer func() {
+		// Phase F #32 slice 5b — publish world.PlayerLoggedOut for
+		// sessions that had an active character. Account-menu-only
+		// disconnects (CharacterID == 0) do NOT publish, mirroring
+		// the groups cleanup guard. Publish BEFORE the Unbind so
+		// trigger handlers can still resolve the session via the
+		// registry if they want a final write.
+		if s.CharacterID != 0 && srv.bus != nil {
+			_, _, roomID := s.InWorld()
+			srv.bus.Publish(context.Background(), world.PlayerLoggedOut{
+				CharacterID: s.CharacterID,
+				RoomID:      roomID,
+			})
+		}
 		if s.AccountID != 0 {
 			srv.sessions.Unbind(s.AccountID, s)
 		}
@@ -2096,6 +2154,115 @@ func makeLuaDropItem(items repo.ItemRepo) func(context.Context, int64, int64) er
 			return fmt.Errorf("item %d is not in a character's inventory (room=%d parent=%d)", itemID, it.RoomID, it.ParentItemID)
 		}
 		return items.TransferOwnerToRoom(ctx, itemID, it.OwnerCharacterID, currentRoomID)
+	}
+}
+
+// Phase F #32 slice 5b factories.
+
+// MinWaitSeconds / MaxWaitSeconds bound the wait() binding's delay
+// arg. Sub-1 second is rejected because authors who want "next
+// tick" can use the existing on_tick surface; > 300s (5 min) is
+// almost always an author mistake. Tune up later if a content
+// author hits the cap legitimately.
+const (
+	MinWaitSeconds int32 = 1
+	MaxWaitSeconds int32 = 300
+)
+
+// makeLuaWait returns the cmd-layer factory for the wait() Lua
+// binding. Per-call the factory snapshots the firing EventCtx
+// (passed by the trigger-layer adapter) so the deferred run sees
+// the same actor/room/event the original script did.
+//
+// srvShutdownCtxPtr is a pointer to a context.Context that's
+// assigned by main() after signal.NotifyContext. The factory
+// dereferences at fire time — never at registration time — so the
+// late binding is safe even though the trigger luaHooks block
+// runs before signal.NotifyContext. tick.AfterCtx tolerates nil
+// gracefully (degrades to s.After) if the back-fill never landed
+// for some reason; in practice scheduler.Start runs after the
+// back-fill so any wait() call observes a non-nil ctx.
+func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *context.Context) func(context.Context, trigger.EventCtx, int32, string) error {
+	return func(_ context.Context, ev trigger.EventCtx, seconds int32, scriptName string) error {
+		if seconds < MinWaitSeconds {
+			return fmt.Errorf("wait seconds must be >= %d (got %d)", MinWaitSeconds, seconds)
+		}
+		if seconds > MaxWaitSeconds {
+			return fmt.Errorf("wait seconds must be <= %d (got %d)", MaxWaitSeconds, seconds)
+		}
+		if strings.TrimSpace(scriptName) == "" {
+			return fmt.Errorf("wait script name must be non-empty")
+		}
+		// Snapshot the firing CtxView so the deferred script sees
+		// the same world context. The trigger.EventCtx → CtxView
+		// translation mirrors ctxViewFromEvent in actions_lua.go.
+		ctxView := luaeng.CtxView{
+			Event:      string(ev.Event),
+			RoomID:     ev.RoomID,
+			ActorID:    ev.ActorID,
+			ActorKind:  ev.ActorKind,
+			TargetID:   ev.TargetID,
+			TargetKind: ev.TargetKind,
+			Text:       ev.Text,
+			Bucket:     ev.BucketName,
+		}
+		// Resolve the shutdown ctx at schedule time. If the
+		// back-fill hasn't run yet (defensive — shouldn't happen in
+		// practice), use context.Background and accept the
+		// no-auto-cancel posture for this one scheduled run.
+		shutdownCtx := context.Background()
+		if srvShutdownCtxPtr != nil && *srvShutdownCtxPtr != nil {
+			shutdownCtx = *srvShutdownCtxPtr
+		}
+		fire := func(handlerCtx context.Context) {
+			// The deferred Run inherits the shutdown ctx, NOT
+			// handlerCtx (the scheduler's per-pulse ctx).
+			// shutdownCtx is the right parent for cancellation on
+			// SIGINT/SIGTERM; runner.Run wraps it with the 50ms
+			// CallTimeout internally.
+			bindings := luaeng.APIBindings{
+				Ctx: ctxView,
+				// V5b deferred scripts get NO mutation surface in
+				// V1 — bindings stay minimal (just ctx + logger).
+				// If a content author needs to chain mutations
+				// through wait(), they can fire a fresh trigger
+				// from inside the deferred script. Keeping the
+				// surface narrow here avoids smuggling stale repo
+				// handles into the deferred call.
+			}
+			if err := runner.Run(shutdownCtx, scriptName, func(l *luastd.LState) { bindings.Bind(l) }); err != nil {
+				slog.Debug("wait: deferred script run failed",
+					"script", scriptName, "error", err)
+			}
+		}
+		tick.AfterCtx(scheduler, shutdownCtx, time.Duration(seconds)*time.Second, fire)
+		return nil
+	}
+}
+
+// makeLuaInventory returns the cmd-layer factory for the
+// inventory(target_id) Lua binding. Wraps
+// ItemRepo.ListInInventory (top-level items only — container
+// contents excluded). Empty inventory returns an empty slice, not
+// an error.
+func makeLuaInventory(items repo.ItemRepo) func(context.Context, int64) ([]luaeng.InventoryEntry, error) {
+	return func(ctx context.Context, targetID int64) ([]luaeng.InventoryEntry, error) {
+		if targetID == 0 {
+			return nil, fmt.Errorf("target id must be non-zero")
+		}
+		list, err := items.ListInInventory(ctx, targetID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]luaeng.InventoryEntry, 0, len(list))
+		for _, it := range list {
+			out = append(out, luaeng.InventoryEntry{
+				ID:         it.ID,
+				Name:       it.Name,
+				ExternalID: it.ExternalID,
+			})
+		}
+		return out, nil
 	}
 }
 

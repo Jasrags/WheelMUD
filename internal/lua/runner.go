@@ -191,14 +191,16 @@ func (r *Runner) release(l *gluua.LState) {
 	// adds the quest table + push_mode. V3 (Phase F #32 slice 3)
 	// adds apply_affect, give_item, target. V4 (Phase F #32 slice 4)
 	// adds room + clock. V5a (Phase F #32 slice 5a) adds
-	// deal_damage, heal, transfer_item, drop_item. Reset is cheap;
-	// keep the list in lock-step with APIBindings.Bind.
+	// deal_damage, heal, transfer_item, drop_item. V5b (Phase F #32
+	// slice 5b) adds wait, inventory. Reset is cheap; keep the list
+	// in lock-step with APIBindings.Bind.
 	for _, name := range []string{
 		"say", "emote", "log", "ctx",
 		"quest", "push_mode",
 		"apply_affect", "give_item", "target",
 		"room", "clock",
 		"deal_damage", "heal", "transfer_item", "drop_item",
+		"wait", "inventory",
 	} {
 		l.SetGlobal(name, gluua.LNil)
 	}

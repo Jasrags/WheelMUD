@@ -795,12 +795,41 @@ Content multiplier. Without this the world is static.
       `divine_heal.lua` (say + heal). Wipe-list extended with
       the four new globals so per-call state can't leak across
       pool borrows.
-    - Slice 5b (sketch): `wait(seconds, "script_name")` defers a
-      fresh `runner.Run` via `tick.AfterCtx`; `on_login` /
-      `on_logout` room-owned triggers (CHECK migration on
-      `triggers.event` + publish from `mode/postauth::
-      promoteToGame` and the connection defer in `cmd/server/
-      main.go`).
+    - **Slice 5b — landed 2026-05-11**: async + login lifecycle +
+      inventory iter. Three new APIs / events:
+      `wait(seconds, "script_name")` defers a fresh `runner.Run`
+      via `tick.AfterCtx`; range 1..300s; snapshots the firing
+      `EventCtx` so the deferred run sees the same actor/room
+      context. `inventory(target_id)` returns a Lua table of
+      `{id, name, external_id}` for the target's top-level
+      inventory (wraps `ItemRepo.ListInInventory`). `on_login` /
+      `on_logout` are two new trigger event kinds (room-owned)
+      backed by new `world.PlayerLoggedIn{CharacterID, RoomID}`
+      and `world.PlayerLoggedOut{CharacterID, RoomID}` events.
+      Migration 0051 widens the `triggers.event` CHECK via the
+      SQLite table-rebuild dance (preserves the
+      consecutive_faults / disabled columns from 0046 and the
+      `idx_triggers_owner_event` / `idx_triggers_event` indexes
+      from 0044). Login publish point: a new package-level hook
+      `mode.SetLoginPublisher` is wired by `main.go` at boot and
+      called from `promoteToGame` immediately after `SetInWorld`
+      — chosen over threading a bus through promoteToGame's four
+      call sites (character_select, character_create x2,
+      account_menu_play). Logout publish point: `handleConnection`'s
+      defer block, guarded on `s.CharacterID != 0` so account-
+      menu-only disconnects don't publish a phantom logout.
+      Late-binding for `wait()`'s shutdown ctx: `main.go` declares
+      `var srvShutdownCtx context.Context` before the luaHooks
+      block and back-fills it after `signal.NotifyContext`; the
+      wait factory captures a pointer and dereferences at fire
+      time (safe because scheduler.Start runs after the back-fill).
+      Dialogue scripts get `inventory()` but NOT `wait()` —
+      async deferral inside an interactive dialogue creates
+      surprising UX; authors who need it route through a trigger.
+      Two demo scripts shipped: `wait_demo.lua`
+      (emote + scheduled script_strike) and `confiscate.lua`
+      (inventory iter + transfer_item composition). Release
+      wipe-list extended with `wait`, `inventory`.
     - Slice 6: OLC `tedit` (depends on Phase G).
 
 32a. **Authored mob paths + pathfinding** (§15 / §10). Today

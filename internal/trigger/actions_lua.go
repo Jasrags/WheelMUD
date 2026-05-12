@@ -80,6 +80,22 @@ type LuaHooks struct {
 	Heal         func(ctx context.Context, targetID int64, amount int32) error
 	TransferItem func(ctx context.Context, itemID, toOwnerID int64) error
 	DropItem     func(ctx context.Context, itemID, currentRoomID int64) error
+
+	// V5b (Phase F #32 slice 5b) — async deferral + inventory iter.
+	//
+	// Wait takes a snapshot of the firing EventCtx so the deferred
+	// script sees the same actor/room/event context. The cmd-layer
+	// factory uses srv.scheduler + srv.ctx (signal.NotifyContext) so
+	// shutdown drain cancels pending timers via tick.AfterCtx
+	// before bus.Stop. Range validation (1..300 seconds) happens at
+	// the factory layer so test harnesses passing nil-bound hooks
+	// observe the classified Lua error instead of a range refusal.
+	//
+	// Inventory takes the script-supplied targetID directly — no
+	// actor-kind guard at the trigger layer (read APIs are
+	// unguarded across slices 3+4+5a).
+	Wait      func(ctx context.Context, ev EventCtx, seconds int32, scriptName string) error
+	Inventory func(ctx context.Context, targetID int64) ([]intlua.InventoryEntry, error)
 }
 
 // LuaQuestHooks is the legacy slice-2 alias. Kept as a type alias
@@ -141,6 +157,8 @@ func luaActionHandler(runner *intlua.Runner, hooks LuaHooks) ActionHandler {
 			Heal:           makeHealHook(ctx, hooks.Heal),
 			TransferItem:   makeTransferItemHook(ctx, hooks.TransferItem),
 			DropItem:       makeDropItemHook(ctx, ev, hooks.DropItem),
+			Wait:           makeWaitHook(ctx, ev, hooks.Wait),
+			Inventory:      makeInventoryHook(ctx, hooks.Inventory),
 		}
 		// PushMode stays unbound on triggers — there's no surrounding
 		// session to push a mode onto. The classified Lua error is
@@ -339,6 +357,34 @@ func makeDropItemHook(ctx context.Context, ev EventCtx, hook func(context.Contex
 			return fmt.Errorf("drop_item requires a room context (event %q has no room)", ev.Event)
 		}
 		return hook(ctx, itemID, ev.RoomID)
+	}
+}
+
+// V5b adapters (Phase F #32 slice 5b).
+//
+// makeWaitHook snapshots the firing EventCtx and forwards to the
+// underlying factory closure. The factory captures the scheduler,
+// runner, and shutdown ctx so the deferred run sees a consistent
+// world. No actor-kind / room-context guard: a script firing from
+// any owner can schedule a delayed catalog run; range validation
+// (1..300) happens at the factory layer.
+func makeWaitHook(ctx context.Context, ev EventCtx, hook func(context.Context, EventCtx, int32, string) error) func(int32, string) error {
+	if hook == nil {
+		return nil
+	}
+	return func(seconds int32, scriptName string) error {
+		return hook(ctx, ev, seconds, scriptName)
+	}
+}
+
+// makeInventoryHook is read-only — no actor-kind guard. Mirrors
+// makeTargetHPHook's shape.
+func makeInventoryHook(ctx context.Context, hook func(context.Context, int64) ([]intlua.InventoryEntry, error)) func(int64) ([]intlua.InventoryEntry, error) {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64) ([]intlua.InventoryEntry, error) {
+		return hook(ctx, targetID)
 	}
 }
 

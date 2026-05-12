@@ -30,6 +30,32 @@ type postAuthDeps struct {
 	accountUsername string
 }
 
+// LoginEventFunc is the optional hook fired by promoteToGame
+// immediately after the character finishes promotion into the world
+// (post-SetInWorld). main.go wires a closure that publishes
+// world.PlayerLoggedIn on the eventbus so the trigger dispatcher can
+// fan out `on_login` to room-owned triggers. nil disables — tests
+// leave it unset and the publish is skipped.
+//
+// Lives as a package-level var rather than a constructor parameter
+// because promoteToGame has four call sites (character_select,
+// character_create x2, account_menu_play) and threading a closure
+// through every one would balloon the diff without adding clarity.
+// Tests in this package never set the publisher; production sets it
+// once at boot before accepting connections.
+type LoginEventFunc func(characterID, roomID int64)
+
+// loginPublisher is the global hook. SetLoginPublisher installs it.
+// promoteToGame nil-checks before calling so an uninitialised test
+// harness sees no publish.
+var loginPublisher LoginEventFunc
+
+// SetLoginPublisher installs the optional login publisher. Called
+// once at boot by cmd/server/main.go. Safe to call with nil to
+// clear (tests). Not concurrency-safe by design — meant to be set
+// before the listener accepts its first connection.
+func SetLoginPublisher(f LoginEventFunc) { loginPublisher = f }
+
 // MOTDFunc is the hook fired once per successful login (immediately
 // after Login.handlePassword / Create.handleConfirm succeed) by
 // postAuth. It receives the watermark used to compute the unread
@@ -178,6 +204,12 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 		roomID = repo.StarterRoomID
 	}
 	s.SetInWorld(c.ID, c.Name, roomID)
+	// Phase F #32 slice 5b — publish world.PlayerLoggedIn so the
+	// trigger dispatcher can fire room-owned on_login triggers. The
+	// publisher is wired by main.go at boot; nil in tests.
+	if loginPublisher != nil {
+		loginPublisher(c.ID, roomID)
+	}
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
 	s.SetLastNewsSeen(c.LastNewsSeen)

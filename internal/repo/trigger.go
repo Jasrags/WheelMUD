@@ -25,6 +25,14 @@ const (
 	TriggerEventOnAttack TriggerEvent = "on_attack"
 	TriggerEventOnDeath  TriggerEvent = "on_death"
 	TriggerEventOnTick   TriggerEvent = "on_tick"
+	// Phase F #32 slice 5b — PC lifecycle events. on_login fires
+	// once when a character finishes promoteToGame; on_logout fires
+	// once when a session with an active character disconnects.
+	// Both are room-owned: the trigger attaches to the character's
+	// last-known room (login = promoted-into room; logout = the
+	// room the character was standing in at disconnect).
+	TriggerEventOnLogin  TriggerEvent = "on_login"
+	TriggerEventOnLogout TriggerEvent = "on_logout"
 )
 
 // Trigger is one declarative dispatch row. The action vocabulary
@@ -96,7 +104,8 @@ func ValidTriggerOwnerKind(k TriggerOwnerKind) bool {
 func ValidTriggerEvent(e TriggerEvent) bool {
 	switch e {
 	case TriggerEventOnEnter, TriggerEventOnSay, TriggerEventOnAttack,
-		TriggerEventOnDeath, TriggerEventOnTick:
+		TriggerEventOnDeath, TriggerEventOnTick,
+		TriggerEventOnLogin, TriggerEventOnLogout:
 		return true
 	}
 	return false

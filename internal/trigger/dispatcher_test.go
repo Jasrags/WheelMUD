@@ -189,3 +189,59 @@ func TestDispatcher_StopUnsubscribes(t *testing.T) {
 		t.Fatalf("non-matching room raised calls = %d", cap.calls.Load())
 	}
 }
+
+// Phase F #32 slice 5b — PlayerLoggedIn / PlayerLoggedOut dispatch
+// to room-owned on_login / on_logout triggers. Zero room is a no-op
+// (defensive — the producer guards against this too).
+
+func TestDispatcher_PlayerLoggedIn_RoomOwner(t *testing.T) {
+	bus, cap, _ := newDispatcherFixture(t, []repo.Trigger{
+		{ID: 1, OwnerKind: OwnerRoom, OwnerID: 50, Event: EventOnLogin, Action: "rec"},
+	})
+	bus.Publish(context.Background(), world.PlayerLoggedIn{CharacterID: 9, RoomID: 50})
+	if cap.calls.Load() != 1 {
+		t.Fatalf("calls = %d", cap.calls.Load())
+	}
+	if cap.last.Event != EventOnLogin || cap.last.RoomID != 50 {
+		t.Fatalf("ctx: %+v", cap.last)
+	}
+	if cap.last.ActorKind != "character" || cap.last.ActorID != 9 {
+		t.Fatalf("actor: %+v", cap.last)
+	}
+}
+
+func TestDispatcher_PlayerLoggedIn_ZeroRoom_NoOp(t *testing.T) {
+	bus, cap, _ := newDispatcherFixture(t, []repo.Trigger{
+		{ID: 1, OwnerKind: OwnerRoom, OwnerID: 50, Event: EventOnLogin, Action: "rec"},
+	})
+	bus.Publish(context.Background(), world.PlayerLoggedIn{CharacterID: 9, RoomID: 0})
+	if cap.calls.Load() != 0 {
+		t.Fatalf("zero room must be a no-op, got %d calls", cap.calls.Load())
+	}
+}
+
+func TestDispatcher_PlayerLoggedOut_RoomOwner(t *testing.T) {
+	bus, cap, _ := newDispatcherFixture(t, []repo.Trigger{
+		{ID: 1, OwnerKind: OwnerRoom, OwnerID: 77, Event: EventOnLogout, Action: "rec"},
+	})
+	bus.Publish(context.Background(), world.PlayerLoggedOut{CharacterID: 11, RoomID: 77})
+	if cap.calls.Load() != 1 {
+		t.Fatalf("calls = %d", cap.calls.Load())
+	}
+	if cap.last.Event != EventOnLogout || cap.last.RoomID != 77 {
+		t.Fatalf("ctx: %+v", cap.last)
+	}
+	if cap.last.ActorID != 11 {
+		t.Fatalf("actor: %+v", cap.last)
+	}
+}
+
+func TestDispatcher_PlayerLoggedOut_ZeroRoom_NoOp(t *testing.T) {
+	bus, cap, _ := newDispatcherFixture(t, []repo.Trigger{
+		{ID: 1, OwnerKind: OwnerRoom, OwnerID: 77, Event: EventOnLogout, Action: "rec"},
+	})
+	bus.Publish(context.Background(), world.PlayerLoggedOut{CharacterID: 11, RoomID: 0})
+	if cap.calls.Load() != 0 {
+		t.Fatalf("zero room must be a no-op, got %d calls", cap.calls.Load())
+	}
+}

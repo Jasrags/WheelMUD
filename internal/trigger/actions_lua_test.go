@@ -658,3 +658,76 @@ func TestLuaAction_DropItem_ZeroRoomFaults(t *testing.T) {
 		t.Fatalf("err = %v; want room-context refusal", err)
 	}
 }
+
+// Phase F #32 slice 5b — V5b wait + inventory dispatch through the
+// trigger lua action. Wait snapshots the firing EventCtx so the
+// deferred run inherits actor/room context; Inventory is read-only
+// and unguarded by actor kind.
+
+func TestLuaAction_Wait_DispatchesToHookWithEventCtxSnapshot(t *testing.T) {
+	cat := loadCatalog(t, "wt", `wait(5, "follow_up")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	type call struct {
+		EvActor int64
+		EvRoom  int64
+		Seconds int32
+		Script  string
+	}
+	var seen call
+	hooks := LuaHooks{
+		Wait: func(_ context.Context, ev EventCtx, seconds int32, scriptName string) error {
+			seen = call{
+				EvActor: ev.ActorID,
+				EvRoom:  ev.RoomID,
+				Seconds: seconds,
+				Script:  scriptName,
+			}
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "wt"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnSay, ActorKind: "character", ActorID: 99, RoomID: 200}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seen.EvActor != 99 || seen.EvRoom != 200 ||
+		seen.Seconds != 5 || seen.Script != "follow_up" {
+		t.Fatalf("hook args: %+v", seen)
+	}
+}
+
+func TestLuaAction_Inventory_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "inv", `
+local items = inventory(42)
+if #items ~= 1 then error("len=" .. #items) end
+if items[1].id ~= 101 then error("id=" .. items[1].id) end
+`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var sawTarget int64
+	hooks := LuaHooks{
+		Inventory: func(_ context.Context, targetID int64) ([]intlua.InventoryEntry, error) {
+			sawTarget = targetID
+			return []intlua.InventoryEntry{
+				{ID: 101, Name: "sword", ExternalID: "tr.sword"},
+			}, nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "inv"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnEnter, ActorKind: "character", ActorID: 1, RoomID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawTarget != 42 {
+		t.Fatalf("hook target = %d, want 42", sawTarget)
+	}
+}

@@ -94,6 +94,34 @@ type APIBindings struct {
 	Heal         func(targetID int64, amount int32) error
 	TransferItem func(itemID, toOwnerID int64) error
 	DropItem     func(itemID int64) error
+
+	// V5b surface (Phase F #32 slice 5b) — async + read iterator.
+	//
+	// Wait defers a fresh runner.Run for scriptName after `seconds`
+	// real seconds via tick.AfterCtx. Seconds is clamped at the
+	// hook layer (1..300); the binding only rejects sub-1 here so
+	// the trigger fault budget sees the same range refusal as the
+	// cmd-layer factory. The deferred run inherits the firing
+	// script's CtxView so chained scripts see consistent
+	// actor/room/event context.
+	//
+	// Inventory returns the target character's top-level
+	// inventory (items owned via owner_character_id; container
+	// contents excluded per V1 scope). Lua-side returns a
+	// 1-indexed table of {id, name, external_id} entries; empty
+	// inventory yields an empty table (never nil).
+	Wait      func(seconds int32, scriptName string) error
+	Inventory func(targetID int64) ([]InventoryEntry, error)
+}
+
+// InventoryEntry is the per-item record the `inventory(target_id)`
+// Lua binding renders into a sub-table. Kept lightweight (no Stats,
+// no flags) — scripts that need more should call back through the
+// item repo via additional bindings as they're added.
+type InventoryEntry struct {
+	ID         int64
+	Name       string
+	ExternalID string
 }
 
 // Bind registers the V1 API globals on l. Call this from the bind
@@ -350,6 +378,44 @@ func (b APIBindings) Bind(l *gluua.LState) {
 			return 0
 		}
 		return 0
+	}))
+
+	// V5b surface (Phase F #32 slice 5b) — async + inventory iter.
+	l.SetGlobal("wait", l.NewFunction(func(L *gluua.LState) int {
+		seconds := int32(L.CheckInt(1))
+		scriptName := L.CheckString(2)
+		if b.Wait == nil {
+			L.RaiseError("wait not bound in this context")
+			return 0
+		}
+		if err := b.Wait(seconds, scriptName); err != nil {
+			L.RaiseError("wait(%d, %q) failed: %s", seconds, scriptName, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("inventory", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		if b.Inventory == nil {
+			L.RaiseError("inventory not bound in this context")
+			return 0
+		}
+		entries, err := b.Inventory(targetID)
+		if err != nil {
+			L.RaiseError("inventory(%d) failed: %s", targetID, err.Error())
+			return 0
+		}
+		out := L.NewTable()
+		for i, e := range entries {
+			row := L.NewTable()
+			row.RawSetString("id", gluua.LNumber(e.ID))
+			row.RawSetString("name", gluua.LString(e.Name))
+			row.RawSetString("external_id", gluua.LString(e.ExternalID))
+			out.RawSetInt(i+1, row)
+		}
+		L.Push(out)
+		return 1
 	}))
 }
 
