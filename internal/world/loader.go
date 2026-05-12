@@ -176,7 +176,8 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 			roomZones[r.ID] = zid
 		}
 	}
-	if err := insertMobs(ctx, tx, w.Mobs, roomIDs, roomZones); err != nil {
+	roomAdjacency := buildRoomAdjacency(w.Rooms)
+	if err := insertMobs(ctx, tx, w.Mobs, roomIDs, roomZones, roomAdjacency); err != nil {
 		return err
 	}
 
@@ -531,7 +532,62 @@ func encodeItemStatsJSON(s repo.ItemStats) (string, error) {
 // `mobs.yaml` as before and the loader manufactures defaults for
 // the rest of the Core stat block (Medium humanoid, HP 1, Defense
 // 10, ChallengeCode 'A').
-func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones map[string]int64) error {
+// buildRoomAdjacency returns a map from room external_id → set of
+// reachable room external_ids via walkable exits at load time.
+// Hidden / closed / locked / NoPass exits are excluded so the
+// adjacency mirrors the wander tick's exitWalkable gate. Used by
+// Phase F #32a slice 1 to validate authored mob paths.
+func buildRoomAdjacency(rooms []Room) map[string]map[string]bool {
+	adj := make(map[string]map[string]bool, len(rooms))
+	for _, r := range rooms {
+		set := make(map[string]bool, len(r.Exits))
+		for _, ex := range r.Exits {
+			if ex.To == "" {
+				continue
+			}
+			if ex.Hidden || ex.Closed || ex.Locked || ex.NoPass {
+				continue
+			}
+			set[ex.To] = true
+		}
+		adj[r.ID] = set
+	}
+	return adj
+}
+
+// validateMobPath checks the Phase F #32a slice 1 invariants on an
+// authored mob path: length >= 2, no duplicate entries, each entry
+// resolves to a known room external_id, and each consecutive pair
+// (incl. the closed-loop wraparound) is connected by a walkable
+// exit. Returns a wrapped error naming the offending entry.
+func validateMobPath(mobID string, path []string, roomIDs map[string]int64, adj map[string]map[string]bool) error {
+	if len(path) < 2 {
+		return fmt.Errorf("mob %q: path must have at least 2 entries, got %d", mobID, len(path))
+	}
+	seen := make(map[string]bool, len(path))
+	for _, ext := range path {
+		if _, ok := roomIDs[ext]; !ok {
+			return fmt.Errorf("mob %q: path room %q is not a known room external_id", mobID, ext)
+		}
+		if seen[ext] {
+			return fmt.Errorf("mob %q: path contains duplicate room %q", mobID, ext)
+		}
+		seen[ext] = true
+	}
+	// Adjacency: each path[i] → path[(i+1)%len] must have a walkable
+	// exit, so the closed loop is traversable end-to-end.
+	for i := 0; i < len(path); i++ {
+		from := path[i]
+		to := path[(i+1)%len(path)]
+		if !adj[from][to] {
+			return fmt.Errorf("mob %q: no walkable exit from %q to %q (path step %d)",
+				mobID, from, to, i)
+		}
+	}
+	return nil
+}
+
+func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones map[string]int64, roomAdj map[string]map[string]bool) error {
 	templates := repo.NewSQLiteMobTemplateRepo(tx)
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
 	shops := repo.NewSQLiteShopRepo(tx)
@@ -550,11 +606,29 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 		if m.WanderChance != nil {
 			wander = *m.WanderChance
 		}
+		if len(m.Path) > 0 {
+			if err := validateMobPath(m.ID, m.Path, roomIDs, roomAdj); err != nil {
+				return err
+			}
+		}
+		// PathRoomIDs is the resolved-at-boot cache. Built here so
+		// the wander tick reads internal room IDs without re-resolving
+		// per pulse; the persisted external_ids on the column stay
+		// the canonical form.
+		var pathRoomIDs []int64
+		if len(m.Path) > 0 {
+			pathRoomIDs = make([]int64, len(m.Path))
+			for i, ext := range m.Path {
+				pathRoomIDs[i] = roomIDs[ext]
+			}
+		}
 		tpl := creature.MobTemplate{
 			ExternalID:    m.ID,
 			ChallengeCode: 'A',
 			Organization:  "solitary",
 			WanderChance:  wander,
+			Path:          append([]string(nil), m.Path...),
+			PathRoomIDs:   pathRoomIDs,
 			GoldDice:      m.GoldDice,
 			XPValue:       m.XPValue,
 			ShortDesc:     m.Short,

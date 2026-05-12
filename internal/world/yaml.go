@@ -205,6 +205,16 @@ type Mob struct {
 	// are clamped at the repo layer.
 	WanderChance *float64 `yaml:"wander_chance,omitempty"`
 
+	// Path is the optional authored closed-loop sequence of room
+	// external_ids this mob walks on every wander tick (Phase F
+	// #32a slice 1). When set, the wander handler ignores
+	// WanderChance and steps the mob along the sequence using the
+	// existing walkable-exit gate. Validation: length >= 2, no
+	// duplicates, each consecutive pair (incl. wraparound) is
+	// connected by a walkable exit. Ping-pong mode is deferred and
+	// would need a direction flag on mob_instances.
+	Path []string `yaml:"path,omitempty"`
+
 	// GoldDice rolls a coin pile into the corpse on death (Phase D
 	// §19 polish). Format "NdM" or "NdM+K"; empty means no coin
 	// drop. Stored on the mob template as a string and parsed at

@@ -34,7 +34,8 @@ const templateExtraColumns = `challenge_code, organization, behavior_flags,
 		natural_attacks_json, special_attacks_json, traits_json,
 		advancement_json, climate_json, terrain_json, trigger_scripts_json,
 		xp_value,
-		dialogue_json`
+		dialogue_json,
+		path`
 
 // clampWanderChance pins values to the CHECK-enforced [0, 1] range
 // so a Create with an out-of-range field reports the typo via the
@@ -86,6 +87,13 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 
 	args := []any{t.ExternalID, t.Core.Name, strings.ToLower(t.Core.Name)}
 	args = append(args, coreValues(t.Core, j.dr, j.resists)...)
+	// pathColumn is NULL when no path is authored so the wander tick's
+	// "has path?" branch can short-circuit on a single NULL check
+	// rather than parsing the empty JSON `[]` for every wandering mob.
+	var pathColumn sql.NullString
+	if len(t.Path) > 0 {
+		pathColumn = sql.NullString{String: j.path, Valid: true}
+	}
 	args = append(args,
 		challengeCode, t.Organization, t.BehaviorFlags,
 		clampWanderChance(t.WanderChance),
@@ -97,6 +105,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		j.advancement, j.climate, j.terrain, j.scripts,
 		t.XPValue,
 		dialogueJSON,
+		pathColumn,
 		time.Now().UTC(),
 	)
 
@@ -181,6 +190,7 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 		challengeCode string
 		shopJSON      sql.NullString
 		dialogueJSON  sql.NullString
+		pathColumn    sql.NullString
 		taintImmune   int
 		fadeTicks     int64
 	)
@@ -197,6 +207,7 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 		&j.advancement, &j.climate, &j.terrain, &j.scripts,
 		&t.XPValue,
 		&dialogueJSON,
+		&pathColumn,
 	)
 	if err := s.Scan(dest...); err != nil {
 		return creature.MobTemplate{}, fmt.Errorf("scan mob_template: %w", err)
@@ -207,6 +218,12 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 	t.TaintImmune = taintImmune != 0
 	t.FadeOnLinkMasterTimer = time.Duration(fadeTicks) * time.Second
 	t.Core.ID = t.ID
+	// pathColumn is nullable; unmarshalInto handles an empty string as
+	// "no entries" so a NULL row leaves t.Path nil (which the loader +
+	// wander tick both branch on).
+	if pathColumn.Valid {
+		j.path = pathColumn.String
+	}
 	if err := j.unmarshalInto(&t); err != nil {
 		return creature.MobTemplate{}, err
 	}
@@ -249,6 +266,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		challengeCode string
 		shopJSON      sql.NullString
 		dialogueJSON  sql.NullString
+		pathColumn    sql.NullString
 		taintImmune   int
 		fadeTicks     int64
 	)
@@ -265,6 +283,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		&j.advancement, &j.climate, &j.terrain, &j.scripts,
 		&t.XPValue,
 		&dialogueJSON,
+		&pathColumn,
 	)
 
 	err := r.db.QueryRowContext(ctx, query, arg).Scan(dest...)
@@ -282,6 +301,9 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 	t.FadeOnLinkMasterTimer = time.Duration(fadeTicks) * time.Second
 	t.Core.ID = t.ID
 
+	if pathColumn.Valid {
+		j.path = pathColumn.String
+	}
 	if err := j.unmarshalInto(&t); err != nil {
 		return creature.MobTemplate{}, err
 	}

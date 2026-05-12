@@ -627,7 +627,28 @@ type MobTemplate struct {
 	// mobs that should drift (village animals, drifters). Mobs with
 	// scheduled routes (planned future feature) will keep
 	// WanderChance at 0 and use the route system instead.
-	WanderChance   float64
+	WanderChance float64
+
+	// Path is the closed-loop sequence of room external_ids this
+	// template's instances walk on every wander tick (Phase F #32a
+	// slice 1, migration 0053). Empty or nil means "no path; use
+	// WanderChance for random wandering". When non-empty, the wander
+	// handler ignores WanderChance and steps each instance along the
+	// authored sequence via the existing walkable-exit gate.
+	//
+	// Loader validates at boot: length >= 2, no duplicates, every
+	// consecutive pair (incl. wraparound) is connected by a walkable
+	// exit. The world loader resolves external_ids → internal room
+	// IDs after the rooms phase and stamps PathRoomIDs below.
+	Path []string
+
+	// PathRoomIDs is the resolved-at-boot cache of internal room IDs
+	// corresponding to Path. Populated by the world loader; not
+	// persisted (the round-trip canon is Path on the column).
+	// The wander handler reads this directly to avoid re-resolving
+	// external_ids per pulse.
+	PathRoomIDs []int64
+
 	NaturalAttacks []Attack
 	SpecialAttacks []SpecialAttack
 	Traits         []int32

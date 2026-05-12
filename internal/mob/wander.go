@@ -122,9 +122,13 @@ func NewWanderHandler(
 // goroutines here would multiply contention on the repo without
 // improving throughput.
 func (h *WanderHandler) Tick(ctx context.Context) {
-	if h == nil || h.cap <= 0 || h.chance <= 0 {
+	if h == nil || h.cap <= 0 {
 		return
 	}
+	// Note: a zero multiplier (h.chance <= 0) is NOT a short-circuit
+	// here — strict-path templates (Phase F #32a slice 1) still need
+	// to advance. The per-mob chance gate inside consider() handles
+	// the random-wander branch.
 	mobs, err := h.mobs.ListSpawned(ctx, h.cap)
 	if err != nil {
 		slog.Warn("wander: list spawned failed", "error", err)
@@ -151,6 +155,13 @@ func (h *WanderHandler) Tick(ctx context.Context) {
 type wanderProfile struct {
 	flags  creature.BehaviorFlags
 	chance float64
+
+	// pathRoomIDs is the resolved-at-cache-populate set of internal
+	// room IDs for an authored mob path (Phase F #32a slice 1).
+	// Empty means "no path; use chance for random wandering". When
+	// non-empty, consider() switches to the strict-path branch and
+	// ignores chance.
+	pathRoomIDs []int64
 }
 
 func (h *WanderHandler) consider(
@@ -170,9 +181,32 @@ func (h *WanderHandler) consider(
 			return
 		}
 		prof = wanderProfile{flags: tpl.BehaviorFlags, chance: tpl.WanderChance}
+		// Resolve authored path external_ids → internal room IDs the
+		// first time we see this template in the pulse. Resolution
+		// failures (room renamed / deleted after deploy) drop the path
+		// silently so the mob still wanders randomly via the chance
+		// branch — preferable to wedging mid-patrol.
+		if len(tpl.Path) > 0 {
+			ids := make([]int64, 0, len(tpl.Path))
+			for _, ext := range tpl.Path {
+				room, rerr := h.rooms.FindByExternalID(ctx, ext)
+				if rerr != nil {
+					slog.Warn("wander: authored path room not found",
+						"tpl", tpl.ExternalID, "missing_room", ext, "error", rerr)
+					ids = nil
+					break
+				}
+				ids = append(ids, room.ID)
+			}
+			prof.pathRoomIDs = ids
+		}
 		profiles[m.TemplateID] = prof
 	}
 	if prof.flags&creature.BehavSentinel != 0 {
+		return
+	}
+	if len(prof.pathRoomIDs) > 0 {
+		h.considerStrictPath(ctx, m, prof, zone)
 		return
 	}
 	// Final per-pulse chance is the template's value scaled by the
@@ -215,6 +249,92 @@ func (h *WanderHandler) consider(
 	from := m.Core.CurrentRoomID
 	if err := h.mobs.UpdateRoom(ctx, m.ID, chosen.ToRoomID); err != nil {
 		slog.Warn("wander: UpdateRoom failed", "mob", m.ID, "to", chosen.ToRoomID, "error", err)
+		return
+	}
+	h.broadcast(m, from, chosen)
+}
+
+// considerStrictPath handles the Phase F #32a slice 1 authored path
+// branch. The mob's current room must appear in prof.pathRoomIDs;
+// when it does, we step to the next room in the closed loop and
+// move via the existing walkable-exit gate. An off-path mob (admin
+// teleport, mid-deploy path edit) silently no-ops until they land
+// back on a path entry — preserves authoring intent without forcing
+// the mob into a route they didn't author.
+func (h *WanderHandler) considerStrictPath(
+	ctx context.Context,
+	m creature.MobInstance,
+	prof wanderProfile,
+	zone map[int64]int64,
+) {
+	// Find the mob's current position on the authored path. Loader
+	// validation guarantees no duplicates so the first match is
+	// unambiguous.
+	idx := -1
+	for i, rid := range prof.pathRoomIDs {
+		if rid == m.Core.CurrentRoomID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Off-path. Loader-validated adjacency means we can't recover
+		// by guessing; admin needs to teleport the mob back. Log at
+		// debug because this is expected during reset / spawn-anchor
+		// transitions where the spawn room may not be on the path.
+		slog.Debug("wander: mob off authored path",
+			"mob", m.ID, "tpl", m.TemplateID, "room", m.Core.CurrentRoomID)
+		return
+	}
+	target := prof.pathRoomIDs[(idx+1)%len(prof.pathRoomIDs)]
+
+	// Adjacency was validated at boot, but a runtime door close
+	// (NPC slammed a door, scripted lock) can invalidate the step.
+	// Look up the exit fresh each pulse so the mob waits politely
+	// for a closed door to open rather than tunneling through it.
+	exits, err := h.exits.ListFrom(ctx, m.Core.CurrentRoomID)
+	if err != nil {
+		slog.Debug("wander: list exits failed (path)", "room", m.Core.CurrentRoomID, "error", err)
+		return
+	}
+	var chosen repo.Exit
+	found := false
+	for _, e := range exits {
+		if !exitWalkable(e) {
+			continue
+		}
+		if e.ToRoomID != target {
+			continue
+		}
+		chosen = e
+		found = true
+		break
+	}
+	if !found {
+		// Door closed mid-deploy, or builder-time adjacency drifted.
+		// Stay put this pulse; retry next tick.
+		slog.Debug("wander: path step blocked",
+			"mob", m.ID, "from", m.Core.CurrentRoomID, "to", target)
+		return
+	}
+	// Zone gate: same as the random-wander branch — refuse to leave
+	// the home zone, even when the authored path crosses zone lines.
+	// Builders should keep paths zone-local; if a future need lands
+	// cross-zone patrols, lift this gate behind a per-template flag.
+	srcZone, ok := h.zoneOf(ctx, m.Core.CurrentRoomID, zone)
+	if !ok {
+		return
+	}
+	dstZone, ok := h.zoneOf(ctx, target, zone)
+	if !ok || dstZone != srcZone {
+		slog.Debug("wander: path step crosses zone, refusing",
+			"mob", m.ID, "from_zone", srcZone, "to_zone", dstZone)
+		return
+	}
+
+	from := m.Core.CurrentRoomID
+	if err := h.mobs.UpdateRoom(ctx, m.ID, target); err != nil {
+		slog.Warn("wander: UpdateRoom failed (path)", "mob", m.ID, "to", target, "error", err)
 		return
 	}
 	h.broadcast(m, from, chosen)

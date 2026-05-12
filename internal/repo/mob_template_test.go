@@ -206,6 +206,55 @@ func runMobTemplateRepoTests(t *testing.T, name string, newRepo func(t *testing.
 			}
 		})
 	})
+
+	// Phase F #32a slice 1: the path column round-trips the authored
+	// external_id sequence. PathRoomIDs is a non-persisted runtime
+	// cache so it must NOT survive the round-trip.
+	t.Run(name+"/path_roundtrip", func(t *testing.T) {
+		repo := newRepo(t)
+		ctx := context.Background()
+
+		t.Run("nil_when_unset", func(t *testing.T) {
+			t1 := sample()
+			t1.ExternalID = "path.absent"
+			created, err := repo.Create(ctx, t1)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if len(got.Path) != 0 {
+				t.Fatalf("Path = %v, want empty", got.Path)
+			}
+			if len(got.PathRoomIDs) != 0 {
+				t.Fatalf("PathRoomIDs = %v, want empty (non-persisted cache)", got.PathRoomIDs)
+			}
+		})
+
+		t.Run("populated_roundtrip", func(t *testing.T) {
+			t2 := sample()
+			t2.ExternalID = "path.present"
+			t2.Path = []string{"qa.hub", "qa.shop", "qa.bank"}
+			// Set a bogus PathRoomIDs that must NOT survive the round-trip.
+			t2.PathRoomIDs = []int64{99, 98, 97}
+			created, err := repo.Create(ctx, t2)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if !reflect.DeepEqual(got.Path, t2.Path) {
+				t.Fatalf("Path mismatch:\n got = %v\nwant = %v", got.Path, t2.Path)
+			}
+			if len(got.PathRoomIDs) != 0 {
+				t.Fatalf("PathRoomIDs leaked through persistence: %v", got.PathRoomIDs)
+			}
+		})
+	})
 }
 
 func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {

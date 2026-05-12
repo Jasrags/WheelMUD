@@ -40,9 +40,15 @@ func (r *MemoryMobTemplateRepo) Create(_ context.Context, t creature.MobTemplate
 	r.maxID++
 	t.ID = r.maxID
 	t.Core.ID = r.maxID
-	r.byID[t.ID] = t
+	// PathRoomIDs is a non-persisted runtime cache populated by the
+	// world loader; the sqlite impl drops it on the column round-trip
+	// so the memory impl mirrors that contract for parity. The Path
+	// (external_ids) field is the persisted canon.
+	stored := t
+	stored.PathRoomIDs = nil
+	r.byID[t.ID] = stored
 	r.byExt[t.ExternalID] = t.ID
-	return t, nil
+	return stored, nil
 }
 
 func (r *MemoryMobTemplateRepo) GetByID(_ context.Context, id int64) (creature.MobTemplate, error) {

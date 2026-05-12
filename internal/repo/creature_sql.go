@@ -91,6 +91,7 @@ type templateJSON struct {
 	dr, resists                            string
 	natural, special, traits               string
 	advancement, climate, terrain, scripts string
+	path                                   string // Phase F #32a slice 1
 }
 
 func marshalTemplateJSON(t creature.MobTemplate) (templateJSON, error) {
@@ -123,6 +124,11 @@ func marshalTemplateJSON(t creature.MobTemplate) (templateJSON, error) {
 	if j.scripts, err = marshalJSONSlice(t.TriggerScripts); err != nil {
 		return j, err
 	}
+	// Path round-trips as the persisted external_ids; PathRoomIDs is a
+	// non-persisted runtime cache populated by the world loader.
+	if j.path, err = marshalJSONSlice(t.Path); err != nil {
+		return j, err
+	}
 	return j, nil
 }
 
@@ -152,6 +158,9 @@ func (j templateJSON) unmarshalInto(t *creature.MobTemplate) error {
 		return err
 	}
 	if err := unmarshalJSONSlice(j.scripts, &t.TriggerScripts); err != nil {
+		return err
+	}
+	if err := unmarshalJSONSlice(j.path, &t.Path); err != nil {
 		return err
 	}
 	return nil

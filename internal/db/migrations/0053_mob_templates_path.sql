@@ -1,0 +1,35 @@
+-- 0053_mob_templates_path.sql
+--
+-- mob_templates.path — Phase F #32a slice 1 (authored mob paths).
+-- Optional JSON array of room external_ids the mob walks in order on
+-- every wander tick (closed loop). When set, the wander handler
+-- ignores `wander_chance` for instances of this template and steps
+-- the mob along the authored sequence using the existing walkable-
+-- exit gate. Builders use it for patrols, escort scaffolding, and
+-- predictable "shopkeeper steps out for a smoke break" content.
+--
+-- Storage choice:
+--   * TEXT NULL — NULL means "no path; use wander_chance" (most
+--     mobs). Non-NULL holds a JSON array of strings, e.g.
+--     `["test.qa.hub","test.qa.shop","test.qa.bank"]`.
+--   * External_ids (not internal int IDs) — so a re-sync of the
+--     world doesn't invalidate the column.
+--
+-- Runtime cache: the world loader resolves external_ids → internal
+-- room IDs after rooms load and stamps `creature.MobTemplate.
+-- PathRoomIDs` (non-persisted) so the wander tick doesn't re-resolve
+-- per pulse.
+--
+-- Loader validation (boot-time, hard-fail):
+--   * Length >= 2 (single-entry is functionally a Sentinel mob).
+--   * Each entry resolves to a known room external_id.
+--   * No duplicate entries (so currentRoomID → pathIndex is
+--     unambiguous; ping-pong mode is deferred and would need a
+--     direction flag on mob_instances).
+--   * Each consecutive pair (incl. wraparound) is connected by a
+--     walkable exit at boot (Hidden / Closed / Locked / NoPass all
+--     reject — same gate as the wander tick uses).
+--
+-- Forward-only per CLAUDE.md (no down migration).
+
+ALTER TABLE mob_templates ADD COLUMN path TEXT;
