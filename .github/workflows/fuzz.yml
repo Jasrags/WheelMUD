@@ -1,0 +1,46 @@
+name: Fuzz
+
+on:
+  schedule:
+    # Nightly at 06:00 UTC. Cron syntax: minute hour day month weekday.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Per-target fuzz duration (e.g. 5m, 30m, 1h)'
+        required: false
+        default: '5m'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { pkg: ./telnet, name: FuzzReadIAC }
+          - { pkg: ./telnet, name: FuzzTokenize }
+          - { pkg: ./telnet, name: FuzzSplitOnSemicolon }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Fuzz ${{ matrix.target.name }}
+        run: |
+          go test -run=^$ -fuzz=^${{ matrix.target.name }}$ \
+            -fuzztime=${{ github.event.inputs.fuzztime || '5m' }} \
+            ${{ matrix.target.pkg }}
+
+      - name: Upload corpus on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target.name }}
+          path: ${{ matrix.target.pkg }}/testdata/fuzz
+          if-no-files-found: ignore
