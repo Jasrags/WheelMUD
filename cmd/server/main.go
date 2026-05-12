@@ -823,14 +823,11 @@ func main() {
 	// Phase F #32 slice 5b — late-bound shutdown ctx for the wait()
 	// binding. The luaHooks block below builds the factory closure
 	// here, but srv.ctx (signal.NotifyContext) isn't assigned until
-	// after the registry is constructed. We capture a pointer to a
-	// local var here, populate it after the signal-ctx is created,
-	// and the factory dereferences at fire time. Safe because
-	// wait() can only be called from a script firing through the
-	// dispatcher — and the dispatcher's tick bucket doesn't start
-	// until scheduler.Start(ctx), which itself runs after
-	// signal.NotifyContext.
-	var srvShutdownCtx context.Context
+	// after the registry is constructed. We store it in an
+	// atomic.Pointer so the boot-time Store establishes a
+	// happens-before edge for every dispatch-goroutine Load,
+	// independent of the (informal) scheduler.Start ordering.
+	var srvShutdownCtx atomic.Pointer[context.Context]
 
 	triggerActions := trigger.DefaultActions()
 	luaHooks := trigger.LuaHooks{
@@ -848,7 +845,10 @@ func main() {
 		Heal:         makeLuaHeal(combatMgr, characters, mobs),
 		TransferItem: makeLuaTransferItem(items),
 		DropItem:     makeLuaDropItem(items),
-		// Phase F #32 slice 5b — async + inventory iter.
+		// Phase F #32 slice 5b — async + inventory iter. The
+		// shutdown ctx pointer is back-filled after
+		// signal.NotifyContext below; the wait factory Loads at
+		// fire time so the Store/Load pair establishes the barrier.
 		Wait:      makeLuaWait(scheduler, luaRunner, &srvShutdownCtx),
 		Inventory: makeLuaInventory(items),
 	}
@@ -993,11 +993,13 @@ func main() {
 	defer stop()
 	srv.stopSignal = stop
 	// Phase F #32 slice 5b — back-fill the late-bound shutdown ctx
-	// captured by the wait() factory's closure. The runner.Stop()
-	// in the shutdown drain will also interrupt any in-flight
-	// deferred script, but this propagates cancellation to pending
-	// timers via tick.AfterCtx's watcher goroutine BEFORE bus.Stop.
-	srvShutdownCtx = ctx
+	// captured by the wait() factory's atomic.Pointer. The
+	// runner.Stop() in the shutdown drain will also interrupt any
+	// in-flight deferred script, but this propagates cancellation
+	// to pending timers via tick.AfterCtx's watcher goroutine
+	// BEFORE bus.Stop. The Store() pairs with Load()s in
+	// makeLuaWait's fire closure for the memory barrier.
+	srvShutdownCtx.Store(&ctx)
 
 	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
 	if err != nil {
@@ -2169,20 +2171,50 @@ const (
 	MaxWaitSeconds int32 = 300
 )
 
+// buildWaitCtxView translates a trigger.EventCtx into the
+// internal/lua CtxView the deferred script sees. Mirrors
+// ctxViewFromEvent in internal/trigger/actions_lua.go but lives
+// here because the cmd-layer is the only consumer with this
+// translation need (the trigger layer's own ctx propagation goes
+// through ctxViewFromEvent at bind time). Phase F #32 slice 5b.
+func buildWaitCtxView(ev trigger.EventCtx) luaeng.CtxView {
+	return luaeng.CtxView{
+		Event:      string(ev.Event),
+		RoomID:     ev.RoomID,
+		ActorID:    ev.ActorID,
+		ActorKind:  ev.ActorKind,
+		TargetID:   ev.TargetID,
+		TargetKind: ev.TargetKind,
+		Text:       ev.Text,
+		Bucket:     ev.BucketName,
+	}
+}
+
+// resolveWaitShutdownCtx loads the late-bound shutdown ctx, falling
+// back to context.Background() when the atomic pointer hasn't been
+// populated yet (defensive — shouldn't happen post-main()).
+// tick.AfterCtx tolerates a Background parent (degrades to s.After
+// without auto-cancel), so the fallback is safe.
+func resolveWaitShutdownCtx(p *atomic.Pointer[context.Context]) context.Context {
+	if p == nil {
+		return context.Background()
+	}
+	if c := p.Load(); c != nil && *c != nil {
+		return *c
+	}
+	return context.Background()
+}
+
 // makeLuaWait returns the cmd-layer factory for the wait() Lua
 // binding. Per-call the factory snapshots the firing EventCtx
 // (passed by the trigger-layer adapter) so the deferred run sees
 // the same actor/room/event the original script did.
 //
-// srvShutdownCtxPtr is a pointer to a context.Context that's
-// assigned by main() after signal.NotifyContext. The factory
-// dereferences at fire time — never at registration time — so the
-// late binding is safe even though the trigger luaHooks block
-// runs before signal.NotifyContext. tick.AfterCtx tolerates nil
-// gracefully (degrades to s.After) if the back-fill never landed
-// for some reason; in practice scheduler.Start runs after the
-// back-fill so any wait() call observes a non-nil ctx.
-func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *context.Context) func(context.Context, trigger.EventCtx, int32, string) error {
+// srvShutdownCtxPtr is an atomic pointer assigned by main() after
+// signal.NotifyContext. The Store/Load barriers ensure every
+// dispatch-goroutine read sees the boot-time write regardless of
+// scheduler.Start ordering.
+func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *atomic.Pointer[context.Context]) func(context.Context, trigger.EventCtx, int32, string) error {
 	return func(_ context.Context, ev trigger.EventCtx, seconds int32, scriptName string) error {
 		if seconds < MinWaitSeconds {
 			return fmt.Errorf("wait seconds must be >= %d (got %d)", MinWaitSeconds, seconds)
@@ -2193,43 +2225,21 @@ func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCt
 		if strings.TrimSpace(scriptName) == "" {
 			return fmt.Errorf("wait script name must be non-empty")
 		}
-		// Snapshot the firing CtxView so the deferred script sees
-		// the same world context. The trigger.EventCtx → CtxView
-		// translation mirrors ctxViewFromEvent in actions_lua.go.
-		ctxView := luaeng.CtxView{
-			Event:      string(ev.Event),
-			RoomID:     ev.RoomID,
-			ActorID:    ev.ActorID,
-			ActorKind:  ev.ActorKind,
-			TargetID:   ev.TargetID,
-			TargetKind: ev.TargetKind,
-			Text:       ev.Text,
-			Bucket:     ev.BucketName,
-		}
-		// Resolve the shutdown ctx at schedule time. If the
-		// back-fill hasn't run yet (defensive — shouldn't happen in
-		// practice), use context.Background and accept the
-		// no-auto-cancel posture for this one scheduled run.
-		shutdownCtx := context.Background()
-		if srvShutdownCtxPtr != nil && *srvShutdownCtxPtr != nil {
-			shutdownCtx = *srvShutdownCtxPtr
-		}
-		fire := func(handlerCtx context.Context) {
-			// The deferred Run inherits the shutdown ctx, NOT
-			// handlerCtx (the scheduler's per-pulse ctx).
-			// shutdownCtx is the right parent for cancellation on
-			// SIGINT/SIGTERM; runner.Run wraps it with the 50ms
-			// CallTimeout internally.
-			bindings := luaeng.APIBindings{
-				Ctx: ctxView,
-				// V5b deferred scripts get NO mutation surface in
-				// V1 — bindings stay minimal (just ctx + logger).
-				// If a content author needs to chain mutations
-				// through wait(), they can fire a fresh trigger
-				// from inside the deferred script. Keeping the
-				// surface narrow here avoids smuggling stale repo
-				// handles into the deferred call.
-			}
+		ctxView := buildWaitCtxView(ev)
+		shutdownCtx := resolveWaitShutdownCtx(srvShutdownCtxPtr)
+		fire := func(_ context.Context) {
+			// The deferred Run inherits shutdownCtx (the
+			// signal.NotifyContext) NOT the scheduler's per-pulse
+			// ctx — shutdownCtx is the right parent for SIGINT/
+			// SIGTERM cancellation; runner.Run wraps it with the
+			// 50ms CallTimeout internally.
+			//
+			// V5b deferred scripts get NO mutation surface in V1 —
+			// bindings stay minimal (ctx + logger). Authors who
+			// need chained mutations fire a fresh trigger from
+			// inside the deferred script, keeping the deferred
+			// surface narrow.
+			bindings := luaeng.APIBindings{Ctx: ctxView}
 			if err := runner.Run(shutdownCtx, scriptName, func(l *luastd.LState) { bindings.Bind(l) }); err != nil {
 				slog.Debug("wait: deferred script run failed",
 					"script", scriptName, "error", err)

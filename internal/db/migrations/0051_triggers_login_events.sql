@@ -48,6 +48,16 @@ FROM triggers;
 DROP TABLE triggers;
 ALTER TABLE triggers_new RENAME TO triggers;
 
+-- Preserve the AUTOINCREMENT counter so newly inserted rows don't
+-- collide with deleted-but-previously-allocated ids. The rename
+-- above leaves the sqlite_sequence row pointing at the old name
+-- (`triggers_new`); rewriting it keeps the next id strictly above
+-- the highest id ever assigned, matching the pre-migration
+-- behavior. Safe when no sqlite_sequence row exists yet (first
+-- migration on a fresh DB) — the UPDATE is a no-op and the next
+-- INSERT will seed the row from MAX(id)+1 as usual.
+UPDATE sqlite_sequence SET name = 'triggers' WHERE name = 'triggers_new';
+
 CREATE INDEX idx_triggers_owner_event ON triggers(owner_kind, owner_id, event);
 CREATE INDEX idx_triggers_event       ON triggers(event);
 

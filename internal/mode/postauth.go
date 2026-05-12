@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/chargen"
@@ -45,16 +46,25 @@ type postAuthDeps struct {
 // once at boot before accepting connections.
 type LoginEventFunc func(characterID, roomID int64)
 
-// loginPublisher is the global hook. SetLoginPublisher installs it.
-// promoteToGame nil-checks before calling so an uninitialised test
-// harness sees no publish.
-var loginPublisher LoginEventFunc
+// loginPublisher is the global hook stored as an atomic pointer so
+// the boot-time write in main() establishes a happens-before edge
+// to every read in promoteToGame regardless of which goroutine is
+// dispatching. SetLoginPublisher installs it; promoteToGame
+// Load()s and nil-checks before calling.
+var loginPublisher atomic.Pointer[LoginEventFunc]
 
 // SetLoginPublisher installs the optional login publisher. Called
 // once at boot by cmd/server/main.go. Safe to call with nil to
-// clear (tests). Not concurrency-safe by design — meant to be set
-// before the listener accepts its first connection.
-func SetLoginPublisher(f LoginEventFunc) { loginPublisher = f }
+// clear (tests). Atomic Store provides the memory barrier the
+// promoteToGame readers rely on; no need to set before the listener
+// accepts its first connection.
+func SetLoginPublisher(f LoginEventFunc) {
+	if f == nil {
+		loginPublisher.Store(nil)
+		return
+	}
+	loginPublisher.Store(&f)
+}
 
 // MOTDFunc is the hook fired once per successful login (immediately
 // after Login.handlePassword / Create.handleConfirm succeed) by
@@ -206,9 +216,11 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	s.SetInWorld(c.ID, c.Name, roomID)
 	// Phase F #32 slice 5b — publish world.PlayerLoggedIn so the
 	// trigger dispatcher can fire room-owned on_login triggers. The
-	// publisher is wired by main.go at boot; nil in tests.
-	if loginPublisher != nil {
-		loginPublisher(c.ID, roomID)
+	// publisher is wired by main.go at boot; nil in tests. Atomic
+	// load is the synchronization barrier paired with the Store in
+	// SetLoginPublisher.
+	if fn := loginPublisher.Load(); fn != nil {
+		(*fn)(c.ID, roomID)
 	}
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
