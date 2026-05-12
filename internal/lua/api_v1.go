@@ -112,6 +112,22 @@ type APIBindings struct {
 	// inventory yields an empty table (never nil).
 	Wait      func(seconds int32, scriptName string) error
 	Inventory func(targetID int64) ([]InventoryEntry, error)
+
+	// V5c surface (Phase F #32 slice 5c).
+	//
+	// WaitMs is the millisecond-granularity sibling of Wait. The
+	// hook layer clamps to [100, 300_000] ms — anything below 100ms
+	// would fire on the next scheduler tick anyway. Real firing
+	// precision is bounded by the scheduler frequency (1 Hz today);
+	// finer-grained scheduler buckets are a separate followup.
+	//
+	// InventoryAll mirrors Inventory but walks the parent chain
+	// recursively via ItemRepo.ListAllOwnedTransitive so a script
+	// can inspect items nested inside containers. Returns the same
+	// {id, name, external_id} shape; container hierarchy is not
+	// surfaced in V1 (defer when authored containers see real use).
+	WaitMs       func(milliseconds int32, scriptName string) error
+	InventoryAll func(targetID int64) ([]InventoryEntry, error)
 }
 
 // InventoryEntry is the per-item record the `inventory(target_id)`
@@ -406,17 +422,55 @@ func (b APIBindings) Bind(l *gluua.LState) {
 			L.RaiseError("inventory(%d) failed: %s", targetID, err.Error())
 			return 0
 		}
-		out := L.NewTable()
-		for i, e := range entries {
-			row := L.NewTable()
-			row.RawSetString("id", gluua.LNumber(e.ID))
-			row.RawSetString("name", gluua.LString(e.Name))
-			row.RawSetString("external_id", gluua.LString(e.ExternalID))
-			out.RawSetInt(i+1, row)
-		}
-		L.Push(out)
+		L.Push(inventoryEntriesToTable(L, entries))
 		return 1
 	}))
+
+	// V5c surface (Phase F #32 slice 5c) — sub-second wait +
+	// transitive inventory.
+	l.SetGlobal("wait_ms", l.NewFunction(func(L *gluua.LState) int {
+		ms := int32(L.CheckInt(1))
+		scriptName := L.CheckString(2)
+		if b.WaitMs == nil {
+			L.RaiseError("wait_ms not bound in this context")
+			return 0
+		}
+		if err := b.WaitMs(ms, scriptName); err != nil {
+			L.RaiseError("wait_ms(%d, %q) failed: %s", ms, scriptName, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("inventory_all", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		if b.InventoryAll == nil {
+			L.RaiseError("inventory_all not bound in this context")
+			return 0
+		}
+		entries, err := b.InventoryAll(targetID)
+		if err != nil {
+			L.RaiseError("inventory_all(%d) failed: %s", targetID, err.Error())
+			return 0
+		}
+		L.Push(inventoryEntriesToTable(L, entries))
+		return 1
+	}))
+}
+
+// inventoryEntriesToTable renders an InventoryEntry slice into a
+// 1-indexed Lua table — shared between inventory() and
+// inventory_all() so the row shape stays in lock-step.
+func inventoryEntriesToTable(L *gluua.LState, entries []InventoryEntry) *gluua.LTable {
+	out := L.NewTable()
+	for i, e := range entries {
+		row := L.NewTable()
+		row.RawSetString("id", gluua.LNumber(e.ID))
+		row.RawSetString("name", gluua.LString(e.Name))
+		row.RawSetString("external_id", gluua.LString(e.ExternalID))
+		out.RawSetInt(i+1, row)
+	}
+	return out
 }
 
 // int64SliceToTable converts a Go []int64 into a 1-indexed Lua

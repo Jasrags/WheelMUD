@@ -885,6 +885,9 @@ func main() {
 		// fire time so the Store/Load pair establishes the barrier.
 		Wait:      makeLuaWait(scheduler, luaRunner, &srvShutdownCtx),
 		Inventory: makeLuaInventory(items),
+		// Phase F #32 slice 5c — sub-second wait + transitive inventory.
+		WaitMs:       makeLuaWaitMs(scheduler, luaRunner, &srvShutdownCtx),
+		InventoryAll: makeLuaInventoryAll(items),
 	}
 	if questEngine != nil {
 		luaHooks.Accept = questEngine.AcceptQuest
@@ -1035,7 +1038,7 @@ func main() {
 	// makeLuaWait's fire closure for the memory barrier.
 	srvShutdownCtx.Store(&ctx)
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -1534,7 +1537,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, scheduler *tick.Scheduler, srvShutdownCtxPtr *atomic.Pointer[context.Context], shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -1830,17 +1833,37 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 				}
 				return dropItem(ctx, itemID, s.CurrentRoomID)
 			}
-			// V5b surface for dialogue (Phase F #32 slice 5b) —
-			// inventory iter is wired so "do you have X?" gates
-			// work in dialogue. wait() is deliberately NOT wired
-			// here in V1: dialogue scripts are short interactive
-			// flows where async deferral creates surprising UX.
-			// Authors who want delayed effects from a dialogue
-			// should fire a trigger from a dialogue effect and
-			// schedule the wait from there.
+			// V5b + V5c surface for dialogue (Phase F #32 slice 5c).
+			// wait / wait_ms are wired through a synthetic
+			// EventCtx so the deferred run inherits the dialogue
+			// session's actor + room context. Authors writing
+			// "after a beat, the NPC follows up" patterns now
+			// stay inside the dialogue path without the trigger
+			// detour. Note: the deferred script fires AFTER the
+			// dialogue mode may have popped — it gets the minimal
+			// binding surface (ctx + logger), same as triggers.
 			inventoryHook := makeLuaInventory(items)
+			inventoryAllHook := makeLuaInventoryAll(items)
 			bindings.Inventory = func(targetID int64) ([]luaeng.InventoryEntry, error) {
 				return inventoryHook(ctx, targetID)
+			}
+			bindings.InventoryAll = func(targetID int64) ([]luaeng.InventoryEntry, error) {
+				return inventoryAllHook(ctx, targetID)
+			}
+			waitEv := trigger.EventCtx{
+				Event:     "dialogue.script",
+				ActorID:   s.CharacterID,
+				ActorKind: "character",
+				RoomID:    s.CurrentRoomID,
+				Text:      name,
+			}
+			waitHook := makeLuaWait(scheduler, luaRunner, srvShutdownCtxPtr)
+			waitMsHook := makeLuaWaitMs(scheduler, luaRunner, srvShutdownCtxPtr)
+			bindings.Wait = func(seconds int32, scriptName string) error {
+				return waitHook(ctx, waitEv, seconds, scriptName)
+			}
+			bindings.WaitMs = func(ms int32, scriptName string) error {
+				return waitMsHook(ctx, waitEv, ms, scriptName)
 			}
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
@@ -2351,6 +2374,19 @@ const (
 	MaxWaitSeconds int32 = 300
 )
 
+// MinWaitMilliseconds / MaxWaitMilliseconds bound the wait_ms()
+// binding's delay arg (Phase F #32 slice 5c). Sub-100ms is rejected
+// because the scheduler's tick precision rounds finer values up to
+// the next pulse anyway; > 5 min mirrors MaxWaitSeconds.
+//
+// Note: actual firing precision is bounded by the scheduler
+// frequency (1 Hz today). Finer-grained scheduler buckets are a
+// separate followup.
+const (
+	MinWaitMilliseconds int32 = 100
+	MaxWaitMilliseconds int32 = 300_000
+)
+
 // buildWaitCtxView translates a trigger.EventCtx into the
 // internal/lua CtxView the deferred script sees. Mirrors
 // ctxViewFromEvent in internal/trigger/actions_lua.go but lives
@@ -2444,15 +2480,77 @@ func makeLuaInventory(items repo.ItemRepo) func(context.Context, int64) ([]luaen
 		if err != nil {
 			return nil, err
 		}
-		out := make([]luaeng.InventoryEntry, 0, len(list))
-		for _, it := range list {
-			out = append(out, luaeng.InventoryEntry{
-				ID:         it.ID,
-				Name:       it.Name,
-				ExternalID: it.ExternalID,
-			})
+		return itemsToInventoryEntries(list), nil
+	}
+}
+
+// makeLuaInventoryAll returns the cmd-layer factory for the
+// inventory_all(target_id) Lua binding (Phase F #32 slice 5c).
+// Wraps ItemRepo.ListAllOwnedTransitive — same shape as
+// makeLuaInventory but walks the parent_item_id chain so items
+// inside containers appear in the result. The Lua-side row is the
+// same {id, name, external_id}; container hierarchy is not
+// surfaced in V1.
+func makeLuaInventoryAll(items repo.ItemRepo) func(context.Context, int64) ([]luaeng.InventoryEntry, error) {
+	return func(ctx context.Context, targetID int64) ([]luaeng.InventoryEntry, error) {
+		if targetID == 0 {
+			return nil, fmt.Errorf("target id must be non-zero")
 		}
-		return out, nil
+		list, err := items.ListAllOwnedTransitive(ctx, targetID)
+		if err != nil {
+			return nil, err
+		}
+		return itemsToInventoryEntries(list), nil
+	}
+}
+
+// itemsToInventoryEntries projects repo.Item rows onto the
+// lightweight Lua-side entry shape. Shared between
+// makeLuaInventory + makeLuaInventoryAll so the row schema stays
+// in lock-step.
+func itemsToInventoryEntries(list []repo.Item) []luaeng.InventoryEntry {
+	out := make([]luaeng.InventoryEntry, 0, len(list))
+	for _, it := range list {
+		out = append(out, luaeng.InventoryEntry{
+			ID:         it.ID,
+			Name:       it.Name,
+			ExternalID: it.ExternalID,
+		})
+	}
+	return out
+}
+
+// makeLuaWaitMs returns the cmd-layer factory for the
+// wait_ms(milliseconds, script_name) Lua binding (Phase F #32
+// slice 5c). Same shape as makeLuaWait but milliseconds-granular;
+// the firing precision is bounded by the scheduler's tick rate
+// (currently 1 Hz, so sub-1s values round up to the next pulse).
+func makeLuaWaitMs(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *atomic.Pointer[context.Context]) func(context.Context, trigger.EventCtx, int32, string) error {
+	return func(_ context.Context, ev trigger.EventCtx, ms int32, scriptName string) error {
+		if ms < MinWaitMilliseconds {
+			return fmt.Errorf("wait_ms milliseconds must be >= %d (got %d)", MinWaitMilliseconds, ms)
+		}
+		if ms > MaxWaitMilliseconds {
+			return fmt.Errorf("wait_ms milliseconds must be <= %d (got %d)", MaxWaitMilliseconds, ms)
+		}
+		if strings.TrimSpace(scriptName) == "" {
+			return fmt.Errorf("wait_ms script name must be non-empty")
+		}
+		ctxView := buildWaitCtxView(ev)
+		shutdownCtx := resolveWaitShutdownCtx(srvShutdownCtxPtr)
+		fire := func(_ context.Context) {
+			// Mirrors makeLuaWait's fire closure: deferred run gets
+			// the minimal binding surface (ctx + logger). Authors
+			// who need richer state inside the deferred script
+			// should fire a fresh trigger from there.
+			bindings := luaeng.APIBindings{Ctx: ctxView}
+			if err := runner.Run(shutdownCtx, scriptName, func(l *luastd.LState) { bindings.Bind(l) }); err != nil {
+				slog.Debug("wait_ms: deferred script run failed",
+					"script", scriptName, "error", err)
+			}
+		}
+		tick.AfterCtx(scheduler, shutdownCtx, time.Duration(ms)*time.Millisecond, fire)
+		return nil
 	}
 }
 

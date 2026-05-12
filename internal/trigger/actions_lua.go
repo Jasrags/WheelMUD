@@ -96,6 +96,21 @@ type LuaHooks struct {
 	// unguarded across slices 3+4+5a).
 	Wait      func(ctx context.Context, ev EventCtx, seconds int32, scriptName string) error
 	Inventory func(ctx context.Context, targetID int64) ([]intlua.InventoryEntry, error)
+
+	// V5c (Phase F #32 slice 5c) — sub-second wait + transitive
+	// inventory.
+	//
+	// WaitMs mirrors Wait's shape but the delay arg is milliseconds.
+	// Range validation (100..300_000 ms) happens at the factory
+	// layer; actual firing precision is bounded by the scheduler
+	// tick rate (1 Hz today).
+	//
+	// InventoryAll mirrors Inventory but walks parent_item_id
+	// recursively (wraps ItemRepo.ListAllOwnedTransitive). Same
+	// {id, name, external_id} row shape; container hierarchy is
+	// not surfaced in V1.
+	WaitMs       func(ctx context.Context, ev EventCtx, milliseconds int32, scriptName string) error
+	InventoryAll func(ctx context.Context, targetID int64) ([]intlua.InventoryEntry, error)
 }
 
 // LuaQuestHooks is the legacy slice-2 alias. Kept as a type alias
@@ -159,6 +174,8 @@ func luaActionHandler(runner *intlua.Runner, hooks LuaHooks) ActionHandler {
 			DropItem:       makeDropItemHook(ctx, ev, hooks.DropItem),
 			Wait:           makeWaitHook(ctx, ev, hooks.Wait),
 			Inventory:      makeInventoryHook(ctx, hooks.Inventory),
+			WaitMs:         makeWaitMsHook(ctx, ev, hooks.WaitMs),
+			InventoryAll:   makeInventoryHook(ctx, hooks.InventoryAll),
 		}
 		// PushMode stays unbound on triggers — there's no surrounding
 		// session to push a mode onto. The classified Lua error is
@@ -378,13 +395,29 @@ func makeWaitHook(ctx context.Context, ev EventCtx, hook func(context.Context, E
 }
 
 // makeInventoryHook is read-only — no actor-kind guard. Mirrors
-// makeTargetHPHook's shape.
+// makeTargetHPHook's shape. Same shape works for both Inventory
+// (top-level) and InventoryAll (transitive) since the hook types
+// are identical; the cmd-layer differentiates by the wrapped repo
+// method (ListInInventory vs ListAllOwnedTransitive).
 func makeInventoryHook(ctx context.Context, hook func(context.Context, int64) ([]intlua.InventoryEntry, error)) func(int64) ([]intlua.InventoryEntry, error) {
 	if hook == nil {
 		return nil
 	}
 	return func(targetID int64) ([]intlua.InventoryEntry, error) {
 		return hook(ctx, targetID)
+	}
+}
+
+// makeWaitMsHook adapts the cmd-layer WaitMs factory (which takes
+// the snapshot EventCtx) onto the Lua-side `wait_ms(ms, script)`
+// closure. Mirrors makeWaitHook's shape; the only difference is
+// the unit on the delay arg.
+func makeWaitMsHook(ctx context.Context, ev EventCtx, hook func(context.Context, EventCtx, int32, string) error) func(int32, string) error {
+	if hook == nil {
+		return nil
+	}
+	return func(ms int32, scriptName string) error {
+		return hook(ctx, ev, ms, scriptName)
 	}
 }
 
