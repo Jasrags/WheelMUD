@@ -1,0 +1,24 @@
+-- 0054_mob_templates_wander_radius.sql
+--
+-- mob_templates.wander_radius — Phase F #32a slice 2 (BFS-driven
+-- wander). When > 0, instances of this template pick a random
+-- reachable room within `wander_radius` BFS hops of their current
+-- position and step toward it one room per pulse using the existing
+-- walkable-exit + zone gates. Mobs already at the goal pick a new
+-- one on the next pulse.
+--
+-- 0 (the default) preserves the legacy random-wander behavior: pick
+-- a random walkable in-zone exit per pulse, gated by wander_chance.
+--
+-- Templates with a non-empty `path` (migration 0053, strict path)
+-- take precedence over wander_radius — the strict-path branch fires
+-- before the BFS branch in consider().
+--
+-- Goal state is in-memory only on the WanderHandler (no
+-- mob_instances column). A restart drops goals; mobs pick fresh
+-- targets on the next pulse — acceptable since goals are short-lived
+-- by design and survive restarts contributes no observable behavior.
+--
+-- Forward-only per CLAUDE.md (no down migration).
+
+ALTER TABLE mob_templates ADD COLUMN wander_radius INTEGER NOT NULL DEFAULT 0;

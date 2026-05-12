@@ -649,6 +649,16 @@ type MobTemplate struct {
 	// external_ids per pulse.
 	PathRoomIDs []int64
 
+	// WanderRadius (Phase F #32a slice 2, migration 0054) toggles
+	// BFS-driven wandering: when > 0 the wander handler picks a
+	// random room within this many hops of the mob's current room
+	// and BFS-steps toward it one room per pulse, ignoring
+	// wander_chance entirely (the BFS branch fires every pulse, like
+	// strict path). A non-empty Path overrides this — strict-path
+	// branch is checked first. 0 disables BFS; legacy random-wander
+	// behavior applies (chance-gated random walkable exit).
+	WanderRadius int32
+
 	NaturalAttacks []Attack
 	SpecialAttacks []SpecialAttack
 	Traits         []int32

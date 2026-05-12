@@ -622,11 +622,21 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 				pathRoomIDs[i] = roomIDs[ext]
 			}
 		}
+		// Slice-2 sanity: a mob with BOTH a strict path AND a
+		// wander_radius is almost certainly a builder mistake — only
+		// one branch wins (path), and we'd rather surface the
+		// inconsistency at boot than have the radius silently
+		// ignored at runtime.
+		if len(m.Path) > 0 && m.WanderRadius > 0 {
+			return fmt.Errorf("mob %q: cannot set both `path` and `wander_radius` "+
+				"(path takes precedence; pick one)", m.ID)
+		}
 		tpl := creature.MobTemplate{
 			ExternalID:    m.ID,
 			ChallengeCode: 'A',
 			Organization:  "solitary",
 			WanderChance:  wander,
+			WanderRadius:  m.WanderRadius,
 			Path:          append([]string(nil), m.Path...),
 			PathRoomIDs:   pathRoomIDs,
 			GoldDice:      m.GoldDice,

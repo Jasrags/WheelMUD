@@ -564,6 +564,46 @@ func TestLoadAndSync_InvalidResetModeRejected(t *testing.T) {
 	}
 }
 
+// Phase F #32a slice 2: a mob with both `path` (strict-path) AND
+// `wander_radius` (BFS) is rejected at load time. At runtime
+// strict-path always wins; surfacing the inconsistency at boot
+// keeps builders from chasing "why is my radius being ignored?".
+func TestLoadAndSync_RejectsMobWithBothPathAndWanderRadius(t *testing.T) {
+	ctx := context.Background()
+	conn, err := db.Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	worldFS := fstest.MapFS{
+		"z/zone.yaml": &fstest.MapFile{Data: []byte("id: z\nname: Z\n")},
+		"z/rooms.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.a
+  starter: true
+  name: A
+  long: room a
+  exits: { e: z.b }
+- id: z.b
+  name: B
+  long: room b
+  exits: { w: z.a }
+`)},
+		"z/mobs.yaml": &fstest.MapFile{Data: []byte(`
+- id: z.confused
+  room: z.a
+  name: a confused traveler
+  short: a confused traveler
+  path: [z.a, z.b]
+  wander_radius: 2
+`)},
+	}
+	_, err = LoadAndSync(ctx, conn, worldFS)
+	if err == nil || !strings.Contains(err.Error(), "cannot set both `path` and `wander_radius`") {
+		t.Fatalf("err = %v, want path+wander_radius rejection", err)
+	}
+}
+
 func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")

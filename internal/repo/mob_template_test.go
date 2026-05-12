@@ -255,6 +255,46 @@ func runMobTemplateRepoTests(t *testing.T, name string, newRepo func(t *testing.
 			}
 		})
 	})
+
+	// Phase F #32a slice 2: wander_radius round-trips as INT NOT NULL
+	// DEFAULT 0. Out-of-range values get clamped at the storage layer.
+	t.Run(name+"/wander_radius_roundtrip", func(t *testing.T) {
+		repo := newRepo(t)
+		ctx := context.Background()
+
+		t.Run("zero_when_unset", func(t *testing.T) {
+			t1 := sample()
+			t1.ExternalID = "radius.unset"
+			created, err := repo.Create(ctx, t1)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if got.WanderRadius != 0 {
+				t.Fatalf("WanderRadius = %d, want 0", got.WanderRadius)
+			}
+		})
+
+		t.Run("positive_roundtrip", func(t *testing.T) {
+			t2 := sample()
+			t2.ExternalID = "radius.three"
+			t2.WanderRadius = 3
+			created, err := repo.Create(ctx, t2)
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := repo.GetByID(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("GetByID: %v", err)
+			}
+			if got.WanderRadius != 3 {
+				t.Fatalf("WanderRadius = %d, want 3", got.WanderRadius)
+			}
+		})
+	})
 }
 
 func assertTemplateEqual(t *testing.T, got, want creature.MobTemplate) {

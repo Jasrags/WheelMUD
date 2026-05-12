@@ -35,7 +35,8 @@ const templateExtraColumns = `challenge_code, organization, behavior_flags,
 		advancement_json, climate_json, terrain_json, trigger_scripts_json,
 		xp_value,
 		dialogue_json,
-		path`
+		path,
+		wander_radius`
 
 // clampWanderChance pins values to the CHECK-enforced [0, 1] range
 // so a Create with an out-of-range field reports the typo via the
@@ -94,6 +95,17 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 	if len(t.Path) > 0 {
 		pathColumn = sql.NullString{String: j.path, Valid: true}
 	}
+	// Clamp wander_radius at the storage layer: negative values are
+	// meaningless and a stray huge value (>256) would let one mob
+	// flood-BFS the whole world per pulse — the runtime cap below
+	// keeps the BFS bounded even if a builder typo slips through.
+	wanderRadius := t.WanderRadius
+	if wanderRadius < 0 {
+		wanderRadius = 0
+	}
+	if wanderRadius > 256 {
+		wanderRadius = 256
+	}
 	args = append(args,
 		challengeCode, t.Organization, t.BehaviorFlags,
 		clampWanderChance(t.WanderChance),
@@ -106,6 +118,7 @@ func (r *SQLiteMobTemplateRepo) Create(ctx context.Context, t creature.MobTempla
 		t.XPValue,
 		dialogueJSON,
 		pathColumn,
+		wanderRadius,
 		time.Now().UTC(),
 	)
 
@@ -208,6 +221,7 @@ func scanTemplateRow(s scanner) (creature.MobTemplate, error) {
 		&t.XPValue,
 		&dialogueJSON,
 		&pathColumn,
+		&t.WanderRadius,
 	)
 	if err := s.Scan(dest...); err != nil {
 		return creature.MobTemplate{}, fmt.Errorf("scan mob_template: %w", err)
@@ -284,6 +298,7 @@ func (r *SQLiteMobTemplateRepo) queryOne(ctx context.Context, where string, arg 
 		&t.XPValue,
 		&dialogueJSON,
 		&pathColumn,
+		&t.WanderRadius,
 	)
 
 	err := r.db.QueryRowContext(ctx, query, arg).Scan(dest...)

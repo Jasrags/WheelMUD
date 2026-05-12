@@ -215,6 +215,15 @@ type Mob struct {
 	// would need a direction flag on mob_instances.
 	Path []string `yaml:"path,omitempty"`
 
+	// WanderRadius opts a mob template into BFS-driven wandering
+	// (Phase F #32a slice 2). When > 0 instances pick a random
+	// reachable room within this many hops and step toward it one
+	// room per pulse via BFS, ignoring wander_chance. Path takes
+	// precedence — slice-1 strict path fires before BFS. Clamped at
+	// the repo layer to [0, 256] so a typo can't flood-BFS the
+	// whole world.
+	WanderRadius int32 `yaml:"wander_radius,omitempty"`
+
 	// GoldDice rolls a coin pile into the corpse on death (Phase D
 	// §19 polish). Format "NdM" or "NdM+K"; empty means no coin
 	// drop. Stored on the mob template as a string and parsed at

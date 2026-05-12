@@ -69,6 +69,14 @@ type WanderHandler struct {
 	// Tick goroutines can overlap when one pulse runs long.
 	rngMu sync.Mutex
 	rng   *rand.Rand
+
+	// goalMu guards goals. Keyed by mob instance ID; value is the
+	// internal room ID the BFS branch is steering toward. Empty
+	// means "no current goal; pick one on next pulse". Restart
+	// drops the map — mobs pick fresh goals, no observable diff.
+	// Phase F #32a slice 2.
+	goalMu sync.Mutex
+	goals  map[int64]int64
 }
 
 // rollFloat returns rng.Float64() under rngMu.
@@ -105,6 +113,7 @@ func NewWanderHandler(
 		chance:    DefaultWanderMultiplier,
 		cap:       DefaultWanderCap,
 		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		goals:     make(map[int64]int64),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -162,6 +171,12 @@ type wanderProfile struct {
 	// non-empty, consider() switches to the strict-path branch and
 	// ignores chance.
 	pathRoomIDs []int64
+
+	// wanderRadius is the BFS hop cap for slice-2 wander_radius
+	// templates. 0 disables. Templates with both a non-empty path
+	// AND a non-zero radius are rejected at load time; the strict-
+	// path branch always wins at runtime.
+	wanderRadius int
 }
 
 func (h *WanderHandler) consider(
@@ -180,7 +195,11 @@ func (h *WanderHandler) consider(
 			slog.Debug("wander: template lookup failed", "mob", m.ID, "tpl", m.TemplateID, "error", err)
 			return
 		}
-		prof = wanderProfile{flags: tpl.BehaviorFlags, chance: tpl.WanderChance}
+		prof = wanderProfile{
+			flags:        tpl.BehaviorFlags,
+			chance:       tpl.WanderChance,
+			wanderRadius: int(tpl.WanderRadius),
+		}
 		// Resolve authored path external_ids → internal room IDs the
 		// first time we see this template in the pulse. Resolution
 		// failures (room renamed / deleted after deploy) drop the path
@@ -207,6 +226,10 @@ func (h *WanderHandler) consider(
 	}
 	if len(prof.pathRoomIDs) > 0 {
 		h.considerStrictPath(ctx, m, prof, zone)
+		return
+	}
+	if prof.wanderRadius > 0 {
+		h.considerBFSWander(ctx, m, prof, zone)
 		return
 	}
 	// Final per-pulse chance is the template's value scaled by the
@@ -338,6 +361,96 @@ func (h *WanderHandler) considerStrictPath(
 		return
 	}
 	h.broadcast(m, from, chosen)
+}
+
+// considerBFSWander handles the Phase F #32a slice 2 BFS branch.
+// Each pulse the mob is steered one hop toward a cached goal room.
+// When no cached goal exists (or the mob has arrived at one), a new
+// goal is picked at random from the BFS-reachable set within
+// prof.wanderRadius hops, restricted to walkable in-zone rooms.
+//
+// Goal cache lives on the handler (h.goals), keyed by mob ID. A
+// restart drops the map — fresh goals on the next pulse.
+func (h *WanderHandler) considerBFSWander(
+	ctx context.Context,
+	m creature.MobInstance,
+	prof wanderProfile,
+	zone map[int64]int64,
+) {
+	srcZone, ok := h.zoneOf(ctx, m.Core.CurrentRoomID, zone)
+	if !ok {
+		return
+	}
+	cfg := bfsConfig{
+		exits: h.exits,
+		zoneOf: func(ctx context.Context, roomID int64) (int64, bool) {
+			return h.zoneOf(ctx, roomID, zone)
+		},
+		fromRoom: m.Core.CurrentRoomID,
+		zoneID:   srcZone,
+		maxHops:  prof.wanderRadius,
+	}
+
+	goal := h.getGoal(m.ID)
+	if goal == 0 || goal == m.Core.CurrentRoomID {
+		// Need a fresh target. Flood out from current room within
+		// the radius, then pick a random reachable room. Empty
+		// reachable set (every neighbor blocked) means the mob is
+		// trapped this pulse — no-op + try again next pulse.
+		reachable, err := bfsReachable(ctx, cfg)
+		if err != nil {
+			slog.Debug("wander: bfsReachable failed", "mob", m.ID, "from", m.Core.CurrentRoomID, "error", err)
+			return
+		}
+		if len(reachable) == 0 {
+			return
+		}
+		newGoal := reachable[h.rollIntn(len(reachable))]
+		h.setGoal(m.ID, newGoal)
+		goal = newGoal
+	}
+
+	// Step one room toward the cached goal. The goal may be
+	// unreachable now (a door closed mid-pulse or the goal was
+	// despawned by a builder edit) — fall back to clearing the
+	// goal so next pulse picks fresh, no-op this pulse.
+	step, found, err := bfsNextStep(ctx, cfg, goal)
+	if err != nil {
+		slog.Debug("wander: bfsNextStep failed", "mob", m.ID, "goal", goal, "error", err)
+		return
+	}
+	if !found {
+		h.clearGoal(m.ID)
+		return
+	}
+	from := m.Core.CurrentRoomID
+	if err := h.mobs.UpdateRoom(ctx, m.ID, step.ToRoomID); err != nil {
+		slog.Warn("wander: UpdateRoom failed (bfs)", "mob", m.ID, "to", step.ToRoomID, "error", err)
+		return
+	}
+	// Arrived at goal — clear so next pulse picks a new target.
+	if step.ToRoomID == goal {
+		h.clearGoal(m.ID)
+	}
+	h.broadcast(m, from, step)
+}
+
+func (h *WanderHandler) getGoal(mobID int64) int64 {
+	h.goalMu.Lock()
+	defer h.goalMu.Unlock()
+	return h.goals[mobID]
+}
+
+func (h *WanderHandler) setGoal(mobID, roomID int64) {
+	h.goalMu.Lock()
+	defer h.goalMu.Unlock()
+	h.goals[mobID] = roomID
+}
+
+func (h *WanderHandler) clearGoal(mobID int64) {
+	h.goalMu.Lock()
+	defer h.goalMu.Unlock()
+	delete(h.goals, mobID)
 }
 
 // exitWalkable mirrors the player move gate: a mob will not pass a

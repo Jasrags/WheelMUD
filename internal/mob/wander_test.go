@@ -458,6 +458,206 @@ func TestWander_StrictPath_BlockedDoorNoStep(t *testing.T) {
 	}
 }
 
+// Phase F #32a slice 2 — BFS wander branch.
+//
+// wander_radius > 0 makes the mob pick a random reachable room within
+// the cap and step toward it via BFS. The fixture lays out a small
+// grid so tests can pin the chosen goal via a seeded RNG and assert
+// the mob walks the shortest path.
+
+// bfsFixture stages a 4-room "L-shape" in zone 1:
+//
+//	1 -- 2 -- 3
+//	     |
+//	     4
+//
+// All exits bidirectional. With radius=3 from room 1, every room is
+// reachable. With radius=1 only room 2 is reachable.
+type bfsFixture struct {
+	templates *repo.MemoryMobTemplateRepo
+	mobs      *repo.MemoryMobInstanceRepo
+	rooms     *repo.MemoryRoomRepo
+	exits     *repo.MemoryExitRepo
+	tplID     int64
+}
+
+func newBFSFixture(t *testing.T, radius int32) *bfsFixture {
+	t.Helper()
+	ctx := context.Background()
+	rooms := repo.NewMemoryRoomRepo()
+	rooms.Insert(repo.Room{ID: 1, ZoneID: 1, ExternalID: "g.a", Name: "Atrium"})
+	rooms.Insert(repo.Room{ID: 2, ZoneID: 1, ExternalID: "g.b", Name: "Mid"})
+	rooms.Insert(repo.Room{ID: 3, ZoneID: 1, ExternalID: "g.c", Name: "End"})
+	rooms.Insert(repo.Room{ID: 4, ZoneID: 1, ExternalID: "g.d", Name: "Side"})
+
+	exits := repo.NewMemoryExitRepo()
+	exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 2, Direction: repo.DirEast})
+	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 1, Direction: repo.DirWest})
+	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 3, Direction: repo.DirEast})
+	exits.Insert(repo.Exit{FromRoomID: 3, ToRoomID: 2, Direction: repo.DirWest})
+	exits.Insert(repo.Exit{FromRoomID: 2, ToRoomID: 4, Direction: repo.DirSouth})
+	exits.Insert(repo.Exit{FromRoomID: 4, ToRoomID: 2, Direction: repo.DirNorth})
+
+	templates := repo.NewMemoryMobTemplateRepo()
+	tpl, err := templates.Create(ctx, creature.MobTemplate{
+		ExternalID:   "scout.basic",
+		Core:         creature.Core{Name: "a roving scout", HPMax: 4, Defense: 12},
+		WanderChance: 0, // BFS branch ignores chance
+		WanderRadius: radius,
+	})
+	if err != nil {
+		t.Fatalf("create scout tpl: %v", err)
+	}
+	return &bfsFixture{
+		templates: templates,
+		mobs:      repo.NewMemoryMobInstanceRepo(),
+		rooms:     rooms,
+		exits:     exits,
+		tplID:     tpl.ID,
+	}
+}
+
+func (f *bfsFixture) spawn(t *testing.T, roomID int64) creature.MobInstance {
+	t.Helper()
+	m, err := f.mobs.Create(context.Background(), creature.MobInstance{
+		TemplateID: f.tplID,
+		Core:       creature.Core{HPCurrent: 4, CurrentRoomID: roomID},
+	})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	return m
+}
+
+func TestWander_BFS_StepsTowardCachedGoal(t *testing.T) {
+	f := newBFSFixture(t, 3)
+	m := f.spawn(t, 1) // start at g.a
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	// Pre-seed the goal so the test doesn't depend on rng pick order.
+	h.setGoal(m.ID, 3) // target g.c, 2 hops away via room 2
+	ctx := context.Background()
+
+	// Pulse 1: 1 → 2 (one hop along shortest path).
+	h.Tick(ctx)
+	live, _ := f.mobs.GetByID(ctx, m.ID)
+	if live.Core.CurrentRoomID != 2 {
+		t.Fatalf("pulse 1: room = %d, want 2 (BFS step toward goal 3)", live.Core.CurrentRoomID)
+	}
+	// Goal still cached (not yet arrived).
+	if g := h.getGoal(m.ID); g != 3 {
+		t.Fatalf("goal cleared mid-walk: got %d, want 3", g)
+	}
+
+	// Pulse 2: 2 → 3, arrival, goal cleared.
+	h.Tick(ctx)
+	live, _ = f.mobs.GetByID(ctx, m.ID)
+	if live.Core.CurrentRoomID != 3 {
+		t.Fatalf("pulse 2: room = %d, want 3 (arrival)", live.Core.CurrentRoomID)
+	}
+	if g := h.getGoal(m.ID); g != 0 {
+		t.Fatalf("goal not cleared on arrival: got %d", g)
+	}
+}
+
+func TestWander_BFS_PicksGoalWhenNoneCached(t *testing.T) {
+	// With no cached goal the handler floods BFS within radius and
+	// rolls a target. With a stable RNG (seed 1) the first call
+	// picks a deterministic room from the reachable set; the test
+	// just asserts a goal got cached AND the mob moved one hop.
+	f := newBFSFixture(t, 3)
+	m := f.spawn(t, 1)
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	h.Tick(context.Background())
+
+	live, _ := f.mobs.GetByID(context.Background(), m.ID)
+	if live.Core.CurrentRoomID == 1 {
+		t.Fatalf("mob didn't move despite reachable goals")
+	}
+	// Goal cached unless the random target was 1-hop away and the
+	// mob already arrived — in which case it'd be cleared. Either
+	// way, the room must be one of the BFS-reachable neighbors of 1.
+	if live.Core.CurrentRoomID != 2 {
+		t.Fatalf("first hop = %d, want 2 (only direct neighbor of 1)", live.Core.CurrentRoomID)
+	}
+}
+
+func TestWander_BFS_RespectsRadius(t *testing.T) {
+	// radius=1 means BFS can only see room 2 from room 1, even
+	// though rooms 3 and 4 are reachable. Mob walks to 2 and
+	// arrives — goal cleared. Pulse 2 picks a new goal from
+	// 1's neighbors after we move the mob back.
+	f := newBFSFixture(t, 1)
+	m := f.spawn(t, 1)
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	h.Tick(context.Background())
+
+	live, _ := f.mobs.GetByID(context.Background(), m.ID)
+	if live.Core.CurrentRoomID != 2 {
+		t.Fatalf("radius=1: hop = %d, want 2 (only reachable)", live.Core.CurrentRoomID)
+	}
+}
+
+func TestWander_BFS_NoMoveWhenSurrounded(t *testing.T) {
+	// All exits from room 1 are closed → no walkable neighbors,
+	// BFS reachable set is empty, the mob stays put. Cached goal
+	// (set earlier) should also clear since bfsNextStep fails.
+	f := newBFSFixture(t, 3)
+	f.exits = repo.NewMemoryExitRepo()
+	f.exits.Insert(repo.Exit{FromRoomID: 1, ToRoomID: 2, Direction: repo.DirEast, Flags: repo.ExitFlags{Closed: true}})
+	m := f.spawn(t, 1)
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	// Pre-seed a goal that's now unreachable via the closed door.
+	h.setGoal(m.ID, 3)
+	h.Tick(context.Background())
+
+	live, _ := f.mobs.GetByID(context.Background(), m.ID)
+	if live.Core.CurrentRoomID != 1 {
+		t.Fatalf("trapped mob moved to %d", live.Core.CurrentRoomID)
+	}
+	if g := h.getGoal(m.ID); g != 0 {
+		t.Fatalf("unreachable goal not cleared: got %d", g)
+	}
+}
+
+func TestWander_BFS_PathBranchWinsOverRadius(t *testing.T) {
+	// A template with BOTH a strict path AND wander_radius is
+	// rejected at load time (see internal/world/mob_path_test.go),
+	// but at runtime the strict-path branch must still fire first
+	// if both fields slip through (defense in depth). Set both
+	// directly on the template here.
+	f := newBFSFixture(t, 3)
+	ctx := context.Background()
+	// Replace template: same WanderRadius, but ALSO a path
+	// loop.a→loop.b→loop.c (rooms 1, 2, 3).
+	dual, err := f.templates.Create(ctx, creature.MobTemplate{
+		ExternalID:   "dual.behaviorflagged",
+		Core:         creature.Core{Name: "a confused traveler", HPMax: 4, Defense: 12},
+		WanderRadius: 3,
+		Path:         []string{"g.a", "g.b", "g.c"},
+	})
+	if err != nil {
+		t.Fatalf("create dual tpl: %v", err)
+	}
+	m, err := f.mobs.Create(ctx, creature.MobInstance{
+		TemplateID: dual.ID,
+		Core:       creature.Core{HPCurrent: 4, CurrentRoomID: 1},
+	})
+	if err != nil {
+		t.Fatalf("spawn dual: %v", err)
+	}
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	h.Tick(ctx)
+	live, _ := f.mobs.GetByID(ctx, m.ID)
+	if live.Core.CurrentRoomID != 2 {
+		t.Fatalf("dual-behavior: room = %d, want 2 (strict path 1→2)", live.Core.CurrentRoomID)
+	}
+}
+
 // ---- bufConn alias to internal/testhelper -------------------------------
 
 type bufConn = testhelper.BufConn
