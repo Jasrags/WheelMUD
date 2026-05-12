@@ -1,0 +1,138 @@
+// Package config loads server runtime configuration from an optional
+// YAML file plus environment-variable overrides.
+//
+// Precedence (lowest -> highest): struct defaults -> YAML file -> env.
+// A missing or empty path skips the file step. Env vars only override a
+// field when their value is non-empty.
+//
+// Per-catalog disk overrides (WORLD_DIR / CHARGEN_DIR / QUEST_DIR /
+// SCRIPT_DIR / EFFECTS_DIR) are NOT routed through this struct — they
+// are read directly by each catalog's embed.go and remain env-only so
+// the embedded-FS fallback path stays simple.
+package config
+
+import (
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config is the server's top-level runtime configuration.
+type Config struct {
+	Server ServerConfig `yaml:"server"`
+	DB     DBConfig     `yaml:"db"`
+	World  WorldConfig  `yaml:"world"`
+	Log    LogConfig    `yaml:"log"`
+	Audit  AuditConfig  `yaml:"audit"`
+}
+
+type ServerConfig struct {
+	// ListenAddr is the telnet bind address. Default ":2323".
+	ListenAddr string `yaml:"listen_addr"`
+
+	// MetricsAddr is the Prometheus + pprof + healthz HTTP bind address
+	// (Phase J slice J5). Empty disables the metrics server. Default
+	// "127.0.0.1:9090" — loopback only.
+	MetricsAddr string `yaml:"metrics_addr"`
+}
+
+type DBConfig struct {
+	// DSN is the modernc/sqlite connection string. Default "wheelmud.db".
+	DSN string `yaml:"dsn"`
+
+	// BackupDir is the directory the backup manager (Phase J slice J4)
+	// writes VACUUM INTO snapshots to. Empty disables backups.
+	BackupDir string `yaml:"backup_dir"`
+
+	// BackupIntervalHours controls cadence of the backup manager. 0
+	// disables backups. Default 6 once enabled.
+	BackupIntervalHours float64 `yaml:"backup_interval_hours"`
+
+	// BackupRetention is the maximum number of snapshot files retained
+	// in BackupDir; older ones are pruned. Default 14.
+	BackupRetention int `yaml:"backup_retention"`
+}
+
+type WorldConfig struct {
+	// Dir is the world content tree the YAML loader reads at boot. When
+	// empty (the default) the loader uses its embedded FS. Equivalent
+	// to setting WORLD_DIR.
+	Dir string `yaml:"dir"`
+}
+
+type LogConfig struct {
+	// Level is the slog level name (debug/info/warn/error). Default
+	// "debug".
+	Level string `yaml:"level"`
+}
+
+type AuditConfig struct {
+	// CommandsEnabled toggles per-character command audit logging
+	// (Phase J slice J3). Default false.
+	CommandsEnabled bool `yaml:"commands_enabled"`
+
+	// CommandsExclude is a verb allow-list of high-frequency commands
+	// to skip when CommandsEnabled is true (e.g. "look", "prompt").
+	CommandsExclude []string `yaml:"commands_exclude"`
+}
+
+// Defaults returns a Config populated with the same fallback values the
+// pre-config codebase used. Callers that don't need file overrides can
+// use this directly and just apply env.
+func Defaults() Config {
+	return Config{
+		Server: ServerConfig{
+			ListenAddr:  ":2323",
+			MetricsAddr: "127.0.0.1:9090",
+		},
+		DB: DBConfig{
+			DSN:                 "wheelmud.db",
+			BackupDir:           "",
+			BackupIntervalHours: 6,
+			BackupRetention:     14,
+		},
+		Log: LogConfig{Level: "debug"},
+	}
+}
+
+// Load reads YAML from path (if non-empty) over Defaults, then applies
+// environment overrides. A non-existent path returns an error; an empty
+// path is "use defaults + env only".
+func Load(path string) (Config, error) {
+	cfg := Defaults()
+	if path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return cfg, fmt.Errorf("read config %q: %w", path, err)
+		}
+		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+			return cfg, fmt.Errorf("parse config %q: %w", path, err)
+		}
+	}
+	applyEnv(&cfg)
+	return cfg, nil
+}
+
+// applyEnv overrides fields from non-empty environment variables.
+// Mirrors the env-var surface the pre-config codebase already used.
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("LISTEN_ADDR"); v != "" {
+		cfg.Server.ListenAddr = v
+	}
+	if v := os.Getenv("METRICS_ADDR"); v != "" {
+		cfg.Server.MetricsAddr = v
+	}
+	if v := os.Getenv("DB_DSN"); v != "" {
+		cfg.DB.DSN = v
+	}
+	if v := os.Getenv("BACKUP_DIR"); v != "" {
+		cfg.DB.BackupDir = v
+	}
+	if v := os.Getenv("WORLD_DIR"); v != "" {
+		cfg.World.Dir = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.Log.Level = v
+	}
+}

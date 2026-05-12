@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/chargen"
 	"github.com/Jasrags/WheelMUD/internal/cmd"
 	"github.com/Jasrags/WheelMUD/internal/combat"
+	"github.com/Jasrags/WheelMUD/internal/config"
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/dialogue"
@@ -49,8 +51,6 @@ import (
 )
 
 const (
-	defaultListenAddr     = ":2323"
-	defaultDBDSN          = "wheelmud.db"
 	shutdownDrainTimeout  = 10 * time.Second
 	defaultPromptTemplate = "<%h/%H hp> "
 )
@@ -108,8 +108,17 @@ type server struct {
 }
 
 func main() {
-	rawLevel := envOr("LOG_LEVEL", "debug")
-	level, levelOK := parseLogLevel(rawLevel)
+	configPath := flag.String("config", "", "Path to YAML config file (optional; env vars still apply)")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		// Log via the default handler — slog isn't configured yet.
+		slog.Error("Config load failed", "path", *configPath, "error", err)
+		os.Exit(1)
+	}
+
+	level, levelOK := parseLogLevel(cfg.Log.Level)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: level,
 	}))
@@ -117,11 +126,11 @@ func main() {
 	if !levelOK {
 		// Warn through the now-configured handler so format / level
 		// match the rest of startup logging.
-		slog.Warn("LOG_LEVEL: unknown value, defaulting to info", "value", rawLevel)
+		slog.Warn("log.level: unknown value, defaulting to info", "value", cfg.Log.Level)
 	}
 
-	addr := envOr("LISTEN_ADDR", defaultListenAddr)
-	dsn := envOr("DB_DSN", defaultDBDSN)
+	addr := cfg.Server.ListenAddr
+	dsn := cfg.DB.DSN
 
 	conn, err := db.Open(context.Background(), dsn)
 	if err != nil {
@@ -1267,13 +1276,6 @@ func validateDialogueScriptRefs(ctx context.Context, templates repo.MobTemplateR
 		}
 	}
 	return nil
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
 
 // parseLogLevel maps a LOG_LEVEL env value to slog.Level. Returns

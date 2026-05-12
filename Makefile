@@ -3,6 +3,9 @@
 # `make run/server WORLD_DIR=/path/to/other`) to load a different tree.
 # The variable is exported so build/server (which only compiles) is
 # unaffected, but run/server and run/live/server pick it up.
+#
+# Top-level config can also be set via a YAML file passed with
+# `-config <path>` (see config.example.yaml). Env vars override the file.
 WORLD_DIR ?= ./data/world
 export WORLD_DIR
 

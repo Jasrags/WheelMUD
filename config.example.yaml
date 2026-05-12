@@ -1,0 +1,65 @@
+# WheelMUD server configuration.
+#
+# Copy to `config.yaml` and pass via `-config config.yaml` (or leave the
+# flag off to run with defaults + env vars only). Every field is
+# optional; omitted fields fall back to the package defaults shown
+# below. Environment variables override file values (and the env-only
+# config is a supported deployment mode — the file is not required).
+#
+# Defaults defined in internal/config/config.go::Defaults.
+
+server:
+  # TCP bind address for the telnet listener.
+  # Env: LISTEN_ADDR
+  listen_addr: ":2323"
+
+  # HTTP bind address for metrics, pprof, and healthz (Phase J slice
+  # J5). Empty string disables the metrics server. Loopback by
+  # default; expose only behind a private network or sidecar proxy.
+  # Env: METRICS_ADDR
+  metrics_addr: "127.0.0.1:9090"
+
+db:
+  # modernc/sqlite DSN. ":memory:" works for ephemeral runs.
+  # Env: DB_DSN
+  dsn: "wheelmud.db"
+
+  # Directory the backup manager writes VACUUM INTO snapshots to.
+  # Empty disables backups (Phase J slice J4).
+  # Env: BACKUP_DIR
+  backup_dir: ""
+
+  # Backup cadence in hours. 0 disables backups even if backup_dir is
+  # set.
+  backup_interval_hours: 6
+
+  # Maximum snapshot count retained in backup_dir; older snapshots are
+  # pruned by mtime.
+  backup_retention: 14
+
+world:
+  # World content tree the YAML loader reads at boot. Empty uses the
+  # embedded FS shipped with the binary. Equivalent to the WORLD_DIR
+  # env var; the other catalog dirs (CHARGEN_DIR / QUEST_DIR /
+  # SCRIPT_DIR / EFFECTS_DIR) remain env-only.
+  # Env: WORLD_DIR
+  dir: ""
+
+log:
+  # slog level: debug / info / warn / error. Unknown values fall back
+  # to info with a warning at startup.
+  # Env: LOG_LEVEL
+  level: "debug"
+
+audit:
+  # Per-character command audit log (Phase J slice J3). Writes one row
+  # per dispatched verb to the character_audit table. Off by default
+  # because it inflates row counts.
+  commands_enabled: false
+
+  # Verbs to skip when commands_enabled is true. Trim the noise from
+  # high-frequency commands so the audit table stays useful for
+  # forensic queries.
+  commands_exclude:
+    - look
+    - prompt
