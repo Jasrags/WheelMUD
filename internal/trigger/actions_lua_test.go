@@ -518,3 +518,143 @@ func TestLuaAction_QuestAccept_HookError_Faults(t *testing.T) {
 		t.Fatalf("err = %v; want hook message in chain", err)
 	}
 }
+
+// Phase F #32 slice 5a — V5a combat + inventory mutation surface
+// dispatches through the trigger lua action with no actor-kind guard
+// (unlike quest / apply_affect / give_item). The DropItem adapter
+// resolves the target room from EventCtx, so a mob-template on_tick
+// with RoomID==0 refuses; happy paths confirm the hook closures
+// receive the correct args from Lua.
+
+func TestLuaAction_DealDamage_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "dd", `deal_damage(7, 11, "fire_trap")`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	type call struct {
+		Target int64
+		Amount int32
+		Source string
+	}
+	var seen call
+	hooks := LuaHooks{
+		DealDamage: func(_ context.Context, target int64, amount int32, source string) error {
+			seen = call{Target: target, Amount: amount, Source: source}
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "dd"})
+	// Mob actor on a player-targeted damage call is legitimate (no
+	// actor-kind guard for V5a mutations).
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{Kind: OwnerMobTemplate, RoomID: 50},
+		EventCtx{Event: EventOnAttack, ActorKind: "mob", ActorID: 99, RoomID: 50}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if seen.Target != 7 || seen.Amount != 11 || seen.Source != "fire_trap" {
+		t.Fatalf("hook args: %+v", seen)
+	}
+}
+
+func TestLuaAction_Heal_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "hl", `heal(42, 8)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var sawTarget int64
+	var sawAmount int32
+	hooks := LuaHooks{
+		Heal: func(_ context.Context, target int64, amount int32) error {
+			sawTarget = target
+			sawAmount = amount
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "hl"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1, RoomID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawTarget != 42 || sawAmount != 8 {
+		t.Fatalf("hook args: target=%d amount=%d", sawTarget, sawAmount)
+	}
+}
+
+func TestLuaAction_TransferItem_DispatchesToHook(t *testing.T) {
+	cat := loadCatalog(t, "ti", `transfer_item(101, 7)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var sawItem, sawTo int64
+	hooks := LuaHooks{
+		TransferItem: func(_ context.Context, item, to int64) error {
+			sawItem = item
+			sawTo = to
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "ti"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{ActorKind: "character", ActorID: 1, RoomID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawItem != 101 || sawTo != 7 {
+		t.Fatalf("hook args: item=%d to=%d", sawItem, sawTo)
+	}
+}
+
+func TestLuaAction_DropItem_ResolvesRoomFromEvent(t *testing.T) {
+	cat := loadCatalog(t, "di", `drop_item(55)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	var sawItem, sawRoom int64
+	hooks := LuaHooks{
+		DropItem: func(_ context.Context, item, room int64) error {
+			sawItem = item
+			sawRoom = room
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "di"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{RoomID: 300, ActorKind: "character", ActorID: 1}, payload)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if sawItem != 55 || sawRoom != 300 {
+		t.Fatalf("hook args: item=%d room=%d (want 55, 300)", sawItem, sawRoom)
+	}
+}
+
+func TestLuaAction_DropItem_ZeroRoomFaults(t *testing.T) {
+	cat := loadCatalog(t, "di_zero", `drop_item(1)`)
+	runner := intlua.NewRunner(cat, nil)
+	defer runner.Stop()
+
+	hooks := LuaHooks{
+		DropItem: func(context.Context, int64, int64) error {
+			t.Fatal("hook should not fire when ev.RoomID is 0")
+			return nil
+		},
+	}
+	reg := NewActionRegistry()
+	RegisterLuaAction(reg, runner, cat, hooks)
+	payload, _ := json.Marshal(LuaPayload{Script: "di_zero"})
+	err := reg.Lookup("lua")(context.Background(), ActionDeps{}, OwnerRef{},
+		EventCtx{Event: EventOnTick, BucketName: "phase"}, payload)
+	if !errors.Is(err, ErrActionFaulted) ||
+		!strings.Contains(err.Error(), "drop_item requires a room context") {
+		t.Fatalf("err = %v; want room-context refusal", err)
+	}
+}

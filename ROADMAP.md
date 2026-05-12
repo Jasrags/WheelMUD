@@ -1744,6 +1744,36 @@ will need on top of those tables.
       take/transfer, async `wait()`, and `on_login`/`on_logout`
       events.
 
+      Phase F #32 slice 5a landed 2026-05-11 (§D crit polish
+      unblock). Four new APIBindings hooks shipped on the
+      mutation surface: `deal_damage(target_id, amount [,
+      source])`, `heal(target_id, amount)`, `transfer_item
+      (item_id, to_owner_id)`, `drop_item(item_id)`. New combat
+      entry points `combat.Manager.ApplyDamageExternal` /
+      `combat.Manager.ApplyHealing` mirror the affect-death
+      shape — raw amount (no DR / resists / crit roll), no
+      threat-table mutation, lethal damage routes through the
+      existing `handleCharacterDeath` / `handleMobDeath`
+      pipelines. Two new events: `combat.ScriptDamageDealt`
+      (with `Lethal` flag so the default-narration subscriber
+      suppresses the "you suffer N damage" line on lethal hits)
+      and `combat.ScriptHealingApplied` (Amount == 0 when
+      target is already at full HP). Cmd-layer subscribers
+      render default narration via `Session.WriteAsync` for
+      unsourced damage / heal. Lua bindings take a single
+      `target_id`; `resolveLuaTarget` tries `CharacterRepo.
+      GetByID` first then `MobInstanceRepo.GetByID` so both
+      kinds work behind one binding. No actor-kind guard at the
+      trigger layer (mob-fired triggers legitimately damage /
+      heal players); `drop_item` keeps a `ev.RoomID != 0`
+      adapter guard so a context-less drop trips the fault
+      budget instead of dumping into room 0. Killer attribution
+      on lethal damage is anonymous in V1 (`ActorRef{}`); future
+      slices may thread an authored hint through the source
+      string. Two demo scripts shipped: `script_strike.lua`
+      (emote + deal_damage) and `divine_heal.lua` (say + heal).
+      Wipe-list extended with the four new globals.
+
       Phase F #32 slice 3 landed 2026-05-10. Slice 3 broadens the API surface for content
       authors with three composing closures: `apply_affect(target_id,
       effect_id)` (resolves through the effects catalog + the §E

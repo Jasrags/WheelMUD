@@ -819,6 +819,11 @@ func main() {
 		RoomMobs:      makeLuaRoomMobs(mobs),
 		ClockHour:     clock.HourOfDay,
 		ClockDay:      clock.Day,
+		// Phase F #32 slice 5a — combat + inventory mutations.
+		DealDamage:   makeLuaDealDamage(combatMgr, characters, mobs),
+		Heal:         makeLuaHeal(combatMgr, characters, mobs),
+		TransferItem: makeLuaTransferItem(items),
+		DropItem:     makeLuaDropItem(items),
 	}
 	if questEngine != nil {
 		luaHooks.Accept = questEngine.AcceptQuest
@@ -881,6 +886,52 @@ func main() {
 				slog.Debug("affects: tick notify failed",
 					"char", ev.CharacterID, "name", te.Name, "error", err)
 			}
+		}
+	})
+
+	// ScriptDamageDealt / ScriptHealingApplied subscribers (Phase F
+	// #32 slice 5a). Renders a default narration line to the target's
+	// session if they have one. Scripts that want custom flavor call
+	// say / emote themselves — these defaults are the fallback so
+	// silent HP changes from Lua aren't invisible to the player.
+	// Death narration on lethal hits already flows from CharacterDied
+	// / CombatDeath, so we suppress the default line when Lethal is
+	// true to avoid double-narration.
+	eventbus.Subscribe(bus, func(_ context.Context, ev combat.ScriptDamageDealt) {
+		if ev.Lethal || ev.Target.Kind != combat.ActorKindCharacter {
+			return
+		}
+		victim := cmd.LookupByCharacterID(sessions, ev.Target.ID)
+		if victim == nil {
+			return
+		}
+		src := ev.Source
+		if src == "" {
+			src = "an unseen force"
+		}
+		msg := fmt.Sprintf("{{You suffer %d damage from %s.}}::red\r\n", ev.Amount, defangScriptSource(src))
+		if err := victim.WriteAsync(msg); err != nil {
+			slog.Debug("script_damage: notify failed",
+				"char", ev.Target.ID, "source", ev.Source, "error", err)
+		}
+	})
+	eventbus.Subscribe(bus, func(_ context.Context, ev combat.ScriptHealingApplied) {
+		if ev.Target.Kind != combat.ActorKindCharacter {
+			return
+		}
+		victim := cmd.LookupByCharacterID(sessions, ev.Target.ID)
+		if victim == nil {
+			return
+		}
+		var msg string
+		if ev.Amount == 0 {
+			msg = "{{A warm light touches you, but you are already whole.}}::green\r\n"
+		} else {
+			msg = fmt.Sprintf("{{A warm light suffuses you; you recover %d hp.}}::green\r\n", ev.Amount)
+		}
+		if err := victim.WriteAsync(msg); err != nil {
+			slog.Debug("script_healing: notify failed",
+				"char", ev.Target.ID, "error", err)
 		}
 	})
 
@@ -1541,6 +1592,29 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			}
 			bindings.ClockHour = clock.HourOfDay
 			bindings.ClockDay = clock.Day
+			// V5a surface (Phase F #32 slice 5a) — combat +
+			// inventory mutations. Dialogue scripts always fire in
+			// character context so target resolution / room
+			// context come straight from the session.
+			dealDamage := makeLuaDealDamage(combatMgr, characters, mobs)
+			heal := makeLuaHeal(combatMgr, characters, mobs)
+			transferItem := makeLuaTransferItem(items)
+			dropItem := makeLuaDropItem(items)
+			bindings.DealDamage = func(targetID int64, amount int32, source string) error {
+				return dealDamage(ctx, targetID, amount, source)
+			}
+			bindings.Heal = func(targetID int64, amount int32) error {
+				return heal(ctx, targetID, amount)
+			}
+			bindings.TransferItem = func(itemID, toOwnerID int64) error {
+				return transferItem(ctx, itemID, toOwnerID)
+			}
+			bindings.DropItem = func(itemID int64) error {
+				if s.CurrentRoomID == 0 {
+					return fmt.Errorf("drop_item requires a room context (session not in a room)")
+				}
+				return dropItem(ctx, itemID, s.CurrentRoomID)
+			}
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
 			// classified Lua error makes the unbound state visible
@@ -1892,6 +1966,136 @@ func makeLuaRoomMobs(mobs repo.MobInstanceRepo) func(context.Context, int64) ([]
 			out = append(out, m.ID)
 		}
 		return out, nil
+	}
+}
+
+// defangScriptSource neutralizes cfmt brace tokens that a content
+// author might have embedded in a Lua deal_damage source string so
+// the default narration can render it as plain text without
+// hijacking the surrounding {{...}} tag. Mirrors internal/cmd's
+// unexported defangCfmt; kept package-private here so the
+// dependency arrow doesn't reverse.
+var defangScriptSourceReplacer = strings.NewReplacer("{{", "{ {", "}}", "} }")
+
+func defangScriptSource(s string) string {
+	return defangScriptSourceReplacer.Replace(s)
+}
+
+// makeLuaDealDamage resolves targetID as either a character or a mob
+// (character repo first, then mob repo) and routes through
+// combat.Manager.ApplyDamageExternal. Killer attribution is anonymous
+// in V1 — a script firing from an `on_say` row could mean the speaker,
+// the room, or "nobody", and the binding signature doesn't carry an
+// authored choice. Future slices may thread a script-supplied killer
+// hint through the source string. Phase F #32 slice 5a.
+func makeLuaDealDamage(combatMgr *combat.Manager, characters repo.CharacterRepo, mobs repo.MobInstanceRepo) func(context.Context, int64, int32, string) error {
+	return func(ctx context.Context, targetID int64, amount int32, source string) error {
+		ref, err := resolveLuaTarget(ctx, targetID, characters, mobs)
+		if err != nil {
+			return err
+		}
+		return combatMgr.ApplyDamageExternal(ctx, combat.ActorRef{}, ref, amount, source)
+	}
+}
+
+// makeLuaHeal mirrors makeLuaDealDamage's target resolution path,
+// routing through combat.Manager.ApplyHealing.
+func makeLuaHeal(combatMgr *combat.Manager, characters repo.CharacterRepo, mobs repo.MobInstanceRepo) func(context.Context, int64, int32) error {
+	return func(ctx context.Context, targetID int64, amount int32) error {
+		ref, err := resolveLuaTarget(ctx, targetID, characters, mobs)
+		if err != nil {
+			return err
+		}
+		return combatMgr.ApplyHealing(ctx, ref, amount)
+	}
+}
+
+// resolveLuaTarget tries the character repo first, then the mob
+// instance repo. Returns a classified error when neither matches so
+// the trigger fault budget can catch malformed authoring (e.g. a
+// script that references a character id long since deleted).
+//
+// A genuine DB error (anything that is NOT ErrCharacterNotFound /
+// ErrInstanceNotFound) is surfaced immediately rather than falling
+// through to the next repo — otherwise a transient infra failure
+// reads identically to "no such id", masking real problems behind a
+// misleading "not found" Lua error.
+func resolveLuaTarget(ctx context.Context, targetID int64, characters repo.CharacterRepo, mobs repo.MobInstanceRepo) (combat.ActorRef, error) {
+	if targetID == 0 {
+		return combat.ActorRef{}, fmt.Errorf("target id must be non-zero")
+	}
+	if characters != nil {
+		_, err := characters.GetByID(ctx, targetID)
+		switch {
+		case err == nil:
+			return combat.ActorRef{Kind: combat.ActorKindCharacter, ID: targetID}, nil
+		case errors.Is(err, repo.ErrCharacterNotFound):
+			// expected miss — fall through to the mob lookup
+		default:
+			return combat.ActorRef{}, fmt.Errorf("character lookup failed: %w", err)
+		}
+	}
+	if mobs != nil {
+		_, err := mobs.GetByID(ctx, targetID)
+		switch {
+		case err == nil:
+			return combat.ActorRef{Kind: combat.ActorKindMob, ID: targetID}, nil
+		case errors.Is(err, repo.ErrInstanceNotFound):
+			// fall through to the "no match" return
+		default:
+			return combat.ActorRef{}, fmt.Errorf("mob lookup failed: %w", err)
+		}
+	}
+	return combat.ActorRef{}, fmt.Errorf("no character or mob with id %d", targetID)
+}
+
+// makeLuaTransferItem moves itemID between two characters' inventories
+// via the repo's optimistic-lock-aware TransferOwnerToOwner. Resolves
+// the current owner via GetByID — the item must currently be in some
+// character's inventory; items on the room floor or inside a
+// container are refused (the trigger fault budget catches the
+// classified error). Mirrors the encumbrance-free V1 give-verb path:
+// inventory limits via the carry table are deferred (slice 5a
+// followups). Phase F #32 slice 5a.
+func makeLuaTransferItem(items repo.ItemRepo) func(context.Context, int64, int64) error {
+	return func(ctx context.Context, itemID, toOwnerID int64) error {
+		if itemID == 0 || toOwnerID == 0 {
+			return fmt.Errorf("item id and target owner must be non-zero")
+		}
+		it, err := items.GetByID(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		if it.OwnerCharacterID == 0 {
+			return fmt.Errorf("item %d is not in a character's inventory (room=%d parent=%d)", itemID, it.RoomID, it.ParentItemID)
+		}
+		if it.OwnerCharacterID == toOwnerID {
+			// Idempotent no-op — script handing item back to its
+			// existing owner is harmless; surface no error.
+			return nil
+		}
+		return items.TransferOwnerToOwner(ctx, itemID, it.OwnerCharacterID, toOwnerID)
+	}
+}
+
+// makeLuaDropItem drops an owned item into the firing room. The room
+// is supplied by the trigger-layer adapter (ev.RoomID); the dialogue
+// hook closure passes s.CurrentRoomID. Mirrors makeLuaTransferItem's
+// "must currently be in a character's inventory" guard. Phase F #32
+// slice 5a.
+func makeLuaDropItem(items repo.ItemRepo) func(context.Context, int64, int64) error {
+	return func(ctx context.Context, itemID, currentRoomID int64) error {
+		if itemID == 0 || currentRoomID == 0 {
+			return fmt.Errorf("item id and target room must be non-zero")
+		}
+		it, err := items.GetByID(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		if it.OwnerCharacterID == 0 {
+			return fmt.Errorf("item %d is not in a character's inventory (room=%d parent=%d)", itemID, it.RoomID, it.ParentItemID)
+		}
+		return items.TransferOwnerToRoom(ctx, itemID, it.OwnerCharacterID, currentRoomID)
 	}
 }
 

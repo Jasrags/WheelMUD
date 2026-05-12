@@ -256,6 +256,31 @@ type CombatFlee struct {
 	Reason    string
 }
 
+// ScriptDamageDealt fires once when ApplyDamageExternal mutates a
+// target's HP. Source is the free-form attribution string the Lua
+// caller passed in (e.g. "warden_alert", "fire_trap"); subscribers
+// use it for default narration when the script didn't emit its own
+// say/emote. Lethal is true when the damage dropped HPCurrent to zero
+// — the manager has already routed to handleCharacterDeath /
+// handleMobDeath by the time this event publishes, so subscribers can
+// trust the death pipeline ran. Phase F #32 slice 5a.
+type ScriptDamageDealt struct {
+	RoomID int64
+	Target ActorRef
+	Amount int32
+	Source string
+	Lethal bool
+}
+
+// ScriptHealingApplied fires once when ApplyHealing mutates a target's
+// HP upward. Amount is the clamped delta actually persisted (zero when
+// the target was already at full HP). Phase F #32 slice 5a.
+type ScriptHealingApplied struct {
+	RoomID int64
+	Target ActorRef
+	Amount int32
+}
+
 // CorpseDecayed fires once when the Decayer sweeps a corpse out of
 // the world. RoomID is where the corpse was at decay time (and where
 // the crumble line was broadcast); ItemID is the deleted corpse row.

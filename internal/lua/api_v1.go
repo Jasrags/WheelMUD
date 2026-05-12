@@ -82,6 +82,18 @@ type APIBindings struct {
 	ClockHour     func() int
 	ClockDay      func() int64
 	TargetClasses func(targetID int64) (map[string]int, error)
+
+	// V5a surface (Phase F #32 slice 5a) — combat + inventory
+	// mutations. Source on DealDamage is a free-form attribution
+	// string the script author passes for the ScriptDamageDealt
+	// event subscriber's default narration. TransferItem and
+	// DropItem wrap the existing ItemRepo Transfer* contract, so
+	// concurrent moves surface as classified Lua errors (mapped
+	// from ErrItemMoved) that trip the fault budget.
+	DealDamage   func(targetID int64, amount int32, source string) error
+	Heal         func(targetID int64, amount int32) error
+	TransferItem func(itemID, toOwnerID int64) error
+	DropItem     func(itemID int64) error
 }
 
 // Bind registers the V1 API globals on l. Call this from the bind
@@ -277,6 +289,68 @@ func (b APIBindings) Bind(l *gluua.LState) {
 		return 1
 	}))
 	l.SetGlobal("clock", clockTbl)
+
+	// V5a surface (Phase F #32 slice 5a). Mutations register
+	// classified-error stubs when the hook is nil so misuse trips
+	// the trigger fault budget rather than surfacing a generic
+	// "attempt to call nil" error.
+	l.SetGlobal("deal_damage", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		amount := int32(L.CheckInt(2))
+		// Source is optional — empty string is fine; subscribers
+		// fall back to a generic narration.
+		source := L.OptString(3, "")
+		if b.DealDamage == nil {
+			L.RaiseError("deal_damage not bound in this context")
+			return 0
+		}
+		if err := b.DealDamage(targetID, amount, source); err != nil {
+			L.RaiseError("deal_damage(%d, %d, %q) failed: %s", targetID, amount, source, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("heal", l.NewFunction(func(L *gluua.LState) int {
+		targetID := L.CheckInt64(1)
+		amount := int32(L.CheckInt(2))
+		if b.Heal == nil {
+			L.RaiseError("heal not bound in this context")
+			return 0
+		}
+		if err := b.Heal(targetID, amount); err != nil {
+			L.RaiseError("heal(%d, %d) failed: %s", targetID, amount, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("transfer_item", l.NewFunction(func(L *gluua.LState) int {
+		itemID := L.CheckInt64(1)
+		toOwnerID := L.CheckInt64(2)
+		if b.TransferItem == nil {
+			L.RaiseError("transfer_item not bound in this context")
+			return 0
+		}
+		if err := b.TransferItem(itemID, toOwnerID); err != nil {
+			L.RaiseError("transfer_item(%d, %d) failed: %s", itemID, toOwnerID, err.Error())
+			return 0
+		}
+		return 0
+	}))
+
+	l.SetGlobal("drop_item", l.NewFunction(func(L *gluua.LState) int {
+		itemID := L.CheckInt64(1)
+		if b.DropItem == nil {
+			L.RaiseError("drop_item not bound in this context")
+			return 0
+		}
+		if err := b.DropItem(itemID); err != nil {
+			L.RaiseError("drop_item(%d) failed: %s", itemID, err.Error())
+			return 0
+		}
+		return 0
+	}))
 }
 
 // int64SliceToTable converts a Go []int64 into a 1-indexed Lua

@@ -762,9 +762,45 @@ Content multiplier. Without this the world is static.
       `room` + `clock`. Two demo scripts added: `check_alone.lua`
       (room.players + apply_affect) and `night_warning.lua`
       (clock.hour gate).
-    - Slice 5 (sketch): combat mutations (deal_damage / heal —
-      blocked on §D crit polish), inventory take/transfer,
-      `wait(seconds, fn)` async, `on_login` / `on_logout` events.
+    - **Slice 5a — landed 2026-05-11**: combat + inventory
+      mutations (§D crit polish unblock). Four new APIBindings
+      hooks: `deal_damage(target_id, amount [, source])`,
+      `heal(target_id, amount)`, `transfer_item(item_id,
+      to_owner_id)`, `drop_item(item_id)`. New
+      `combat.Manager.ApplyDamageExternal` /
+      `combat.Manager.ApplyHealing` entry points mirror the
+      `HandleAffectDeath` shape — raw amount (no DR/resists/crit),
+      no threat-table mutation, lethal damage routes to the
+      existing `handleCharacterDeath` / `handleMobDeath` pipelines.
+      Two new events: `combat.ScriptDamageDealt` (with `Lethal`
+      flag so the default-narration subscriber suppresses the
+      "you suffer N damage" line on lethal hits — death lines
+      already flow from `CharacterDied` / `CombatDeath`) and
+      `combat.ScriptHealingApplied` (Amount == 0 when already at
+      full HP so the warm-light flavor line still renders).
+      Cmd-layer subscribers in `cmd/server/main.go` render
+      default narration via `Session.WriteAsync` for unsourced
+      damage / heal. Lua bindings take a single `target_id`;
+      `resolveLuaTarget` tries `CharacterRepo.GetByID` first
+      then `MobInstanceRepo.GetByID` so both kinds work behind
+      one binding. No actor-kind guard at the trigger layer
+      (mob-fired triggers legitimately damage / heal players);
+      `drop_item` keeps a `ev.RoomID != 0` adapter guard
+      (mirrors `room.players` / `room.mobs`) so a context-less
+      drop trips the fault budget instead of dumping into room
+      0. Killer attribution on lethal damage is anonymous in
+      V1 (`ActorRef{}`); future slices may thread an authored
+      hint through the source string. Two demo scripts:
+      `script_strike.lua` (emote + deal_damage) and
+      `divine_heal.lua` (say + heal). Wipe-list extended with
+      the four new globals so per-call state can't leak across
+      pool borrows.
+    - Slice 5b (sketch): `wait(seconds, "script_name")` defers a
+      fresh `runner.Run` via `tick.AfterCtx`; `on_login` /
+      `on_logout` room-owned triggers (CHECK migration on
+      `triggers.event` + publish from `mode/postauth::
+      promoteToGame` and the connection defer in `cmd/server/
+      main.go`).
     - Slice 6: OLC `tedit` (depends on Phase G).
 
 32a. **Authored mob paths + pathfinding** (§15 / §10). Today

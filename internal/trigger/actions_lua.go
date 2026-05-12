@@ -62,6 +62,24 @@ type LuaHooks struct {
 	ClockHour     func() int
 	ClockDay      func() int64
 	TargetClasses func(ctx context.Context, targetID int64) (map[string]int, error)
+
+	// V5a (Phase F #32 slice 5a) — combat + inventory mutations.
+	// Unlike the V2/V3 character-bound mutation APIs, these have
+	// NO actor-kind guard at the trigger layer: scripts firing from
+	// mob-template triggers legitimately damage / heal players, and
+	// a script dispensed by an `on_say` row legitimately confiscates
+	// contraband. The cmd-layer closure resolves target kind by
+	// trying CharacterRepo first then MobInstanceRepo, and any
+	// failure surfaces as a classified Lua error that trips the
+	// fault budget. DropItem takes a separate currentRoomID arg
+	// resolved by the trigger-layer adapter from ev.RoomID; the
+	// adapter refuses with a classified error when ev.RoomID == 0
+	// (mob-template `on_tick`) so a context-less drop doesn't
+	// dump items into room 0.
+	DealDamage   func(ctx context.Context, targetID int64, amount int32, source string) error
+	Heal         func(ctx context.Context, targetID int64, amount int32) error
+	TransferItem func(ctx context.Context, itemID, toOwnerID int64) error
+	DropItem     func(ctx context.Context, itemID, currentRoomID int64) error
 }
 
 // LuaQuestHooks is the legacy slice-2 alias. Kept as a type alias
@@ -119,6 +137,10 @@ func luaActionHandler(runner *intlua.Runner, hooks LuaHooks) ActionHandler {
 			RoomMobs:       makeRoomMobsHook(ctx, ev, hooks.RoomMobs),
 			ClockHour:      hooks.ClockHour,
 			ClockDay:       hooks.ClockDay,
+			DealDamage:     makeDealDamageHook(ctx, hooks.DealDamage),
+			Heal:           makeHealHook(ctx, hooks.Heal),
+			TransferItem:   makeTransferItemHook(ctx, hooks.TransferItem),
+			DropItem:       makeDropItemHook(ctx, ev, hooks.DropItem),
 		}
 		// PushMode stays unbound on triggers — there's no surrounding
 		// session to push a mode onto. The classified Lua error is
@@ -266,6 +288,57 @@ func makeRoomMobsHook(ctx context.Context, ev EventCtx, hook func(context.Contex
 			return nil, fmt.Errorf("room.mobs requires a room context (event %q has no room)", ev.Event)
 		}
 		return hook(ctx, ev.RoomID)
+	}
+}
+
+// V5a adapters (Phase F #32 slice 5a).
+//
+// makeDealDamageHook / makeHealHook / makeTransferItemHook have no
+// actor-kind guard — the trigger layer trusts content authors to
+// scope script effects appropriately. makeDropItemHook does have a
+// room-context guard: the drop target is "the room the trigger fired
+// in", so a mob-template `on_tick` (RoomID == 0) refuses with a
+// classified error rather than silently dropping into room 0.
+func makeDealDamageHook(ctx context.Context, hook func(context.Context, int64, int32, string) error) func(int64, int32, string) error {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64, amount int32, source string) error {
+		return hook(ctx, targetID, amount, source)
+	}
+}
+
+func makeHealHook(ctx context.Context, hook func(context.Context, int64, int32) error) func(int64, int32) error {
+	if hook == nil {
+		return nil
+	}
+	return func(targetID int64, amount int32) error {
+		return hook(ctx, targetID, amount)
+	}
+}
+
+func makeTransferItemHook(ctx context.Context, hook func(context.Context, int64, int64) error) func(int64, int64) error {
+	if hook == nil {
+		return nil
+	}
+	return func(itemID, toOwnerID int64) error {
+		return hook(ctx, itemID, toOwnerID)
+	}
+}
+
+// makeDropItemHook resolves the room from the firing EventCtx, NOT
+// from a Lua-side argument. Mirrors makeRoomPlayersHook's posture:
+// scripts can only drop into the room they own. ev.RoomID == 0 (mob-
+// template `on_tick`) refuses with a classified error.
+func makeDropItemHook(ctx context.Context, ev EventCtx, hook func(context.Context, int64, int64) error) func(int64) error {
+	if hook == nil {
+		return nil
+	}
+	return func(itemID int64) error {
+		if ev.RoomID == 0 {
+			return fmt.Errorf("drop_item requires a room context (event %q has no room)", ev.Event)
+		}
+		return hook(ctx, itemID, ev.RoomID)
 	}
 }
 
