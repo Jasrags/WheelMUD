@@ -155,6 +155,7 @@ func main() {
 	}
 	worldState := repo.NewSQLiteWorldStateRepo(conn)
 	audits := repo.NewSQLiteAdminAuditRepo(conn)
+	commandAudits := repo.NewSQLiteCharacterAuditRepo(conn)
 	logins := repo.NewSQLiteAccountLoginRepo(conn)
 	shops := repo.NewSQLiteShopRepo(conn)
 	bankers := repo.NewSQLiteBankerRepo(conn)
@@ -1017,6 +1018,11 @@ func main() {
 	}
 
 	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
+	if cfg.Audit.CommandsEnabled {
+		gameMode.SetAudit(buildCommandAuditFn(commandAudits, cfg.Audit.CommandsExclude))
+		slog.Info("Per-character command audit enabled",
+			"exclude", cfg.Audit.CommandsExclude)
+	}
 	srv.newInitial = func() telnet.Mode {
 		login := mode.NewLogin(accounts, characters, sessions, gameMode)
 		login.SetMOTD(func(s *telnet.Session, lastSeen time.Time) error {
@@ -1276,6 +1282,48 @@ func validateDialogueScriptRefs(ctx context.Context, templates repo.MobTemplateR
 		}
 	}
 	return nil
+}
+
+// buildCommandAuditFn returns the mode.Game audit closure when
+// audit.commands_enabled is true. The closure resolves the verb from
+// the first whitespace-separated token of the input line, skips
+// guest / chargen sessions (no character bound), skips the configured
+// exclude list, and records one character_audit row per dispatched
+// line. Insert errors log at warn and are swallowed so a slow audit
+// table can't tear down the dispatcher.
+func buildCommandAuditFn(audits repo.CharacterAuditRepo, exclude []string) mode.CommandAuditFn {
+	excludeSet := make(map[string]struct{}, len(exclude))
+	for _, v := range exclude {
+		excludeSet[strings.ToLower(strings.TrimSpace(v))] = struct{}{}
+	}
+	return func(ctx context.Context, s *telnet.Session, line string, _ error) {
+		charID, charName, roomID := s.InWorld()
+		if charID == 0 {
+			return
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			return
+		}
+		verb := trimmed
+		if idx := strings.IndexAny(trimmed, " \t"); idx >= 0 {
+			verb = trimmed[:idx]
+		}
+		verbKey := strings.ToLower(verb)
+		if _, skip := excludeSet[verbKey]; skip {
+			return
+		}
+		if err := audits.Record(ctx, repo.CharacterAuditEntry{
+			CharacterID:   charID,
+			CharacterName: charName,
+			RoomID:        roomID,
+			Verb:          verbKey,
+			Raw:           trimmed,
+		}); err != nil {
+			slog.Warn("character_audit record failed",
+				"character", charName, "verb", verbKey, "error", err)
+		}
+	}
 }
 
 // parseLogLevel maps a LOG_LEVEL env value to slog.Level. Returns

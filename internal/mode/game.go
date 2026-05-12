@@ -37,7 +37,17 @@ type Game struct {
 	Characters repo.CharacterRepo
 	Rooms      repo.RoomRepo
 	Template   string
+
+	audit CommandAuditFn
 }
+
+// CommandAuditFn is the closure invoked once per dispatched line when
+// audit logging is enabled. line is the raw input the dispatcher saw
+// (post-alias-expansion); dispatchErr is whatever Registry.Dispatch
+// returned (commands that succeeded AND refusals are both audited so
+// the forensic table has full coverage). Bound at startup from the
+// cmd-layer to a CharacterAuditRepo + exclude set.
+type CommandAuditFn func(ctx context.Context, s *telnet.Session, line string, dispatchErr error)
 
 // NewGame builds a Game with the given registry and prompt deps. An
 // empty template falls back to the legacy "> " literal so callers
@@ -51,8 +61,17 @@ func NewGame(r *telnet.Registry, chars repo.CharacterRepo, rooms repo.RoomRepo, 
 	}
 }
 
+// SetAudit installs a per-command audit hook. nil disables auditing
+// (the default). Set once at server startup before the dispatcher
+// goroutine reads from this Game.
+func (g *Game) SetAudit(fn CommandAuditFn) { g.audit = fn }
+
 func (g *Game) Handle(ctx context.Context, s *telnet.Session, line string) error {
-	return g.Registry.Dispatch(ctx, s, line)
+	err := g.Registry.Dispatch(ctx, s, line)
+	if g.audit != nil {
+		g.audit(ctx, s, line, err)
+	}
+	return err
 }
 
 // Prompt renders Template against the session's live character /

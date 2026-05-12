@@ -2,6 +2,7 @@ package mode
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 
@@ -270,6 +271,69 @@ func TestGameCompleteArgsAuthGated(t *testing.T) {
 
 	if cands := g.Complete(guest, "secret f"); cands != nil {
 		t.Fatalf("guest should not get arg completions for privileged command: %v", cands)
+	}
+}
+
+func TestGameAuditHookFiresOnceAfterDispatch(t *testing.T) {
+	r := telnet.NewRegistry()
+	mustReg(t, r, &telnet.Command{Name: "look", Run: noopRun})
+
+	g := NewGame(r, nil, nil, "")
+	var (
+		called   int
+		lastLine string
+		lastErr  error
+	)
+	g.SetAudit(func(_ context.Context, _ *telnet.Session, line string, err error) {
+		called++
+		lastLine = line
+		lastErr = err
+	})
+
+	s := &telnet.Session{AuthLevel: telnet.AuthGuest, CharacterID: 7, CharacterName: "Moiraine"}
+	if err := g.Handle(context.Background(), s, "look around"); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if called != 1 {
+		t.Fatalf("audit calls = %d, want 1", called)
+	}
+	if lastLine != "look around" {
+		t.Fatalf("audit line = %q, want %q", lastLine, "look around")
+	}
+	if lastErr != nil {
+		t.Fatalf("audit err = %v, want nil", lastErr)
+	}
+}
+
+func TestGameAuditHookFiresOnUnknownCommand(t *testing.T) {
+	// Audit must capture refusals too — the forensic record needs to
+	// show attempted commands, not just successful ones. Use a real
+	// piped session because the unknown-command path writes a refusal
+	// line back to the client.
+	srv, cli := net.Pipe()
+	defer srv.Close()
+	defer cli.Close()
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			if _, err := cli.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+	s := telnet.NewSession(srv)
+	s.AuthLevel = telnet.AuthGuest
+	s.CharacterID = 1
+
+	r := telnet.NewRegistry()
+	g := NewGame(r, nil, nil, "")
+	var called int
+	g.SetAudit(func(_ context.Context, _ *telnet.Session, _ string, _ error) {
+		called++
+	})
+	_ = g.Handle(context.Background(), s, "blargle")
+	if called != 1 {
+		t.Fatalf("audit calls = %d, want 1 (refusals must audit too)", called)
 	}
 }
 
