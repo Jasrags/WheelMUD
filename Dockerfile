@@ -60,7 +60,7 @@ ENV DB_DSN=/var/lib/wheelmud/wheelmud.db \
     WORLD_DIR=/var/lib/wheelmud/data/world \
     BACKUP_DIR=/var/backups/wheelmud \
     LISTEN_ADDR=:2323 \
-    METRICS_ADDR=0.0.0.0:9090 \
+    METRICS_ADDR=127.0.0.1:9090 \
     LOG_LEVEL=info
 
 EXPOSE 2323 9090

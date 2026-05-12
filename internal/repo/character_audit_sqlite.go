@@ -40,7 +40,7 @@ func (r *SQLiteCharacterAuditRepo) Record(ctx context.Context, e CharacterAuditE
 func (r *SQLiteCharacterAuditRepo) List(ctx context.Context, f CharacterAuditFilter) ([]CharacterAuditEntry, error) {
 	var (
 		clauses []string
-		args    []interface{}
+		args    []any
 	)
 	if !f.Since.IsZero() {
 		clauses = append(clauses, "ts >= ?")

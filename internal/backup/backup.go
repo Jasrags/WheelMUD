@@ -165,6 +165,20 @@ func (m *Manager) prune() error {
 	sort.Strings(names)
 	for _, n := range names[:len(names)-m.cfg.Retention] {
 		p := filepath.Join(m.cfg.Dir, n)
+		// Defense against a world-writable backup dir: refuse to
+		// follow symlinks during prune so a planted symlink with a
+		// matching name can't be used as a deletion primitive on
+		// arbitrary files. Lstat returns metadata for the link
+		// itself, not the target.
+		info, err := os.Lstat(p)
+		if err != nil {
+			slog.Warn("backup: lstat before prune failed", "path", p, "error", err)
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			slog.Warn("backup: refusing to prune non-regular file", "path", p, "mode", info.Mode())
+			continue
+		}
 		if err := os.Remove(p); err != nil {
 			slog.Warn("backup: failed to prune", "path", p, "error", err)
 			continue

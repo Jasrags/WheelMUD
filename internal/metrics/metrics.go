@@ -38,10 +38,6 @@ type BuildInfo struct {
 	Date    string
 }
 
-// SessionSnapshotFn returns the currently bound session map. Used by
-// the sessions_active gauge collector. nil disables the gauge.
-type SessionSnapshotFn func() map[int64]any
-
 // Config wires the Metrics instance to its data sources.
 type Config struct {
 	// DB is the live database handle. Used for the db_open_conns

@@ -55,11 +55,13 @@ audit:
   # Per-character command audit log (Phase J slice J3). Writes one row
   # per dispatched verb to the character_audit table. Off by default
   # because it inflates row counts.
+  # Env: AUDIT_COMMANDS_ENABLED (accepts 1/0/true/false)
   commands_enabled: false
 
   # Verbs to skip when commands_enabled is true. Trim the noise from
   # high-frequency commands so the audit table stays useful for
   # forensic queries.
+  # Env: AUDIT_COMMANDS_EXCLUDE (comma-separated; replaces this list)
   commands_exclude:
     - look
     - prompt

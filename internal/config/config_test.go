@@ -14,6 +14,7 @@ func clearKnownEnv(t *testing.T) {
 	for _, k := range []string{
 		"LISTEN_ADDR", "METRICS_ADDR", "DB_DSN", "BACKUP_DIR",
 		"WORLD_DIR", "LOG_LEVEL",
+		"AUDIT_COMMANDS_ENABLED", "AUDIT_COMMANDS_EXCLUDE",
 	} {
 		t.Setenv(k, "")
 	}
@@ -132,6 +133,42 @@ func TestLoad_MissingFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "read config") {
 		t.Errorf("error wrap = %q, want it to include 'read config'", err.Error())
+	}
+}
+
+func TestLoad_AuditEnvOverrides(t *testing.T) {
+	clearKnownEnv(t)
+	t.Setenv("AUDIT_COMMANDS_ENABLED", "true")
+	t.Setenv("AUDIT_COMMANDS_EXCLUDE", "look, prompt , , map")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Audit.CommandsEnabled {
+		t.Errorf("Audit.CommandsEnabled = false, want true from env")
+	}
+	got := cfg.Audit.CommandsExclude
+	want := []string{"look", "prompt", "map"}
+	if len(got) != len(want) {
+		t.Fatalf("CommandsExclude = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("CommandsExclude[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLoad_AuditEnabledMalformedEnvIgnored(t *testing.T) {
+	clearKnownEnv(t)
+	t.Setenv("AUDIT_COMMANDS_ENABLED", "yesplease")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Audit.CommandsEnabled {
+		t.Errorf("CommandsEnabled = true, want false (malformed bool ignored)")
 	}
 }
 

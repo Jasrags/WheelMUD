@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -46,13 +47,22 @@ type ServerHandle struct {
 	MetricsAddr string
 	cmd         *exec.Cmd
 	logPath     string
+	logFile     *os.File
 }
 
-// Stop sends SIGTERM and waits for the subprocess to exit. Test
-// failures dump the captured stdout/stderr from the server log so
-// failures surface the server-side reason.
+// Stop sends SIGTERM, waits for the subprocess to exit, then closes
+// the captured log file. Closing here (vs. via t.Cleanup) keeps the
+// fd alive until cmd.Wait returns so the subprocess can't get
+// EPIPE/EBADF mid-drain. Test failures dump the captured stdout/
+// stderr from the server log so failures surface the server-side
+// reason.
 func (h *ServerHandle) Stop(t *testing.T) {
 	t.Helper()
+	defer func() {
+		if h.logFile != nil {
+			_ = h.logFile.Close()
+		}
+	}()
 	if h.cmd == nil || h.cmd.Process == nil {
 		return
 	}
@@ -170,8 +180,8 @@ log:
 		MetricsAddr: fmt.Sprintf("127.0.0.1:%d", metricsPort),
 		cmd:         cmd,
 		logPath:     logPath,
+		logFile:     logFile,
 	}
-	t.Cleanup(func() { _ = logFile.Close() })
 
 	// Wait for healthz to flip 200, signaling both the metrics
 	// listener AND the telnet listener are bound (SetReady(true)
@@ -202,12 +212,24 @@ func waitForHealthz(addr string, timeout time.Duration) error {
 	return fmt.Errorf("healthz did not return 200 within %v", timeout)
 }
 
-// buildServerBinary builds cmd/server once per test run into a temp
-// path and reuses it across tests in this package.
-var cachedBinary string
+// cachedBinary holds the path to the pre-built server binary so
+// subsequent tests in the same run reuse it. cachedBinaryMu guards
+// the build to defeat the race where parallel tests both observe
+// the empty string and both spawn `go build`. cachedBinaryDir is the
+// containing temp directory; the first builder registers a cleanup
+// to remove it at the end of its t (which still outlives every
+// subsequent test that reuses the cached binary, since the cleanup
+// only fires once the test that registered it has fully torn down).
+var (
+	cachedBinaryMu  sync.Mutex
+	cachedBinary    string
+	cachedBinaryDir string
+)
 
 func buildServerBinary(t *testing.T) string {
 	t.Helper()
+	cachedBinaryMu.Lock()
+	defer cachedBinaryMu.Unlock()
 	if cachedBinary != "" {
 		return cachedBinary
 	}
@@ -227,9 +249,27 @@ func buildServerBinary(t *testing.T) string {
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		_ = os.RemoveAll(binDir)
 		t.Fatalf("go build cmd/server: %v\n%s", err, out)
 	}
 	cachedBinary = binPath
+	cachedBinaryDir = binDir
+	// Cleanup runs after the test that triggered the build finishes.
+	// Subsequent tests reusing the cache hold their own references to
+	// the binary path string; the binary file stays on disk until this
+	// cleanup fires at parent-test teardown. For `go test ./...` the
+	// outer go-test process cleans up its own temp tree on exit too,
+	// so a missed Cleanup leaks only one directory per `go test`
+	// invocation rather than per integration test.
+	t.Cleanup(func() {
+		cachedBinaryMu.Lock()
+		defer cachedBinaryMu.Unlock()
+		if cachedBinaryDir != "" {
+			_ = os.RemoveAll(cachedBinaryDir)
+			cachedBinary = ""
+			cachedBinaryDir = ""
+		}
+	})
 	return binPath
 }
 

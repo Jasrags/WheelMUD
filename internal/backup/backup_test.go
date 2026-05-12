@@ -224,6 +224,62 @@ func TestPrune_IgnoresUnrelatedFiles(t *testing.T) {
 	}
 }
 
+func TestPrune_RefusesToFollowSymlinks(t *testing.T) {
+	// Defense: a planted symlink whose name matches FilePrefix +
+	// FileSuffix must NOT be followed during prune. Otherwise a
+	// world-writable backup dir lets an attacker turn pruning into
+	// an arbitrary-file deletion primitive.
+	dir := t.TempDir()
+	srcDSN := filepath.Join(dir, "src.db")
+	conn, err := db.Open(context.Background(), srcDSN)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer conn.Close()
+
+	backupDir := filepath.Join(dir, "backups")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// Target the symlink could point at — file outside backupDir.
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("must survive"), 0o644); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	// Symlink with a matching name that would otherwise be a prune target.
+	link := filepath.Join(backupDir, FilePrefix+"20000101-000000"+FileSuffix)
+	if err := os.Symlink(victim, link); err != nil {
+		t.Skipf("symlink unsupported on this platform: %v", err)
+	}
+
+	var clock = time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC)
+	m, err := New(conn, Config{
+		Dir:           backupDir,
+		IntervalHours: 1,
+		Retention:     1,
+		Now:           func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		clock = clock.Add(1 * time.Minute)
+		if err := m.RunOnce(context.Background()); err != nil {
+			t.Fatalf("RunOnce %d: %v", i, err)
+		}
+	}
+
+	// Symlink target must be untouched.
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("symlink target was deleted: %v", err)
+	}
+	body, _ := os.ReadFile(victim)
+	if string(body) != "must survive" {
+		t.Fatalf("victim contents mutated: %q", body)
+	}
+}
+
 func TestRun_RespectsContextCancel(t *testing.T) {
 	dir := t.TempDir()
 	srcDSN := filepath.Join(dir, "src.db")

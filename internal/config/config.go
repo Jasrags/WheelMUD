@@ -14,6 +14,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -134,5 +136,25 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
+	}
+	if v := os.Getenv("AUDIT_COMMANDS_ENABLED"); v != "" {
+		// Accept the same forms strconv.ParseBool does
+		// ("1"/"0"/"true"/"false"/etc). Malformed values are ignored
+		// so a typo in a side-channel env var can't crash startup.
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Audit.CommandsEnabled = b
+		}
+	}
+	if v := os.Getenv("AUDIT_COMMANDS_EXCLUDE"); v != "" {
+		// Comma-separated list, trimmed; empty entries dropped so
+		// trailing commas don't accidentally exclude "".
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				out = append(out, t)
+			}
+		}
+		cfg.Audit.CommandsExclude = out
 	}
 }

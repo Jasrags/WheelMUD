@@ -1067,6 +1067,13 @@ func main() {
 			Addr:              cfg.Server.MetricsAddr,
 			Handler:           srv.metrics.Handler(),
 			ReadHeaderTimeout: 5 * time.Second,
+			// WriteTimeout bounds streaming endpoints like
+			// /debug/pprof/profile (default 30s duration) and
+			// /debug/pprof/trace. Set generously so a profile
+			// completes, but tight enough that a slow-reader
+			// attacker can't accumulate goroutines indefinitely.
+			WriteTimeout: 60 * time.Second,
+			IdleTimeout:  120 * time.Second,
 		}
 		safego.Go("metrics-http", func() {
 			slog.Info("Metrics server listening", "addr", cfg.Server.MetricsAddr)
@@ -1370,6 +1377,22 @@ func validateDialogueScriptRefs(ctx context.Context, templates repo.MobTemplateR
 	return nil
 }
 
+// firstToken returns the lowercased first whitespace-separated
+// token of line, after trimming leading/trailing whitespace. Empty
+// input returns the empty string so callers can branch on it.
+// Shared between the audit and metric hooks so a future change to
+// the verb-extraction rule lands in one place.
+func firstToken(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(trimmed, " \t"); idx >= 0 {
+		return strings.ToLower(trimmed[:idx])
+	}
+	return strings.ToLower(trimmed)
+}
+
 // buildCommandAuditFn returns the mode.Game audit closure when
 // audit.commands_enabled is true. The closure resolves the verb from
 // the first whitespace-separated token of the input line, skips
@@ -1387,27 +1410,22 @@ func buildCommandAuditFn(audits repo.CharacterAuditRepo, exclude []string) mode.
 		if charID == 0 {
 			return
 		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		verb := firstToken(line)
+		if verb == "" {
 			return
 		}
-		verb := trimmed
-		if idx := strings.IndexAny(trimmed, " \t"); idx >= 0 {
-			verb = trimmed[:idx]
-		}
-		verbKey := strings.ToLower(verb)
-		if _, skip := excludeSet[verbKey]; skip {
+		if _, skip := excludeSet[verb]; skip {
 			return
 		}
 		if err := audits.Record(ctx, repo.CharacterAuditEntry{
 			CharacterID:   charID,
 			CharacterName: charName,
 			RoomID:        roomID,
-			Verb:          verbKey,
-			Raw:           trimmed,
+			Verb:          verb,
+			Raw:           strings.TrimSpace(line),
 		}); err != nil {
 			slog.Warn("character_audit record failed",
-				"character", charName, "verb", verbKey, "error", err)
+				"character", charName, "verb", verb, "error", err)
 		}
 	}
 }
@@ -1430,15 +1448,11 @@ func versionOr(v, fallback string) string {
 // noise.
 func buildCommandMetricFn(m *metrics.Metrics) mode.CommandMetricFn {
 	return func(line string, err error) {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		verb := firstToken(line)
+		if verb == "" {
 			return
 		}
-		verb := trimmed
-		if idx := strings.IndexAny(trimmed, " \t"); idx >= 0 {
-			verb = trimmed[:idx]
-		}
-		m.ObserveCommand(strings.ToLower(verb), err == nil)
+		m.ObserveCommand(verb, err == nil)
 	}
 }
 
