@@ -177,3 +177,34 @@
   wander_chance: 0.0
   xp_value: 0
   gold_dice: ""
+
+# ─── Phase F #32a slice 1 demo. The patrol guard walks an authored
+# closed loop between the hub and the wandering-dummy room one step
+# per pulse, ignoring wander_chance. Admin reaches the start via:
+#   teleport test.qa.hub
+# Watch the leave/arrive broadcasts on the next tick to see the
+# strict-path branch in action.
+
+- id: test.qa.patrol_guard
+  room: test.qa.hub
+  name: a watchful QA patrol guard
+  short: a guard in numbered livery paces the testing atrium
+  xp_value: 0
+  gold_dice: ""
+  path:
+    - test.qa.hub
+    - test.qa.combat_wander
+
+# ─── Phase F #32a slice 2 demo. The scout uses wander_radius=2 BFS
+# so it picks random spokes off the hub and walks toward them one
+# room per pulse. The QA zone's star topology means radius 2 from
+# any spoke reaches the hub plus every other spoke (2 hops through
+# the hub), so the scout effectively tours the whole zone.
+
+- id: test.qa.scout
+  room: test.qa.hub
+  name: a roving QA test scout
+  short: a scout in field leathers studies the door placards
+  xp_value: 0
+  gold_dice: ""
+  wander_radius: 2
