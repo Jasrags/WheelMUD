@@ -1,0 +1,43 @@
+[Unit]
+Description=WheelMUD telnet game server
+Documentation=https://github.com/Jasrags/WheelMUD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wheelmud
+Group=wheelmud
+WorkingDirectory=/var/lib/wheelmud
+ExecStart=/usr/local/bin/wheelmud-server -config /etc/wheelmud/config.yaml
+
+# Restart on unexpected exits. The server traps SIGTERM and runs an
+# ordered drain (sessions, autosave, backup pause) so a normal stop
+# exits 0 and is not restarted.
+Restart=on-failure
+RestartSec=5s
+
+# Resource caps. Tune for your deployment; defaults are conservative.
+LimitNOFILE=65535
+
+# Hardening. Read-only root, writable data + backups + tmp only. The
+# config file is read-only via /etc.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/wheelmud /var/backups/wheelmud
+
+# Standard output / error captured by journald.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wheelmud
+
+[Install]
+WantedBy=multi-user.target

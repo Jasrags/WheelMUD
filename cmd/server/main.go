@@ -124,7 +124,16 @@ type server struct {
 
 func main() {
 	configPath := flag.String("config", "", "Path to YAML config file (optional; env vars still apply)")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("wheelmud version=%s commit=%s date=%s\n",
+			versionOr(buildVersion, "dev"),
+			versionOr(buildCommit, "none"),
+			versionOr(buildDate, "unknown"))
+		return
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -1401,6 +1410,16 @@ func buildCommandAuditFn(audits repo.CharacterAuditRepo, exclude []string) mode.
 				"character", charName, "verb", verbKey, "error", err)
 		}
 	}
+}
+
+// versionOr returns v when non-empty, fallback otherwise. Used for
+// the -version flag output so unstamped dev builds still show a
+// non-empty triple.
+func versionOr(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 // buildCommandMetricFn returns a Game metric hook that bumps the

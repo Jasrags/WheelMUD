@@ -1,0 +1,77 @@
+# goreleaser configuration — Phase J slice J7 (#59).
+#
+# Builds the wheelmud-server binary for linux + darwin (amd64 + arm64),
+# stamps version/commit/date via ldflags, bundles the world content
+# tree + example config in the release archive, and emits SHA-256
+# checksums. Triggered by the release workflow (.github/workflows/
+# release.yml) on tag pushes matching `v*`.
+#
+# Validate locally with: goreleaser release --snapshot --clean
+
+version: 2
+
+project_name: wheelmud
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: server
+    main: ./cmd/server
+    binary: wheelmud-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.buildVersion={{ .Version }}
+      - -X main.buildCommit={{ .Commit }}
+      - -X main.buildDate={{ .Date }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE*
+      - README*
+      - config.example.yaml
+      - .env.example
+      - src: data/world/**
+        dst: data/world
+      - src: deploy/systemd/wheelmud.service
+        dst: deploy/systemd/wheelmud.service
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: Jasrags
+    name: WheelMUD
+  draft: false
+  prerelease: auto
+  name_template: "WheelMUD {{ .Tag }}"
