@@ -1,5 +1,13 @@
 package mode
 
+// All errors.New strings in this file are user-facing validation
+// messages rendered verbatim to the terminal (see handleUsername →
+// WriteRaw + display.Error). Sentence-case is intentional and
+// matches the neighboring writeError calls; staticcheck's
+// lowercase-error-string rule (ST1005) is the wrong check for
+// this surface.
+//lint:file-ignore ST1005 user-facing validation messages preserve sentence-case for display
+
 import (
 	"context"
 	"errors"

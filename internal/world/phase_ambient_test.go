@@ -12,11 +12,9 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// bufConn / newBufConn / bufSession alias the shared helpers in
+// bufConn / bufSession alias the shared helpers in
 // internal/testhelper. See internal/testhelper/bufconn.go.
 type bufConn = testhelper.BufConn
-
-func newBufConn() *bufConn { return testhelper.NewBufConn() }
 
 func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	t.Helper()

@@ -10,17 +10,17 @@ import (
 	"time"
 )
 
-// failingEnterMode returns sentinelEnterErr from OnEnter and records whether
+// failingEnterMode returns errSentinelEnter from OnEnter and records whether
 // OnExit ran (it should NOT, since the push was rolled back).
 type failingEnterMode struct {
 	exitCalled bool
 }
 
-var sentinelEnterErr = errors.New("on-enter failed")
+var errSentinelEnter = errors.New("on-enter failed")
 
 func (m *failingEnterMode) Handle(_ context.Context, _ *Session, _ string) error { return nil }
 func (m *failingEnterMode) Prompt(_ context.Context, _ *Session) string          { return "" }
-func (m *failingEnterMode) OnEnter(_ *Session) error                             { return sentinelEnterErr }
+func (m *failingEnterMode) OnEnter(_ *Session) error                             { return errSentinelEnter }
 func (m *failingEnterMode) OnExit(_ *Session) error                              { m.exitCalled = true; return nil }
 
 func TestPushMode_RollsBackOnOnEnterError(t *testing.T) {
@@ -32,8 +32,8 @@ func TestPushMode_RollsBackOnOnEnterError(t *testing.T) {
 
 	failing := &failingEnterMode{}
 	err := s.PushMode(failing)
-	if !errors.Is(err, sentinelEnterErr) {
-		t.Fatalf("PushMode err = %v, want sentinelEnterErr", err)
+	if !errors.Is(err, errSentinelEnter) {
+		t.Fatalf("PushMode err = %v, want errSentinelEnter", err)
 	}
 	if got := s.CurrentMode(); got != base {
 		t.Fatalf("CurrentMode = %v, want base scripted mode (failing mode leaked onto stack)", got)
@@ -52,8 +52,8 @@ func TestReplaceMode_RollsBackOnOnEnterError(t *testing.T) {
 
 	failing := &failingEnterMode{}
 	err := s.ReplaceMode(failing)
-	if !errors.Is(err, sentinelEnterErr) {
-		t.Fatalf("ReplaceMode err = %v, want sentinelEnterErr", err)
+	if !errors.Is(err, errSentinelEnter) {
+		t.Fatalf("ReplaceMode err = %v, want errSentinelEnter", err)
 	}
 	// ReplaceMode pops the prior mode before pushing; on OnEnter failure the
 	// stack ends up empty, not retaining either mode.

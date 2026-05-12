@@ -13,13 +13,11 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
-// bufConn / newBufConn / bufSession alias the shared helpers in
-// internal/testhelper. Existing tests across this package refer to
-// these unexported names; the alias preserves the call sites while
-// keeping the implementation in one place.
+// bufConn / bufSession alias the shared helpers in internal/testhelper.
+// Existing tests across this package refer to these unexported names;
+// the alias preserves the call sites while keeping the implementation
+// in one place.
 type bufConn = testhelper.BufConn
-
-func newBufConn() *bufConn { return testhelper.NewBufConn() }
 
 func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	t.Helper()

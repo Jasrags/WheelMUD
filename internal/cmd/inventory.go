@@ -613,14 +613,8 @@ func totalCarriedWeight(topLevel []repo.Item, idx map[int64][]repo.Item) float64
 	return w
 }
 
-// renderInventoryNode writes one item plus its container contents
-// (recursively) into b. depth is the indent level (1 == "  ", 2 ==
-// "    ") so the inventory listing reads as a small tree.
-func renderInventoryNode(b *strings.Builder, it repo.Item, idx map[int64][]repo.Item, depth int) {
-	renderInventoryNodeWithEquip(b, it, idx, depth, creature.Equipment{})
-}
-
-// renderInventoryNodeWithEquip mirrors renderInventoryNode but appends
+// renderInventoryNodeWithEquip writes one item plus its container
+// contents (recursively) into b, appending
 // a `(worn)` / `(wielded)` / `(offhand)` annotation when the item is
 // currently in one of the single-occupancy slots on eq. Equipped
 // items remain owned by the carrier (equipment_json is an overlay,

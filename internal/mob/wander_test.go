@@ -310,8 +310,6 @@ func TestWander_BroadcastReachesSourceAndDest(t *testing.T) {
 
 type bufConn = testhelper.BufConn
 
-func newBufConn() *bufConn { return testhelper.NewBufConn() }
-
 func bufSession(t *testing.T) (*telnet.Session, *bufConn) {
 	t.Helper()
 	return testhelper.BufSession(t)
