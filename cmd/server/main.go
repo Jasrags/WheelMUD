@@ -224,10 +224,24 @@ func main() {
 	// character finishes promotion. Single-shot setter; tests
 	// leave it nil. Wired before any listener starts so the first
 	// login publishes correctly.
+	//
+	// Phase F #32a polish: also publish a PlayerEntered event with
+	// FromRoomID=0 so existing on_enter triggers fire on login
+	// without a separate trigger event kind. Greeter-style mobs
+	// authored against on_enter now react to "any time a player
+	// appears in my room" — login OR movement — with one rule
+	// rather than two. The FromRoomID=0 sentinel lets handlers
+	// distinguish a login-spawn from a movement-arrival if needed.
 	mode.SetLoginPublisher(func(characterID, roomID int64) {
-		bus.Publish(context.Background(), world.PlayerLoggedIn{
+		ctx := context.Background()
+		bus.Publish(ctx, world.PlayerLoggedIn{
 			CharacterID: characterID,
 			RoomID:      roomID,
+		})
+		bus.Publish(ctx, world.PlayerEntered{
+			CharacterID: characterID,
+			FromRoomID:  0, // sentinel: came from "nowhere" (login spawn)
+			ToRoomID:    roomID,
 		})
 	})
 
@@ -2387,6 +2401,28 @@ const (
 	MaxWaitMilliseconds int32 = 300_000
 )
 
+// MaxOutstandingWaits caps the global count of scheduled-but-not-
+// yet-fired wait() / wait_ms() deferred runs. Defense in depth: an
+// abusive content author scripting a tight loop of wait calls in a
+// single script run would otherwise schedule arbitrarily many fires,
+// each holding a runner.Run goroutine when it lands. The LState
+// pool of 8 provides natural execution backpressure but does not
+// gate scheduling itself.
+//
+// Cap is global (not per-trigger or per-script) — simplest shape
+// that catches the "schedule N waits in a row" pattern. Refusal is
+// surfaced as a classified Lua error so the trigger fault budget
+// increments and the offending trigger auto-disables after 5
+// refusals.
+const MaxOutstandingWaits int32 = 64
+
+// outstandingWaits is the global counter behind MaxOutstandingWaits.
+// Acquired (incremented) before tick.AfterCtx is called and released
+// (decremented) at the start of the fire closure so a deferred
+// script can re-schedule a fresh wait inside its body without
+// double-counting.
+var outstandingWaits atomic.Int32
+
 // buildWaitCtxView translates a trigger.EventCtx into the
 // internal/lua CtxView the deferred script sees. Mirrors
 // ctxViewFromEvent in internal/trigger/actions_lua.go but lives
@@ -2441,9 +2477,17 @@ func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCt
 		if strings.TrimSpace(scriptName) == "" {
 			return fmt.Errorf("wait script name must be non-empty")
 		}
+		if err := acquireWaitSlot(); err != nil {
+			return err
+		}
 		ctxView := buildWaitCtxView(ev)
 		shutdownCtx := resolveWaitShutdownCtx(srvShutdownCtxPtr)
 		fire := func(_ context.Context) {
+			// Release BEFORE the deferred Run so a chained
+			// wait()/wait_ms() inside the fired script can
+			// re-acquire a fresh slot; the cap targets "schedule
+			// N waits in a tight loop" not "always-on retry".
+			releaseWaitSlot()
 			// The deferred Run inherits shutdownCtx (the
 			// signal.NotifyContext) NOT the scheduler's per-pulse
 			// ctx — shutdownCtx is the right parent for SIGINT/
@@ -2464,6 +2508,26 @@ func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCt
 		tick.AfterCtx(scheduler, shutdownCtx, time.Duration(seconds)*time.Second, fire)
 		return nil
 	}
+}
+
+// acquireWaitSlot increments the global outstanding-wait counter
+// and refuses (decrementing back) when at MaxOutstandingWaits. The
+// refusal surfaces as a classified Lua error so the trigger's
+// fault budget bumps; persistent abuse auto-disables the trigger
+// after 5 refusals.
+func acquireWaitSlot() error {
+	if outstandingWaits.Add(1) > MaxOutstandingWaits {
+		outstandingWaits.Add(-1)
+		return fmt.Errorf("wait cap reached (max %d outstanding deferred runs)", MaxOutstandingWaits)
+	}
+	return nil
+}
+
+// releaseWaitSlot decrements the counter. Called at the start of
+// the deferred fire closure so a chained wait inside the fired
+// script can re-acquire.
+func releaseWaitSlot() {
+	outstandingWaits.Add(-1)
 }
 
 // makeLuaInventory returns the cmd-layer factory for the
@@ -2536,9 +2600,15 @@ func makeLuaWaitMs(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdown
 		if strings.TrimSpace(scriptName) == "" {
 			return fmt.Errorf("wait_ms script name must be non-empty")
 		}
+		if err := acquireWaitSlot(); err != nil {
+			return err
+		}
 		ctxView := buildWaitCtxView(ev)
 		shutdownCtx := resolveWaitShutdownCtx(srvShutdownCtxPtr)
 		fire := func(_ context.Context) {
+			// Release BEFORE the deferred Run — same chained-wait
+			// rationale as makeLuaWait.
+			releaseWaitSlot()
 			// Mirrors makeLuaWait's fire closure: deferred run gets
 			// the minimal binding surface (ctx + logger). Authors
 			// who need richer state inside the deferred script
