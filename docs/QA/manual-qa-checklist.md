@@ -30,6 +30,11 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 1.6 | [ ] | Literal `0xFF` byte in input is handled (IAC IAC escape) — no disconnect | |
 | 1.7 | [ ] | Disconnecting mid-line (Ctrl+] then `quit` from telnet) cleans up — server logs `disconnect`, no goroutine leak warnings | |
 | 1.8 | [ ] | `LOG_LEVEL=debug` shows per-connection lifecycle events | |
+| 1.9 | [ ] | Metrics HTTP server bound to `cfg.Server.MetricsAddr` (default `127.0.0.1:9090`); `curl /healthz` returns `200 ok` after listener binds | Phase J slice J5 |
+| 1.10 | [ ] | `curl /metrics` emits `wheelmud_build_info`, `wheelmud_sessions_active`, `wheelmud_db_open_conns`, `wheelmud_commands_total`, `go_goroutines` | J5 |
+| 1.11 | [ ] | `curl /debug/pprof/heap > heap.pprof && go tool pprof heap.pprof` works | J5 |
+| 1.12 | [ ] | Empty `METRICS_ADDR` (env or YAML) disables the HTTP server entirely; no port 9090 listener | J5 |
+| 1.13 | [ ] | `sessions_active` gauge moves 0→1→0 as a session connects + disconnects | J5 |
 
 ## 2. Terminal & rendering
 
@@ -131,7 +136,7 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 
 | # | Status | Test | Notes |
 |---|--------|------|-------|
-| 7.1 | [ ] | Fresh boot with empty `wheelmud.db` runs all migrations 0001–0036 without error | |
+| 7.1 | [ ] | Fresh boot with empty `wheelmud.db` runs all migrations 0001–0052 without error | |
 | 7.2 | [ ] | Inventory changes survive `quit` + reconnect | |
 | 7.3 | [ ] | Coin balance survives reconnect; bank balance survives reconnect | |
 | 7.4 | [ ] | Equipment slots survive reconnect | |
@@ -139,6 +144,17 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 7.6 | [ ] | World loader: edit `data/world/.../room.yaml` description, restart → change visible in-game | |
 | 7.7 | [ ] | Item moved between rooms by another player persists across that player's disconnect | |
 | 7.8 | [ ] | Concurrent coin mutation (sell + give from peer) — one succeeds, the other gets "balance just changed" | |
+| 7.9 | [ ] | `db.backup_dir=/tmp/wm-backups` + `db.backup_interval_hours=0.001` writes `wheelmud-YYYYMMDD-HHMMSS.db` snapshots on the cadence | Phase J slice J4 |
+| 7.10 | [ ] | `db.backup_retention=2` keeps exactly the 2 newest snapshots after the 3rd write; oldest is pruned | J4 |
+| 7.11 | [ ] | Unrelated files in `backup_dir` (README.md, custom-tar.gz) survive pruning | J4 |
+| 7.12 | [ ] | Symlink with matching `wheelmud-*.db` name is refused by prune (not followed) | J4 |
+| 7.13 | [ ] | A snapshot is restorable: `sqlite3 wheelmud-<ts>.db ".tables"` lists all expected tables | J4 |
+| 7.14 | [ ] | Empty `db.backup_dir` or zero `db.backup_interval_hours` disables backups; no log line at boot | J4 |
+| 7.15 | [ ] | `audit.commands_enabled=true` writes one `character_audit` row per dispatched verb | Phase J slice J3 |
+| 7.16 | [ ] | `audit.commands_exclude: [look, prompt]` skips those verbs without inflating the table | J3 |
+| 7.17 | [ ] | Audit log captures refusals too: an unknown command writes a row | J3 |
+| 7.18 | [ ] | `Raw` column is truncated at 4096 bytes on oversized input (alias chain) | J3 |
+| 7.19 | [ ] | Audit row's `room_id` snapshot matches the room the verb was dispatched in (not the destination after movement) | J3 |
 
 ## 8. Game loop & scheduling
 
@@ -149,6 +165,8 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 8.3 | [ ] | `time` verb advances per Clock tick | |
 | 8.4 | [ ] | Mob wander (templates with `wander_chance > 0`) — mob appears in different rooms over time | |
 | 8.5 | [ ] | Graceful shutdown: SIGINT triggers drain, autosave, exit code 0 | |
+| 8.6 | [ ] | During shutdown drain `/healthz` flips 200→503 BEFORE sessions drain (load balancer can roll cleanly) | Phase J slice J5 |
+| 8.7 | [ ] | `mgr.Run` backup loop exits within ~100ms of ctx cancel (no goroutine leak) | J4 |
 
 ## 9. World model
 
@@ -268,6 +286,12 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 19.1 | [ ] | `LOG_LEVEL=debug` shows command dispatches | |
 | 19.2 | [ ] | `LOG_LEVEL=warn` suppresses debug/info | |
 | 19.3 | [ ] | Panic in a goroutine wrapped by `safego.Go` logs and recovers (no crash) | |
+| 19.4 | [ ] | Boot logs "Backup manager enabled" + dir + cadence when backups configured | Phase J slice J4 |
+| 19.5 | [ ] | Boot logs "Metrics server listening" when `METRICS_ADDR` set | J5 |
+| 19.6 | [ ] | Boot logs "Per-character command audit enabled exclude=[…]" when audit on | J3 |
+| 19.7 | [ ] | `character_audit` insert failures log at warn but do not tear down the dispatcher | J3 |
+| 19.8 | [ ] | `backup: failed to prune` warns but the snapshot itself is reported as written | J4 |
+| 19.9 | [ ] | Loopback-only default for `/debug/pprof/*` confirmed (`curl 0.0.0.0:9090/healthz` from another host fails) | J5 |
 
 ## 20. Configuration
 
@@ -277,6 +301,33 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 20.2 | [ ] | `DB_DSN=:memory:` boots with ephemeral DB | |
 | 20.3 | [ ] | `WORLD_DIR=/path/to/alt` loads alternate world tree | |
 | 20.4 | [ ] | `CHARGEN_DIR=/path/to/alt` loads alternate chargen catalog | |
+| 20.5 | [ ] | `-config config.example.yaml` boots cleanly; all YAML fields take effect | Phase J slice J2 |
+| 20.6 | [ ] | Env vars override YAML values: `LISTEN_ADDR=:3000 wheelmud -config x.yaml` listens on 3000 | J2 |
+| 20.7 | [ ] | Missing `-config` path returns a clear error and `os.Exit(1)`; does not fall back silently | J2 |
+| 20.8 | [ ] | Malformed YAML returns a wrapped "parse config" error at startup | J2 |
+| 20.9 | [ ] | `wheelmud -version` prints `version=… commit=… date=…` and exits 0 | J7 |
+| 20.10 | [ ] | Unstamped local build prints `version=dev commit=none date=unknown` | J7 |
+| 20.11 | [ ] | `METRICS_ADDR` env override works (overrides YAML `server.metrics_addr`) | J5 |
+| 20.12 | [ ] | `BACKUP_DIR` env override works | J4 |
+| 20.13 | [ ] | `AUDIT_COMMANDS_ENABLED=true` env enables auditing with no YAML config | J3 |
+| 20.14 | [ ] | `AUDIT_COMMANDS_EXCLUDE=look,prompt,map` env replaces YAML exclude list | J3 |
+| 20.15 | [ ] | `AUDIT_COMMANDS_ENABLED=yesplease` (malformed bool) is silently ignored; auditing stays off | J3 |
+| 20.16 | [ ] | Catalog dirs `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR` env-only overrides work | Pre-Phase J |
+
+## 21. Testing & CI
+
+| # | Status | Test | Notes |
+|---|--------|------|-------|
+| 21.1 | [ ] | `go test -race -count=1 ./...` is green | Phase J slice J1 |
+| 21.2 | [ ] | `go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...` reports ≥70% repo-wide | J1 |
+| 21.3 | [ ] | `go test -tags=integration -timeout=120s ./test/integration/...` green; subprocess smoke completes in ~7s | J6 |
+| 21.4 | [ ] | `go test -fuzz=FuzzReadIAC -fuzztime=30s ./telnet` runs without panic | J1 |
+| 21.5 | [ ] | `go test -fuzz=FuzzTokenize -fuzztime=30s ./telnet` runs without panic | J1 |
+| 21.6 | [ ] | `go test -fuzz=FuzzSplitOnSemicolon -fuzztime=30s ./telnet` runs without panic | J1 |
+| 21.7 | [ ] | GitHub Actions `go.yml` workflow passes on ubuntu-latest + macos-latest after a push | J1 |
+| 21.8 | [ ] | `integration` CI job runs after the test matrix and stays green | J6 |
+| 21.9 | [ ] | `staticcheck` job runs on every PR (non-blocking) and surfaces findings without churning the queue | J1 |
+| 21.10 | [ ] | `fuzz.yml` nightly workflow has at least one green run for each of the three targets | J1 |
 
 ## 22. Packaging & deploy
 
@@ -286,6 +337,16 @@ Legend: **[ ]** = not run · **[P]** = pass · **[F]** = fail · **[B]** = block
 | 22.2 | [ ] | `make run/server` boots and listens | |
 | 22.3 | [ ] | `make run/live/server` reloads on file save (air) | |
 | 22.4 | [ ] | `docker compose up` boots and exposes `:2323` | |
+| 22.5 | [ ] | `docker compose up` healthcheck reports `Status: healthy` within 30s (`docker inspect`) | Phase J slice J7 |
+| 22.6 | [ ] | `goreleaser release --snapshot --clean` produces tarballs for linux/darwin × amd64/arm64 + a checksums file | J7 |
+| 22.7 | [ ] | Built binary's `-version` reports the injected version/commit/date from goreleaser ldflags | J7 |
+| 22.8 | [ ] | Release tarball contains `wheelmud-server`, `LICENSE`, `README*`, `config.example.yaml`, `.env.example`, `data/world/**`, `deploy/systemd/wheelmud.service` | J7 |
+| 22.9 | [ ] | Tag push to `v*` runs `release.yml` workflow; goreleaser uploads release assets to GitHub | J7 |
+| 22.10 | [ ] | `release.yml` builds multi-arch image (linux/amd64 + linux/arm64) and pushes to `ghcr.io/Jasrags/wheelmud` | J7 |
+| 22.11 | [ ] | `systemd-analyze verify deploy/systemd/wheelmud.service` reports OK (no warnings on the hardening profile) | J7 |
+| 22.12 | [ ] | Installed systemd unit: `systemctl status wheelmud` reports active after `systemctl start`; clean restart on edit | J7 |
+| 22.13 | [ ] | `/healthz` reachable via curl from inside the container (200); not reachable from outside the bridge network (METRICS_ADDR loopback) | J7 |
+| 22.14 | [ ] | `/var/lib/wheelmud` + `/var/backups/wheelmud` persist across `docker compose down && docker compose up` (volume-backed) | J7 |
 
 ---
 
