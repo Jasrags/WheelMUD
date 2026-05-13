@@ -149,6 +149,33 @@ func (r *MemoryRoomRepo) ListAll(_ context.Context) ([]Room, error) {
 	return out, nil
 }
 
+// Update overwrites the OLC-editable subset on the stored row.
+// Identity / location / coords / created_at are preserved verbatim
+// from the existing row regardless of what r carries. Mirrors the
+// SQLite contract.
+func (r *MemoryRoomRepo) Update(_ context.Context, in Room) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	existing, ok := r.byID[in.ID]
+	if !ok {
+		return ErrRoomNotFound
+	}
+	// Build the updated copy: preserve identity / coords / created_at,
+	// overwrite the editable subset.
+	updated := *existing
+	updated.Name = in.Name
+	updated.ShortDesc = in.ShortDesc
+	updated.LongDesc = in.LongDesc
+	updated.Flags = in.Flags
+	if in.Sector != "" {
+		updated.Sector = in.Sector
+	}
+	updated.LightLevel = in.LightLevel
+	updated.ExtraDescs = normalizeExtraDescs(in.ExtraDescs)
+	*existing = updated
+	return nil
+}
+
 // UpdateCoords mirrors the SQLite contract: coords are overwritten
 // in place; CoordsAnchor is preserved so the auto-coord runner's
 // per-anchor distinction survives a rebuild round-trip.

@@ -128,6 +128,14 @@ type RoomRepo interface {
 	// regardless of whether its coords change. Returns ErrRoomNotFound
 	// when no row matches.
 	UpdateCoords(ctx context.Context, id int64, x, y, z int) error
+	// Update overwrites the OLC-editable subset of a room: name,
+	// short/long descriptions, flags, sector, light level, and the
+	// extra-descs map. Identity (id / external_id), location
+	// (zone_id), coords, coords_auto, and created_at are intentionally
+	// preserved — separate code paths own those (loader, auto-coord
+	// runner, future rename/move verbs). Returns ErrRoomNotFound when
+	// no row matches the supplied ID. Phase G #34 redit.
+	Update(ctx context.Context, r Room) error
 }
 
 // CoordsAutoInt converts a CoordsAnchor bool to the int the SQL

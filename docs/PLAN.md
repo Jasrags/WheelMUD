@@ -879,6 +879,20 @@ restart.
       is what #34 consumes.
 34. **`redit` / `oedit` / `medit` / `zedit`** (§16). Mode-based
     editors using the existing mode stack.
+    - Slice 1 (redit V1): landed 2026-05-12. New `RoomRepo.Update`
+      (memory + sqlite, shared test) for the OLC-editable subset
+      (name / short / long / flags / sector / light / extras —
+      identity / coords / zone preserved). `cmd.NewREdit` verb gates
+      via `CanEditZone`; pushes `mode.REdit` which buffers a draft
+      and exposes `show / name / short / desc / flag <n> [on|off] /
+      sector / light / done / cancel / help`. `done` commits and
+      audits the field-name list; `cancel` discards.
+    - Slice 2 (deferred): multi-line `desc` (mode-internal buffer
+      terminated by `.` on its own line), `exit <dir> ...`
+      subcommand (needs `ExitRepo.Update`), `extra <keyword> ...`.
+    - Slice 3 (deferred): `oedit` (item templates), `medit` (mob
+      templates), `zedit` (zones). Each is its own repo `Update` +
+      mode pair — they fan out from the redit pattern.
 35. **Versioned area saves + diff/preview** (§16). Snapshot before
     commit; admin `revert` rolls back.
 36. **Hot-reload of areas without restart** (§7). The §7

@@ -196,6 +196,44 @@ func (r *SQLiteRoomRepo) ListAll(ctx context.Context) ([]Room, error) {
 	return out, nil
 }
 
+// Update overwrites the OLC-editable subset on the row identified by
+// r.ID. Identity (id / external_id), location (zone_id), coords,
+// coords_auto, and created_at are explicitly NOT touched. Returns
+// ErrRoomNotFound when no row matches. Phase G #34 redit.
+func (r *SQLiteRoomRepo) Update(ctx context.Context, in Room) error {
+	if in.Sector == "" {
+		in.Sector = SectorCity
+	}
+	extraJSON, err := marshalExtraDescs(in.ExtraDescs)
+	if err != nil {
+		return fmt.Errorf("marshal extra_descs: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE rooms SET
+			name = ?, short_desc = ?, long_desc = ?,
+			indoors = ?, nopvp = ?, noteleport = ?, dark = ?, silent = ?, peaceful = ?, nomap = ?,
+			sector = ?, light_level = ?, extra_descs_json = ?
+		 WHERE id = ?`,
+		in.Name, in.ShortDesc, in.LongDesc,
+		boolToInt(in.Flags.Indoors), boolToInt(in.Flags.NoPVP),
+		boolToInt(in.Flags.NoTeleport), boolToInt(in.Flags.Dark),
+		boolToInt(in.Flags.Silent), boolToInt(in.Flags.Peaceful),
+		boolToInt(in.Flags.NoMap),
+		string(in.Sector), in.LightLevel, extraJSON, in.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update room: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrRoomNotFound
+	}
+	return nil
+}
+
 // UpdateCoords overwrites coord_x/y/z for the given room. CoordsAnchor
 // (the coords_auto SQL column) is left alone — anchors keep their
 // anchor flag even when their coords are updated. The auto-coord

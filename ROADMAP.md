@@ -1874,12 +1874,28 @@ will need on top of those tables.
 
 ## 16. Online creation (OLC)
 
-- [ ] `redit` / `oedit` / `medit` / `zedit` mode-based editors —
+- [~] `redit` / `oedit` / `medit` / `zedit` mode-based editors —
       one editor mode per aggregate (see §5). `redit` works on the
       current room by default or `redit <id>`; sub-commands
       `name/desc/exit/flag/sector/show/done`. Edits buffer until
       `done`, which writes to the SQLite world tables and re-syncs
       the in-memory cache.
+      **Phase G #34 redit slice 1 landed 2026-05-12.** `redit` verb
+      (AuthPlayer; gated by `cmd.CanEditZone`, so AuthAdmin or a
+      `builder_zones` grant on the room's zone). `internal/mode/redit.go`
+      buffers a draft of the room and exposes `show / name / short /
+      desc / flag <name> [on|off] / sector / light / done / cancel /
+      help`. `done` commits via the new `RoomRepo.Update` (memory +
+      sqlite, with shared test) — preserves identity / location /
+      coords / created_at, overwrites only the OLC-editable subset
+      — and audits one `admin_audit` row with `verb=redit`,
+      `target=<external_id>`, `args=<sorted comma list of changed
+      fields>`. `cancel` discards the draft without auditing. No
+      in-memory room cache exists today, so "re-sync" is implicit:
+      the next `look` reads the updated row through the repo.
+      Deferred to slice 2+: multi-line `desc` editor, `exit <dir>`
+      subcommand (needs `ExitRepo.Update`), `extra <keyword>` for
+      ExtraDescs, `oedit` / `medit` / `zedit` (each their own slice).
 - [~] Permission gating (admin / builder roles) — `AuthLevel` enum
       `Player < Builder < Admin < Implementor`. OLC commands gated
       at `Builder`; admin-only verbs at `Admin`. Builders may be

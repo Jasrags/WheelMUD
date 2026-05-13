@@ -308,6 +308,91 @@ func runRoomRepoTests(t *testing.T, name string, newRepo func(t *testing.T) Room
 			t.Fatalf("UpdateCoords err = %v, want ErrRoomNotFound", err)
 		}
 	})
+
+	t.Run(name+"/update_overwrites_editable_subset", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		seed := Room{
+			ExternalID:   "test.room",
+			ZoneID:       42,
+			Name:         "Old Name",
+			ShortDesc:    "old short",
+			LongDesc:     "old long",
+			Flags:        RoomFlags{Indoors: true},
+			Sector:       SectorCity,
+			LightLevel:   100,
+			CoordX:       5, CoordY: 7, CoordZ: 0,
+			CoordsAnchor: true,
+		}
+		created, err := r.Create(ctx, seed)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		// Edit the OLC-editable subset; ALSO try to mutate identity /
+		// location / coords through Update and assert they're ignored.
+		mutated := created
+		mutated.Name = "New Name"
+		mutated.ShortDesc = "new short"
+		mutated.LongDesc = "new long"
+		mutated.Flags = RoomFlags{Dark: true, NoPVP: true}
+		mutated.Sector = SectorForest
+		mutated.LightLevel = 25
+		mutated.ExtraDescs = map[string]string{"sign": "Yes."}
+		// Identity / location / coords mutations on the input MUST be
+		// ignored by the contract — the repo preserves them from the
+		// existing row.
+		mutated.ExternalID = "should.not.change"
+		mutated.ZoneID = 999
+		mutated.CoordX = 100
+		mutated.CoordsAnchor = false
+		if err := r.Update(ctx, mutated); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+		got, err := r.FindByID(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("re-find: %v", err)
+		}
+		if got.Name != "New Name" {
+			t.Errorf("Name = %q, want %q", got.Name, "New Name")
+		}
+		if got.ShortDesc != "new short" || got.LongDesc != "new long" {
+			t.Errorf("desc not updated: %+v", got)
+		}
+		if got.Flags != (RoomFlags{Dark: true, NoPVP: true}) {
+			t.Errorf("Flags = %+v", got.Flags)
+		}
+		if got.Sector != SectorForest {
+			t.Errorf("Sector = %q, want forest", got.Sector)
+		}
+		if got.LightLevel != 25 {
+			t.Errorf("LightLevel = %d, want 25", got.LightLevel)
+		}
+		if got.ExtraDescs["sign"] != "Yes." {
+			t.Errorf("ExtraDescs[\"sign\"] = %q", got.ExtraDescs["sign"])
+		}
+		// Identity / location / coords preserved.
+		if got.ExternalID != "test.room" {
+			t.Errorf("ExternalID changed to %q", got.ExternalID)
+		}
+		if got.ZoneID != 42 {
+			t.Errorf("ZoneID changed to %d", got.ZoneID)
+		}
+		if got.CoordX != 5 || got.CoordY != 7 {
+			t.Errorf("coords changed: %d,%d", got.CoordX, got.CoordY)
+		}
+		if !got.CoordsAnchor {
+			t.Error("CoordsAnchor flipped to false")
+		}
+	})
+
+	t.Run(name+"/update_missing_room", func(t *testing.T) {
+		ctx := context.Background()
+		r := newRepo(t)
+		err := r.Update(ctx, Room{ID: 99999, Name: "Ghost"})
+		if !errors.Is(err, ErrRoomNotFound) {
+			t.Fatalf("Update err = %v, want ErrRoomNotFound", err)
+		}
+	})
 }
 
 func TestMemoryRoomRepo(t *testing.T) {

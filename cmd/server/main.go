@@ -1910,6 +1910,12 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewTalk(mobs, mobTemplates, pushDialogue)); err != nil {
 		return nil, err
 	}
+	pushREdit := func(s *telnet.Session, room repo.Room) error {
+		return s.PushMode(mode.NewREdit(rooms, audits, room))
+	}
+	if err := r.Register(cmd.NewREdit(rooms, pushREdit)); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewQuest(characters, questCatalog, questEngine, audits)); err != nil {
 		return nil, err
 	}
