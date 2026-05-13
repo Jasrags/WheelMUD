@@ -185,6 +185,7 @@ func main() {
 	bankers := repo.NewSQLiteBankerRepo(conn)
 	trainers := repo.NewSQLiteTrainerRepo(conn)
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(conn)
+	builderZones := repo.NewSQLiteBuilderZoneRepo(conn)
 
 	loaded, err := world.LoadAndSync(context.Background(), conn, world.SourceFS())
 	if err != nil {
@@ -1052,7 +1053,7 @@ func main() {
 	// makeLuaWait's fire closure for the memory barrier.
 	srvShutdownCtx.Store(&ctx)
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, builderZones, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
@@ -1112,6 +1113,7 @@ func main() {
 		// live-session check.
 		login.SetItems(items)
 		login.SetAudits(audits)
+		login.SetBuilders(builderZones)
 		// Slice 4: account-menu security view + per-login audit log.
 		login.SetLogins(logins)
 		return login
@@ -1551,7 +1553,7 @@ func closeDB(conn *sql.DB) {
 	}
 }
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, scheduler *tick.Scheduler, srvShutdownCtxPtr *atomic.Pointer[context.Context], shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, builderZones repo.BuilderZoneRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, scheduler *tick.Scheduler, srvShutdownCtxPtr *atomic.Pointer[context.Context], shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -1678,6 +1680,13 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	if err := r.Register(cmd.NewTrack(mobs, rooms, exits)); err != nil {
+		return nil, err
+	}
+	if err := r.Register(
+		cmd.NewGrant(builderZones, characters, zones, sessions, audits),
+		cmd.NewRevoke(builderZones, characters, zones, sessions, audits),
+		cmd.NewGrants(builderZones, characters, zones),
+	); err != nil {
 		return nil, err
 	}
 	if err := r.Register(cmd.NewZones(zones, rooms)); err != nil {

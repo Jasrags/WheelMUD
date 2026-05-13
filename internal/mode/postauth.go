@@ -28,6 +28,7 @@ type postAuthDeps struct {
 	accounts        repo.AccountRepo
 	sessions        *session.Registry
 	logins          repo.AccountLoginRepo
+	builders        repo.BuilderZoneRepo
 	accountUsername string
 }
 
@@ -149,6 +150,7 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 		create.SetCatalog(catalog)
 		create.SetSettings(settings)
 		create.SetItems(deps.items)
+		create.SetBuilders(deps.builders)
 		return s.ReplaceMode(create)
 	}
 	menu := NewAccountMenu(chars, characters, game)
@@ -161,6 +163,7 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	menu.SetAccountUsername(deps.accountUsername)
 	menu.SetSettings(settings)
 	menu.SetLogins(deps.logins)
+	menu.SetBuilders(deps.builders)
 	return s.ReplaceMode(menu)
 }
 
@@ -203,7 +206,7 @@ func applyAccountSettings(s *telnet.Session, settings repo.AccountSettings) {
 // no longer fires here — postAuth runs it once per login before the
 // AccountMenu lands, so re-selecting a character via `play` inside the
 // menu does not re-render news.
-func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, game telnet.Mode) error {
+func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, characters repo.CharacterRepo, builders repo.BuilderZoneRepo, game telnet.Mode) error {
 	roomID := c.CurrentRoomID
 	if roomID == 0 {
 		// Defensive: a character row missing a room id (e.g. created
@@ -225,6 +228,26 @@ func promoteToGame(ctx context.Context, s *telnet.Session, c repo.Character, cha
 	s.Speed = c.Core.Speed
 	s.SetChannelMuted(c.ChannelSettings)
 	s.SetLastNewsSeen(c.LastNewsSeen)
+	// Phase G #33 — cache the character's per-zone builder grants on
+	// the session so #34 OLC verbs (redit / oedit / medit / zedit) can
+	// gate via cmd.CanEditZone without a repo hit per dispatch. Load
+	// failure is non-fatal: the session lands with an empty grant set
+	// (AuthAdmin still bypasses; a builder will see "no permission"
+	// until next login). nil repo skips the load entirely — tests that
+	// don't wire it and the pre-§G login path both proceed unchanged.
+	if builders != nil {
+		rows, err := builders.ListForCharacter(ctx, c.ID)
+		if err != nil {
+			slog.Warn("promote: builder grants load failed",
+				"char", c.ID, "error", err)
+		} else if len(rows) > 0 {
+			grants := make(map[int64]struct{}, len(rows))
+			for _, r := range rows {
+				grants[r.ZoneID] = struct{}{}
+			}
+			s.SetBuilderZones(grants)
+		}
+	}
 	// AuthLevel lives on the character. CharacterRepo.Create promotes
 	// the very first character on a fresh deploy to admin atomically,
 	// so this restore picks up that promotion as well as any later

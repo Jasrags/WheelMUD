@@ -186,11 +186,12 @@ type chargenDraft struct {
 // keeps draft state contiguous so #12-#15 can extend it without
 // restructuring the mode stack.
 type CharacterCreate struct {
-	repo    repo.CharacterRepo
-	items   repo.ItemRepo
-	catalog *chargen.Catalog
-	game    telnet.Mode
-	shown   bool
+	repo     repo.CharacterRepo
+	items    repo.ItemRepo
+	builders repo.BuilderZoneRepo
+	catalog  *chargen.Catalog
+	game     telnet.Mode
+	shown    bool
 
 	step  chargenStep
 	draft chargenDraft
@@ -293,6 +294,12 @@ func (m *CharacterCreate) SetCatalog(c *chargen.Catalog) { m.catalog = c }
 // existing tests with no item repo wired still pass.
 func (m *CharacterCreate) SetItems(r repo.ItemRepo) { m.items = r }
 
+// SetBuilders wires the per-zone builder-grant repo so promoteToGame
+// can cache the new character's grants on the session at the moment
+// chargen finalizes into game mode. Optional; nil disables the load
+// (Phase G #33).
+func (m *CharacterCreate) SetBuilders(r repo.BuilderZoneRepo) { m.builders = r }
+
 // SetSettings forwards the account-level AccountSettings so chargen
 // can stamp PromptDefault onto the new character's prompt_template
 // column and apply ColorOverride/WidthOverride to the session at
@@ -391,7 +398,7 @@ func (m *CharacterCreate) handleLegacy(ctx context.Context, s *telnet.Session, l
 		return writeError(s, "Character creation failed. Try again later.")
 	}
 	applyAccountSettings(s, m.settings)
-	return promoteToGame(ctx, s, c, m.repo, m.game)
+	return promoteToGame(ctx, s, c, m.repo, m.builders, m.game)
 }
 
 // handleMulti drives the substep state machine. The post-name/race
@@ -1489,7 +1496,7 @@ func (m *CharacterCreate) finaliseReview(ctx context.Context, s *telnet.Session)
 
 	m.step = chargenStepDone
 	applyAccountSettings(s, m.settings)
-	return promoteToGame(ctx, s, c, m.repo, m.game)
+	return promoteToGame(ctx, s, c, m.repo, m.builders, m.game)
 }
 
 // pickFromList resolves an input that's either a 1-based list number

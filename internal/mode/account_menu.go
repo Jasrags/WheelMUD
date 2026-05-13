@@ -78,6 +78,12 @@ type AccountMenu struct {
 	// nil leaves the security view functional but reports an empty
 	// history.
 	logins repo.AccountLoginRepo
+
+	// builders is the per-zone builder-grant repo (Phase G #33).
+	// Forwarded to promoteToGame so the chosen character's grants
+	// land on the session at game entry. Optional; nil disables the
+	// cache load.
+	builders repo.BuilderZoneRepo
 }
 
 // accountStep is the post-auth menu's substep enum. accountStepRoot
@@ -155,6 +161,11 @@ func (m *AccountMenu) SetSettings(s repo.AccountSettings) { m.settings = s }
 // substep reads from it via ListRecentByAccount; nil leaves the view
 // available but reports an empty history.
 func (m *AccountMenu) SetLogins(r repo.AccountLoginRepo) { m.logins = r }
+
+// SetBuilders wires the per-zone builder-grant repo (Phase G #33).
+// Forwarded to promoteToGame on Play so the chosen character's
+// grants land on the session at game entry.
+func (m *AccountMenu) SetBuilders(r repo.BuilderZoneRepo) { m.builders = r }
 
 func (m *AccountMenu) Prompt(_ context.Context, _ *telnet.Session) string {
 	switch m.step {
@@ -359,6 +370,7 @@ func (m *AccountMenu) handleNew(s *telnet.Session) error {
 	create.SetCatalog(m.catalog)
 	create.SetSettings(m.settings)
 	create.SetItems(m.items)
+	create.SetBuilders(m.builders)
 	create.SetOnCancel(func(s *telnet.Session) error {
 		// Force a repaint when ReplaceMode runs OnEnter on the menu
 		// instance the player came from.

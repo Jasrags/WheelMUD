@@ -19,6 +19,7 @@ type CharacterSelect struct {
 	repo      repo.CharacterRepo
 	game      telnet.Mode
 	catalog   *chargen.Catalog
+	builders  repo.BuilderZoneRepo // optional; forwarded to promoteToGame
 	listShown bool
 }
 
@@ -29,6 +30,11 @@ func NewCharacterSelect(chars []repo.Character, characters repo.CharacterRepo, g
 // SetCatalog forwards the chargen catalog to a CharacterCreate
 // spawned by the user typing 'create'.
 func (m *CharacterSelect) SetCatalog(c *chargen.Catalog) { m.catalog = c }
+
+// SetBuilders wires the per-zone builder-grant repo so promoteToGame
+// can cache the character's grants on the session. Optional; nil
+// disables the load (Phase G #33).
+func (m *CharacterSelect) SetBuilders(r repo.BuilderZoneRepo) { m.builders = r }
 
 func (m *CharacterSelect) Prompt(_ context.Context, _ *telnet.Session) string {
 	return "Pick a character (or 'create' / 'quit'): "
@@ -74,7 +80,7 @@ func (m *CharacterSelect) Handle(ctx context.Context, s *telnet.Session, line st
 	// know its name.
 	for _, c := range m.chars {
 		if strings.EqualFold(c.Name, choice) {
-			return promoteToGame(ctx, s, c, m.repo, m.game)
+			return promoteToGame(ctx, s, c, m.repo, m.builders, m.game)
 		}
 	}
 

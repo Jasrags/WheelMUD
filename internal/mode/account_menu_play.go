@@ -62,5 +62,5 @@ func (m *AccountMenu) handlePlayPickerLine(ctx context.Context, s *telnet.Sessio
 // so the next render lands with the chosen knobs in effect.
 func (m *AccountMenu) promoteIntoCharacter(ctx context.Context, s *telnet.Session, c *repo.Character) error {
 	applyAccountSettings(s, m.settings)
-	return promoteToGame(ctx, s, *c, m.repo, m.game)
+	return promoteToGame(ctx, s, *c, m.repo, m.builders, m.game)
 }

@@ -134,6 +134,15 @@ type Session struct {
 	// Cross-goroutine read (move-time iteration of Snapshot), so
 	// guarded by crossMu.
 	followingID int64
+	// builderZones caches the set of zone IDs this session is
+	// authorised to edit (Phase G #33). Loaded by postauth.promoteToGame
+	// from builder_zones via BuilderZoneRepo.ListForCharacter, and
+	// refreshed by the grant / revoke admin verbs when the target is
+	// online. The OLC verbs (#34 redit / oedit / medit / zedit) read
+	// this through IsBuilderFor as their permission gate. Nil = no
+	// grants (the default for guest / pre-promote sessions). AuthAdmin
+	// bypasses this check entirely — see cmd.CanEditZone.
+	builderZones map[int64]struct{}
 
 	// writeMu is the single serializer for everything visible on the
 	// wire and for the line-edit state that drives async-write redraws.
@@ -345,6 +354,54 @@ func (s *Session) ChannelMutedSnapshot() map[string]bool {
 	cp := make(map[string]bool, len(s.channelMuted))
 	for k, v := range s.channelMuted {
 		cp[k] = v
+	}
+	return cp
+}
+
+// SetBuilderZones replaces this session's cached set of editable zone
+// IDs. promoteToGame stamps it at login from builder_zones; the
+// grant/revoke admin verbs refresh it on an online target.
+//
+// The caller's map is copied so post-call mutations cannot race the
+// reader. Passing nil clears the set.
+func (s *Session) SetBuilderZones(grants map[int64]struct{}) {
+	var cp map[int64]struct{}
+	if len(grants) > 0 {
+		cp = make(map[int64]struct{}, len(grants))
+		for k := range grants {
+			cp[k] = struct{}{}
+		}
+	}
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.builderZones = cp
+}
+
+// IsBuilderFor reports whether this session may edit the given zone
+// per its cached builder grants. False for a nil / empty grant set —
+// AuthAdmin bypasses this check at the cmd.CanEditZone layer.
+func (s *Session) IsBuilderFor(zoneID int64) bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if s.builderZones == nil {
+		return false
+	}
+	_, ok := s.builderZones[zoneID]
+	return ok
+}
+
+// BuilderZonesSnapshot returns a copy of the cached grant set. Mirrors
+// ChannelMutedSnapshot; suitable for the `grants` admin viewer and
+// tests. Nil when no grants are cached.
+func (s *Session) BuilderZonesSnapshot() map[int64]struct{} {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if len(s.builderZones) == 0 {
+		return nil
+	}
+	cp := make(map[int64]struct{}, len(s.builderZones))
+	for k := range s.builderZones {
+		cp[k] = struct{}{}
 	}
 	return cp
 }

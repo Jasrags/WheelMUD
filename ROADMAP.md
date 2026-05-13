@@ -74,12 +74,11 @@ constants and helpers in `telnet/iac.go`.
 - [x] ANSI-aware word-wrap respecting `Session.Width` (`telnet/wrap.go`,
       `Session.WriteWrapped`)
 - [x] Output write lock — `Session.writeMu` serializes `WriteRaw`
-- [ ] Pager mode for output that exceeds `Session.Height` — push a
-      `Pager` mode that buffers the full payload, renders one
-      screenful, and waits for `space`/`enter`/`q` keystrokes.
-      Requires the byte-level keypress dispatch (already partially
-      built for line-edit), plus a `WriteParaged` helper that
-      checks `len(lines) > Session.Height-1` before pushing.
+- [x] Pager mode for output that exceeds `Session.Height` — Phase A
+      #2 closed 2026-05-11. `telnet/pager.go` implements `pagerMode`
+      pushed via `Session.WritePaged` / `WritePagedWrapped`; wired
+      into `help`, `news`, `who`, `examine`, `inventory`, `quest`,
+      and `zonemap`. Space/enter advances, q quits.
 - [x] Prompt templating (HP/MP/room placeholders) — `internal/prompt`
       renders `%h/%H` (HP), `%r` (room), `%g` (gold), `%%` literal,
       with `%m/%M`/`%v/%V`/`%t` reserved for mana, move, and combat
@@ -206,8 +205,10 @@ constants and helpers in `telnet/iac.go`.
       `[]string` line buffer on the mode; submits to the parent on
       `OnExit` via a `Done(text string)` callback. Used by mail,
       bulletin boards, and OLC `desc`.
-- [ ] Pager mode for long output (also tracked in §2) — lives in
-      `internal/mode/pager.go`, pushed by helpers in §2.
+- [x] Pager mode for long output (also tracked in §2) — Phase A #2
+      closed 2026-05-11. Lives in `telnet/pager.go` (not
+      `internal/mode/pager.go`); push helpers are
+      `Session.WritePaged` / `WritePagedWrapped`.
 
 ## 6. Accounts, auth & characters
 
@@ -1879,10 +1880,25 @@ will need on top of those tables.
       `name/desc/exit/flag/sector/show/done`. Edits buffer until
       `done`, which writes to the SQLite world tables and re-syncs
       the in-memory cache.
-- [ ] Permission gating (admin / builder roles) — `AuthLevel` enum
+- [~] Permission gating (admin / builder roles) — `AuthLevel` enum
       `Player < Builder < Admin < Implementor`. OLC commands gated
       at `Builder`; admin-only verbs at `Admin`. Builders may be
       restricted to specific zones via a `builder_zones` table.
+      **Phase G #33 landed 2026-05-12** as a per-zone-only design:
+      `AuthLevel` stays {Guest, Player, Admin}; the new
+      `builder_zones` table (migration 0055) keyed
+      (character_id, zone_id) grants OLC rights on a per-zone basis.
+      `BuilderZoneRepo` (memory + sqlite, shared test suite) +
+      admin `grant <player> <zone>` / `revoke <player> <zone>` /
+      `grants [<player>]` verbs (audited). On login,
+      `postauth.promoteToGame` loads grants into a Session-cached
+      map (`Session.IsBuilderFor`); admin `grant`/`revoke` refresh
+      live targets in-place. `cmd.CanEditZone(s, zoneID)` is the
+      single gate for #34's redit / oedit / medit / zedit. A global
+      `AuthBuilder` enum tier was attempted and reverted — modernc-
+      sqlite hung on the `ALTER TABLE DROP COLUMN` required to widen
+      `auth_level`'s `BETWEEN 0 AND 2` CHECK. Per-zone-only is the
+      cleaner semantic anyway.
 - [ ] Versioned area saves with diff/preview before commit —
       `area_revisions` table keeps prior YAML serialization with
       `author_id`, `committed_at`, `message`. `diff` in editor shows

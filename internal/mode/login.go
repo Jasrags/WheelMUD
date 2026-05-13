@@ -56,6 +56,7 @@ type Login struct {
 	items    repo.ItemRepo         // wired via SetItems; threaded to AccountMenu
 	audits   repo.AdminAuditRepo   // wired via SetAudits; threaded to AccountMenu
 	logins   repo.AccountLoginRepo // slice 4: per-account login-event log
+	builders repo.BuilderZoneRepo  // Phase G #33: cached on session at promote
 }
 
 // SetMOTD wires an optional MOTD hook that promoteToGame fires on
@@ -83,6 +84,11 @@ func (l *Login) SetAudits(r repo.AdminAuditRepo) { l.audits = r }
 // and forwards the repo to the AccountMenu so the security view can
 // list recent activity. nil silently skips the recording.
 func (l *Login) SetLogins(r repo.AccountLoginRepo) { l.logins = r }
+
+// SetBuilders wires the per-zone builder-grant repo (Phase G #33) so
+// promoteToGame can cache the chosen character's grants on the
+// session at game entry.
+func (l *Login) SetBuilders(r repo.BuilderZoneRepo) { l.builders = r }
 
 // NewLogin returns a fresh Login bound to accounts and characters.
 // sessions enforces the single-session-per-account policy: a successful
@@ -149,6 +155,7 @@ func (l *Login) handleUsername(ctx context.Context, s *telnet.Session, line stri
 		create.SetItems(l.items)
 		create.SetAudits(l.audits)
 		create.SetLogins(l.logins)
+		create.SetBuilders(l.builders)
 		return s.ReplaceMode(create)
 	}
 
@@ -257,6 +264,7 @@ func (l *Login) handlePassword(ctx context.Context, s *telnet.Session, line stri
 		accounts:        l.accounts,
 		sessions:        l.sessions,
 		logins:          l.logins,
+		builders:        l.builders,
 		accountUsername: l.account.Username,
 	}); err != nil {
 		// postAuth wrote its own user-facing notice on the data-side

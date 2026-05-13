@@ -56,6 +56,7 @@ type Create struct {
 	items    repo.ItemRepo
 	audits   repo.AdminAuditRepo
 	logins   repo.AccountLoginRepo
+	builders repo.BuilderZoneRepo
 }
 
 // SetMOTD propagates the MOTD/news hook from Login through Create →
@@ -79,6 +80,11 @@ func (c *Create) SetAudits(r repo.AdminAuditRepo) { c.audits = r }
 // account-creation lands one success row before postAuth fires. nil
 // silently skips the recording.
 func (c *Create) SetLogins(r repo.AccountLoginRepo) { c.logins = r }
+
+// SetBuilders wires the per-zone builder-grant repo (Phase G #33) so
+// the post-create AccountMenu / CharacterCreate forwards it to
+// promoteToGame.
+func (c *Create) SetBuilders(r repo.BuilderZoneRepo) { c.builders = r }
 
 // NewCreate returns a fresh account-creation mode. game is forwarded
 // to postAuth after the account is persisted; sessions enforces the
@@ -206,6 +212,7 @@ func (c *Create) handleConfirm(ctx context.Context, s *telnet.Session, line stri
 		accounts:        c.accounts,
 		sessions:        c.sessions,
 		logins:          c.logins,
+		builders:        c.builders,
 		accountUsername: a.Username,
 	}); err != nil {
 		// Reset the create state machine so a postAuth failure doesn't

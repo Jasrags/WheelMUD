@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,6 +113,80 @@ func TestWriteString_StripsANSI_OnColorLevelNone(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSession_BuilderZones covers the Phase G #33 grant-cache surface
+// on Session: default empty → IsBuilderFor false; SetBuilderZones
+// then lookup; snapshot isolation (mutating the caller's input does
+// not leak into the session's cache); concurrent reader + writer
+// stays race-clean under -race.
+func TestSession_BuilderZones(t *testing.T) {
+	t.Run("default is empty", func(t *testing.T) {
+		s, _ := newPipeSession(t)
+		if s.IsBuilderFor(42) {
+			t.Fatal("fresh session: IsBuilderFor(42) = true, want false")
+		}
+		if got := s.BuilderZonesSnapshot(); got != nil {
+			t.Fatalf("fresh snapshot = %v, want nil", got)
+		}
+	})
+
+	t.Run("set then lookup", func(t *testing.T) {
+		s, _ := newPipeSession(t)
+		s.SetBuilderZones(map[int64]struct{}{42: {}, 99: {}})
+		if !s.IsBuilderFor(42) {
+			t.Fatal("IsBuilderFor(42) = false after Set")
+		}
+		if !s.IsBuilderFor(99) {
+			t.Fatal("IsBuilderFor(99) = false after Set")
+		}
+		if s.IsBuilderFor(7) {
+			t.Fatal("IsBuilderFor(7) = true; not in granted set")
+		}
+	})
+
+	t.Run("set nil clears", func(t *testing.T) {
+		s, _ := newPipeSession(t)
+		s.SetBuilderZones(map[int64]struct{}{42: {}})
+		s.SetBuilderZones(nil)
+		if s.IsBuilderFor(42) {
+			t.Fatal("IsBuilderFor(42) = true after clear")
+		}
+	})
+
+	t.Run("snapshot is isolated from caller mutations", func(t *testing.T) {
+		s, _ := newPipeSession(t)
+		input := map[int64]struct{}{42: {}}
+		s.SetBuilderZones(input)
+		input[99] = struct{}{}
+		if s.IsBuilderFor(99) {
+			t.Fatal("session leaked caller-side mutation; SetBuilderZones must copy")
+		}
+		snap := s.BuilderZonesSnapshot()
+		snap[7] = struct{}{}
+		if s.IsBuilderFor(7) {
+			t.Fatal("session leaked snapshot mutation; BuilderZonesSnapshot must copy")
+		}
+	})
+
+	t.Run("concurrent reader and writer are race-clean", func(t *testing.T) {
+		s, _ := newPipeSession(t)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				s.SetBuilderZones(map[int64]struct{}{int64(i): {}})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				_ = s.IsBuilderFor(int64(i))
+			}
+		}()
+		wg.Wait()
+	})
 }
 
 func TestWriteWrapped_StripsANSI_OnColorLevelNone(t *testing.T) {

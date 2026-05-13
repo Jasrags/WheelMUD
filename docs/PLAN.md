@@ -20,9 +20,10 @@ Cheap, low-risk, makes every later phase faster to test.
 1. **Help topics + prefix matching** (§18). `help <topic>` exact →
    keyword → unique-prefix → ambiguity list. Reuses the same matcher
    pattern as the registry.
-2. **Pager mode** (§2 / §5). Push a pager mode when output exceeds
-   `Session.Height`. Immediately benefits `who`, `news`, `help`,
-   future `score` / `equipment`.
+2. ~~**Pager mode** (§2 / §5). Push a pager mode when output exceeds
+   `Session.Height`.~~ Landed 2026-05-11. `telnet/pager.go` +
+   `Session.WritePaged` / `WritePagedWrapped`; wired into `help`,
+   `news`, `who`, `examine`, `inventory`, `quest`, `zonemap`.
 3. ~~**`goto` / `transfer` / `summon` / `wizinvis`** (§17). Thin
    wrappers over `teleport` + the session registry. No schema
    changes.~~ Landed 2026-05-04. `goto <player|room>`, `transfer
@@ -469,9 +470,9 @@ shipped the *day-zero* class / feat / skill / weave selection; this
 phase ships the *over-time* level-up paths that build on the same
 catalogs.
 
-23. **Levels & XP curve** (§12). Reads the §12 class / level table;
+23. ~~**Levels & XP curve** (§12). Reads the §12 class / level table;
     awards feat slots, skill points, ability bumps, weave slots on
-    train.
+    train.~~ Closed 2026-05-07 (slices 1–4 landed; see ROADMAP §12).
 24. **Mid-game skill rank investment** (§12). Per-character
     `character_skills` writes; respects class-skill / cross-class
     caps from the chargen catalog.
@@ -613,9 +614,9 @@ complete character.
 
 Content multiplier. Without this the world is static.
 
-29. **Trigger / event system** (§15) — `on_enter`, `on_say`,
+29. ~~**Trigger / event system** (§15) — `on_enter`, `on_say`,
     `on_attack`, `on_death`, `on_tick`. Pure dispatch layer; consumers
-    in 30–31. **Landed 2026-05-08.** Migration 0044 added the
+    in 30–31.~~ **Landed 2026-05-08.** Migration 0044 added the
     `triggers` table (CHECK on `owner_kind in
     ('mob_template','room')` and on `event in
     ('on_enter','on_say','on_attack','on_death','on_tick')`) plus
@@ -859,8 +860,23 @@ Content multiplier. Without this the world is static.
 Once content matters, builders need to author it without YAML edits +
 restart.
 
-33. **Permission/builder role formalization** (§16). `AuthLevel`
-    already splits builder from admin; add per-zone builder grants.
+33. ~~**Permission/builder role formalization** (§16).~~ Landed
+    2026-05-12 across two slices.
+    - Slice 1: migration 0055 (`builder_zones` table), `BuilderZoneRepo`
+      (memory + sqlite + shared test suite), and admin `grant` /
+      `revoke` / `grants` verbs (AuthAdmin only, audited).
+    - Slice 2: `Session.BuilderZones` cache populated by
+      `postauth.promoteToGame` (via `BuilderZoneRepo.ListForCharacter`),
+      `cmd.CanEditZone(s, zoneID)` helper, and online-target refresh in
+      `grant` / `revoke` (re-fetch + `Session.SetBuilderZones` +
+      `WriteAsync` notice).
+    - Note: the original "introduce AuthBuilder enum tier" approach was
+      attempted and reverted — modernc-sqlite hung on the `ALTER TABLE
+      DROP COLUMN` required to widen `characters.auth_level`'s
+      `BETWEEN 0 AND 2` CHECK. The per-zone-only design (AuthLevel
+      stays {Guest, Player, Admin}; `builder_zones` is the scope
+      table) matches the spec's "per-zone builder grants" intent and
+      is what #34 consumes.
 34. **`redit` / `oedit` / `medit` / `zedit`** (§16). Mode-based
     editors using the existing mode stack.
 35. **Versioned area saves + diff/preview** (§16). Snapshot before
