@@ -156,6 +156,35 @@ func (h *WanderHandler) Tick(ctx context.Context) {
 		}
 		h.consider(ctx, m, profiles, zone)
 	}
+
+	// Drop BFS goal entries for mobs that are no longer spawned
+	// (died / admin despawn / zone reset) to keep the goals map
+	// bounded over server uptime. Skipped when ListSpawned hit the
+	// cap so we don't accidentally drop live entries for mobs
+	// beyond the per-pulse pagination window. Bounded cost: at
+	// most O(len(goals)) per pulse, only runs in the common case
+	// where spawned count < cap.
+	if len(mobs) < h.cap {
+		alive := make(map[int64]struct{}, len(mobs))
+		for _, m := range mobs {
+			alive[m.ID] = struct{}{}
+		}
+		h.pruneGoals(alive)
+	}
+}
+
+// pruneGoals removes BFS goal entries whose mob ID is not in alive.
+// Called from Tick when ListSpawned returns the full set — see the
+// guard at the call site. Holds goalMu for the duration of the
+// sweep; with len(goals) bounded by spawned mob count this is fast.
+func (h *WanderHandler) pruneGoals(alive map[int64]struct{}) {
+	h.goalMu.Lock()
+	defer h.goalMu.Unlock()
+	for id := range h.goals {
+		if _, ok := alive[id]; !ok {
+			delete(h.goals, id)
+		}
+	}
 }
 
 // wanderProfile is the slice of a MobTemplate the wander tick reads

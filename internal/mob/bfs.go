@@ -10,12 +10,11 @@ import (
 // walkable, in-zone exit graph. The handler-level repos are stable
 // across calls; this struct carries the per-pulse state.
 type bfsConfig struct {
-	exits      repo.ExitRepo
-	zoneOf     func(ctx context.Context, roomID int64) (int64, bool)
-	fromRoom   int64 // BFS origin
-	zoneID     int64 // gate: only rooms inside this zone are reachable
-	maxHops    int   // 0 disables; capped at bfsHopHardCap below
-	limitRooms int   // 0 = no cap on the reachable list size
+	exits    repo.ExitRepo
+	zoneOf   func(ctx context.Context, roomID int64) (int64, bool)
+	fromRoom int64 // BFS origin
+	zoneID   int64 // gate: only rooms inside this zone are reachable
+	maxHops  int   // 0 disables; capped at bfsHopHardCap below
 }
 
 // bfsHopHardCap pins the maximum BFS depth even when a misbehaving
@@ -63,9 +62,6 @@ func bfsReachable(ctx context.Context, cfg bfsConfig) ([]int64, error) {
 				visited[e.ToRoomID] = true
 				out = append(out, e.ToRoomID)
 				next = append(next, e.ToRoomID)
-				if cfg.limitRooms > 0 && len(out) >= cfg.limitRooms {
-					return out, nil
-				}
 			}
 		}
 		queue = next

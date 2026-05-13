@@ -1760,6 +1760,15 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	// applyEffects logs and continues so a misconfigured boot
 	// doesn't lock players inside the dialogue.
 	if luaRunner != nil {
+		// Phase F #32 slice 5c: hoist the wait factories OUT of
+		// RunScript so they're built once at registry setup time
+		// rather than re-allocating per dialogue script fire. The
+		// returned closures snapshot the scheduler + shutdown-ctx
+		// pointer; they're immutable, safe to share across calls.
+		dialogueWaitHook := makeLuaWait(scheduler, luaRunner, srvShutdownCtxPtr)
+		dialogueWaitMsHook := makeLuaWaitMs(scheduler, luaRunner, srvShutdownCtxPtr)
+		dialogueInventoryHook := makeLuaInventory(items)
+		dialogueInventoryAllHook := makeLuaInventoryAll(items)
 		hooks.RunScript = func(ctx context.Context, s *telnet.Session, name string) error {
 			bindings := luaeng.APIBindings{
 				Logger: slog.Default(),
@@ -1856,13 +1865,11 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 			// detour. Note: the deferred script fires AFTER the
 			// dialogue mode may have popped — it gets the minimal
 			// binding surface (ctx + logger), same as triggers.
-			inventoryHook := makeLuaInventory(items)
-			inventoryAllHook := makeLuaInventoryAll(items)
 			bindings.Inventory = func(targetID int64) ([]luaeng.InventoryEntry, error) {
-				return inventoryHook(ctx, targetID)
+				return dialogueInventoryHook(ctx, targetID)
 			}
 			bindings.InventoryAll = func(targetID int64) ([]luaeng.InventoryEntry, error) {
-				return inventoryAllHook(ctx, targetID)
+				return dialogueInventoryAllHook(ctx, targetID)
 			}
 			waitEv := trigger.EventCtx{
 				Event:     "dialogue.script",
@@ -1871,13 +1878,11 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 				RoomID:    s.CurrentRoomID,
 				Text:      name,
 			}
-			waitHook := makeLuaWait(scheduler, luaRunner, srvShutdownCtxPtr)
-			waitMsHook := makeLuaWaitMs(scheduler, luaRunner, srvShutdownCtxPtr)
 			bindings.Wait = func(seconds int32, scriptName string) error {
-				return waitHook(ctx, waitEv, seconds, scriptName)
+				return dialogueWaitHook(ctx, waitEv, seconds, scriptName)
 			}
 			bindings.WaitMs = func(ms int32, scriptName string) error {
-				return waitMsHook(ctx, waitEv, ms, scriptName)
+				return dialogueWaitMsHook(ctx, waitEv, ms, scriptName)
 			}
 			// PushMode is intentionally nil for dialogue scripts: V2
 			// has no concrete cross-mode push targets and the
@@ -2457,25 +2462,37 @@ func resolveWaitShutdownCtx(p *atomic.Pointer[context.Context]) context.Context 
 	return context.Background()
 }
 
-// makeLuaWait returns the cmd-layer factory for the wait() Lua
-// binding. Per-call the factory snapshots the firing EventCtx
-// (passed by the trigger-layer adapter) so the deferred run sees
-// the same actor/room/event the original script did.
+// buildLuaWaitFactory is the shared implementation behind
+// makeLuaWait (seconds) and makeLuaWaitMs (milliseconds). The two
+// public factories differ only in their delay-arg unit + validation
+// bounds; everything else (range check, script-name check,
+// wait-slot acquire, ctx snapshot, shutdownCtx resolution, fire
+// closure, AfterCtx scheduling) is identical and lives here.
+//
+// validateDelay returns an error message when the delay arg is out
+// of range. toDuration converts the unit-typed delay arg to
+// time.Duration. label is the wait/wait_ms prefix on the log line
+// when the deferred script run fails — keeps the log filterable
+// per binding kind.
 //
 // srvShutdownCtxPtr is an atomic pointer assigned by main() after
 // signal.NotifyContext. The Store/Load barriers ensure every
 // dispatch-goroutine read sees the boot-time write regardless of
 // scheduler.Start ordering.
-func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *atomic.Pointer[context.Context]) func(context.Context, trigger.EventCtx, int32, string) error {
-	return func(_ context.Context, ev trigger.EventCtx, seconds int32, scriptName string) error {
-		if seconds < MinWaitSeconds {
-			return fmt.Errorf("wait seconds must be >= %d (got %d)", MinWaitSeconds, seconds)
-		}
-		if seconds > MaxWaitSeconds {
-			return fmt.Errorf("wait seconds must be <= %d (got %d)", MaxWaitSeconds, seconds)
+func buildLuaWaitFactory(
+	scheduler *tick.Scheduler,
+	runner *luaeng.Runner,
+	srvShutdownCtxPtr *atomic.Pointer[context.Context],
+	label string,
+	validateDelay func(int32) error,
+	toDuration func(int32) time.Duration,
+) func(context.Context, trigger.EventCtx, int32, string) error {
+	return func(_ context.Context, ev trigger.EventCtx, n int32, scriptName string) error {
+		if err := validateDelay(n); err != nil {
+			return err
 		}
 		if strings.TrimSpace(scriptName) == "" {
-			return fmt.Errorf("wait script name must be non-empty")
+			return fmt.Errorf("%s script name must be non-empty", label)
 		}
 		if err := acquireWaitSlot(); err != nil {
 			return err
@@ -2494,20 +2511,37 @@ func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCt
 			// SIGTERM cancellation; runner.Run wraps it with the
 			// 50ms CallTimeout internally.
 			//
-			// V5b deferred scripts get NO mutation surface in V1 —
+			// Deferred scripts get NO mutation surface in V1 —
 			// bindings stay minimal (ctx + logger). Authors who
 			// need chained mutations fire a fresh trigger from
 			// inside the deferred script, keeping the deferred
 			// surface narrow.
 			bindings := luaeng.APIBindings{Ctx: ctxView}
 			if err := runner.Run(shutdownCtx, scriptName, func(l *luastd.LState) { bindings.Bind(l) }); err != nil {
-				slog.Debug("wait: deferred script run failed",
+				slog.Debug(label+": deferred script run failed",
 					"script", scriptName, "error", err)
 			}
 		}
-		tick.AfterCtx(scheduler, shutdownCtx, time.Duration(seconds)*time.Second, fire)
+		tick.AfterCtx(scheduler, shutdownCtx, toDuration(n), fire)
 		return nil
 	}
+}
+
+// makeLuaWait returns the cmd-layer factory for the wait() Lua
+// binding. See buildLuaWaitFactory for the shared mechanism.
+func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *atomic.Pointer[context.Context]) func(context.Context, trigger.EventCtx, int32, string) error {
+	return buildLuaWaitFactory(scheduler, runner, srvShutdownCtxPtr, "wait",
+		func(seconds int32) error {
+			if seconds < MinWaitSeconds {
+				return fmt.Errorf("wait seconds must be >= %d (got %d)", MinWaitSeconds, seconds)
+			}
+			if seconds > MaxWaitSeconds {
+				return fmt.Errorf("wait seconds must be <= %d (got %d)", MaxWaitSeconds, seconds)
+			}
+			return nil
+		},
+		func(seconds int32) time.Duration { return time.Duration(seconds) * time.Second },
+	)
 }
 
 // acquireWaitSlot increments the global outstanding-wait counter
@@ -2515,6 +2549,16 @@ func makeLuaWait(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCt
 // refusal surfaces as a classified Lua error so the trigger's
 // fault budget bumps; persistent abuse auto-disables the trigger
 // after 5 refusals.
+//
+// Note: the cap is soft under concurrent callers. Two goroutines
+// racing the Add(1) can each observe a pre-increment value below
+// the cap and both proceed past the gate; one will refuse, but the
+// counter can briefly read MaxOutstandingWaits + (concurrency - 1)
+// before the rollback lands. With the scheduler at 1 Hz and the
+// LState pool of 8, real concurrency at this site is effectively
+// zero — the soft-cap window is negligible. If a future
+// finer-grained scheduler makes concurrent acquire common, swap to
+// a CAS loop.
 func acquireWaitSlot() error {
 	if outstandingWaits.Add(1) > MaxOutstandingWaits {
 		outstandingWaits.Add(-1)
@@ -2590,38 +2634,18 @@ func itemsToInventoryEntries(list []repo.Item) []luaeng.InventoryEntry {
 // the firing precision is bounded by the scheduler's tick rate
 // (currently 1 Hz, so sub-1s values round up to the next pulse).
 func makeLuaWaitMs(scheduler *tick.Scheduler, runner *luaeng.Runner, srvShutdownCtxPtr *atomic.Pointer[context.Context]) func(context.Context, trigger.EventCtx, int32, string) error {
-	return func(_ context.Context, ev trigger.EventCtx, ms int32, scriptName string) error {
-		if ms < MinWaitMilliseconds {
-			return fmt.Errorf("wait_ms milliseconds must be >= %d (got %d)", MinWaitMilliseconds, ms)
-		}
-		if ms > MaxWaitMilliseconds {
-			return fmt.Errorf("wait_ms milliseconds must be <= %d (got %d)", MaxWaitMilliseconds, ms)
-		}
-		if strings.TrimSpace(scriptName) == "" {
-			return fmt.Errorf("wait_ms script name must be non-empty")
-		}
-		if err := acquireWaitSlot(); err != nil {
-			return err
-		}
-		ctxView := buildWaitCtxView(ev)
-		shutdownCtx := resolveWaitShutdownCtx(srvShutdownCtxPtr)
-		fire := func(_ context.Context) {
-			// Release BEFORE the deferred Run — same chained-wait
-			// rationale as makeLuaWait.
-			releaseWaitSlot()
-			// Mirrors makeLuaWait's fire closure: deferred run gets
-			// the minimal binding surface (ctx + logger). Authors
-			// who need richer state inside the deferred script
-			// should fire a fresh trigger from there.
-			bindings := luaeng.APIBindings{Ctx: ctxView}
-			if err := runner.Run(shutdownCtx, scriptName, func(l *luastd.LState) { bindings.Bind(l) }); err != nil {
-				slog.Debug("wait_ms: deferred script run failed",
-					"script", scriptName, "error", err)
+	return buildLuaWaitFactory(scheduler, runner, srvShutdownCtxPtr, "wait_ms",
+		func(ms int32) error {
+			if ms < MinWaitMilliseconds {
+				return fmt.Errorf("wait_ms milliseconds must be >= %d (got %d)", MinWaitMilliseconds, ms)
 			}
-		}
-		tick.AfterCtx(scheduler, shutdownCtx, time.Duration(ms)*time.Millisecond, fire)
-		return nil
-	}
+			if ms > MaxWaitMilliseconds {
+				return fmt.Errorf("wait_ms milliseconds must be <= %d (got %d)", MaxWaitMilliseconds, ms)
+			}
+			return nil
+		},
+		func(ms int32) time.Duration { return time.Duration(ms) * time.Millisecond },
+	)
 }
 
 // validateConsumableEffectRefs walks every consumable item parsed

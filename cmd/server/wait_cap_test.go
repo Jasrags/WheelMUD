@@ -55,13 +55,13 @@ func TestWaitCap_ReleaseAllowsReacquire(t *testing.T) {
 	resetWaitSlots(t)
 }
 
-// resetWaitSlots drains the global counter back to zero so each test
-// case starts from a known baseline. Test-only helper; production
-// callers never zero the counter — fires always pair with the
-// acquire that scheduled them.
+// resetWaitSlots restores the global counter to zero atomically so
+// each test case starts from a known baseline. Test-only helper;
+// production callers never zero the counter — fires always pair
+// with the acquire that scheduled them. Store rather than a
+// drain-loop so future t.Parallel() additions in this file can't
+// race the reset against a concurrent acquire.
 func resetWaitSlots(t *testing.T) {
 	t.Helper()
-	for outstandingWaits.Load() > 0 {
-		releaseWaitSlot()
-	}
+	outstandingWaits.Store(0)
 }

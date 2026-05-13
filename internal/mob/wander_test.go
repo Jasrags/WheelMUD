@@ -623,6 +623,31 @@ func TestWander_BFS_NoMoveWhenSurrounded(t *testing.T) {
 	}
 }
 
+func TestWander_BFS_PrunesGoalsForDespawnedMobs(t *testing.T) {
+	// A mob's goal must drop out of the handler's in-memory cache
+	// once it's no longer in the spawned set (despawn / death /
+	// zone reset). Otherwise the map grows unbounded over uptime.
+	// Guard: prune only runs when ListSpawned returns < cap so a
+	// paginated result can't accidentally drop live entries.
+	f := newBFSFixture(t, 3)
+	m := f.spawn(t, 1)
+	h := NewWanderHandler(f.mobs, f.rooms, f.exits, f.templates, nil,
+		WithChance(1.0), WithRand(stableRand()))
+	h.setGoal(m.ID, 3)
+
+	// Despawn the mob (UpdateRoom 0 puts it outside the spawned
+	// set). ListSpawned filters room_id == 0.
+	if err := f.mobs.UpdateRoom(context.Background(), m.ID, 0); err != nil {
+		t.Fatalf("despawn: %v", err)
+	}
+
+	h.Tick(context.Background())
+
+	if g := h.getGoal(m.ID); g != 0 {
+		t.Fatalf("despawned mob goal not pruned: got %d, want 0", g)
+	}
+}
+
 func TestWander_BFS_PathBranchWinsOverRadius(t *testing.T) {
 	// A template with BOTH a strict path AND wander_radius is
 	// rejected at load time (see internal/world/mob_path_test.go),
