@@ -54,20 +54,28 @@ func runREdit(c *telnet.Context, rooms repo.RoomRepo, push PushREditFn) error {
 	} else {
 		room, err = resolveRoom(c.Ctx, rooms, c.Args[0])
 	}
-	if errors.Is(err, repo.ErrRoomNotFound) {
-		target := "the current room"
-		if len(c.Args) > 0 {
-			target = c.Args[0]
-		}
-		return c.Session.WriteString("{{No such room:}}::red " + defangCfmt(target) + "\r\n")
-	}
-	if err != nil {
+	// System-level lookup failure (DB driver hiccup) gets its own line
+	// because there's no security value in masking it and the operator
+	// needs to know to retry.
+	if err != nil && !errors.Is(err, repo.ErrRoomNotFound) {
 		return c.Session.WriteString("{{Could not look up that room right now.}}::red\r\n")
 	}
-	// Permission gate. We deliberately give the SAME refusal regardless
-	// of whether the room exists, so a non-authorised player can't
-	// probe for valid external_ids. (The "no such room" branch above
-	// is reached only when the room genuinely doesn't exist.)
+	// Admin can already enumerate rooms via `zones show` / `whereami`,
+	// so giving them the precise "no such room" line costs no security
+	// and is more useful when debugging an external_id typo. Non-admin
+	// builders see the same refusal whether the room is missing or
+	// outside their grants, so they cannot use redit as a side channel
+	// to probe for valid external_ids.
+	if errors.Is(err, repo.ErrRoomNotFound) {
+		if c.Session.AuthLevel >= telnet.AuthAdmin {
+			target := "the current room"
+			if len(c.Args) > 0 {
+				target = c.Args[0]
+			}
+			return c.Session.WriteString("{{No such room:}}::red " + defangCfmt(target) + "\r\n")
+		}
+		return c.Session.WriteString("{{You do not have permission to edit that room.}}::red\r\n")
+	}
 	if !CanEditZone(c.Session, room.ZoneID) {
 		return c.Session.WriteString("{{You do not have permission to edit that room.}}::red\r\n")
 	}

@@ -68,7 +68,7 @@ func TestREdit_WithExternalArg_Resolves(t *testing.T) {
 	}
 }
 
-func TestREdit_MissingRoomRefuses(t *testing.T) {
+func TestREdit_MissingRoomRefuses_AdminGetsPreciseError(t *testing.T) {
 	rooms := repo.NewMemoryRoomRepo()
 	pushes := &pushREditCalls{}
 
@@ -80,8 +80,50 @@ func TestREdit_MissingRoomRefuses(t *testing.T) {
 	if len(pushes.calls) != 0 {
 		t.Fatalf("push should not happen for missing room: %+v", pushes.calls)
 	}
+	// Admin gets the precise "No such room" line — admin can already
+	// enumerate rooms via `zones show` / `whereami` so this leaks no
+	// information and helps debug typos.
 	if !strings.Contains(out.String(), "No such room") {
-		t.Fatalf("missing refusal: %q", out.String())
+		t.Fatalf("admin missing-room refusal: %q", out.String())
+	}
+}
+
+// TestREdit_MissingRoom_NonAdminUnifiedRefusal locks in the
+// enumeration defense: a non-admin probing for a non-existent room
+// gets the SAME refusal as a non-admin who hits a room outside their
+// grants, so the verb cannot be used as a side channel to discover
+// external_ids.
+func TestREdit_MissingRoom_NonAdminUnifiedRefusal(t *testing.T) {
+	rooms := repo.NewMemoryRoomRepo()
+	// Seed a real room the player CAN edit so we have something to
+	// compare the "permission" message against.
+	rooms.Insert(repo.Room{ID: 10, ExternalID: "plaza", ZoneID: 7})
+	pushes := &pushREditCalls{}
+
+	missingOut := func() string {
+		s, out := bufSession(t)
+		s.AuthLevel = telnet.AuthPlayer
+		s.SetCurrentRoom(1)
+		runCmd(t, NewREdit(rooms, pushes.push), s, "ghost-room-id")
+		return out.String()
+	}()
+	noGrantOut := func() string {
+		s, out := bufSession(t)
+		s.AuthLevel = telnet.AuthPlayer
+		s.SetCurrentRoom(10) // real room, but player has no grants
+		runCmd(t, NewREdit(rooms, pushes.push), s, "")
+		return out.String()
+	}()
+
+	if missingOut != noGrantOut {
+		t.Fatalf("missing-room and no-grant refusals diverge — enumeration vector!\nmissing: %q\nno-grant: %q",
+			missingOut, noGrantOut)
+	}
+	if strings.Contains(missingOut, "No such room") {
+		t.Fatalf("non-admin leaked existence: %q", missingOut)
+	}
+	if !strings.Contains(missingOut, "do not have permission") {
+		t.Fatalf("expected unified permission refusal, got %q", missingOut)
 	}
 }
 

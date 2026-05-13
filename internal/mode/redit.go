@@ -151,9 +151,14 @@ func (m *REdit) writeShow(s *telnet.Session) error {
 	}
 	fmt.Fprintf(&b, "{{Room:}}::cyan|bold     %s {{(#%d)}}::gray%s\r\n",
 		defangCfmt(m.draft.ExternalID), m.draft.ID, dirtyTag)
-	fmt.Fprintf(&b, "  {{Name:}}::yellow     %s\r\n", m.draft.Name)
+	// Name + Short are operator-supplied and rendered inside cfmt
+	// markup, so defang to prevent a hostile/typo'd `{{...}}::style`
+	// run from injecting styling on the editor's own terminal. LongDesc
+	// stays undefanged: builders intentionally author cfmt prose for
+	// the room description, matching look's treatment.
+	fmt.Fprintf(&b, "  {{Name:}}::yellow     %s\r\n", defangCfmt(m.draft.Name))
 	if m.draft.ShortDesc != "" {
-		fmt.Fprintf(&b, "  {{Short:}}::yellow    %s\r\n", m.draft.ShortDesc)
+		fmt.Fprintf(&b, "  {{Short:}}::yellow    %s\r\n", defangCfmt(m.draft.ShortDesc))
 	}
 	if m.draft.LongDesc != "" {
 		fmt.Fprintf(&b, "  {{Desc:}}::yellow     %s\r\n", m.draft.LongDesc)
@@ -282,14 +287,21 @@ func (m *REdit) commit(ctx context.Context, s *telnet.Session) error {
 		// internal/audit helper) so this package doesn't have to import
 		// internal/cmd's audit wrapper. Mirrors what audit.Record does
 		// under the hood — actor snapshot + the change summary as args.
-		_ = m.audits.Record(ctx, repo.AdminAuditEntry{
+		// Audit-write failures log at warn so a corrupt audit table or
+		// transient DB hiccup leaves a forensic trail; the commit
+		// itself already landed and we don't roll it back on audit
+		// failure (mirrors internal/audit.Record's policy).
+		if err := m.audits.Record(ctx, repo.AdminAuditEntry{
 			ActorCharacterID: s.CharacterID,
 			ActorName:        s.CharacterName,
 			ActorType:        repo.ActorTypeCharacter,
 			Verb:             "redit",
 			Target:           m.draft.ExternalID,
 			Args:             strings.Join(changes, ","),
-		})
+		}); err != nil {
+			slog.Warn("redit: audit write failed",
+				"room", m.draft.ExternalID, "error", err)
+		}
 	}
 	if err := s.WriteString(fmt.Sprintf(
 		"{{Saved %s (%d field%s changed).}}::green\r\n",
