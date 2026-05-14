@@ -951,6 +951,31 @@ Lower urgency; do whichever lands free time.
 51. **SSH listener for ops** (§1). Lowest priority unless doing a lot
     of remote admin.
 
+### Out-of-phase fixes landed alongside Phase I (2026-05-14)
+
+Tracked here so the timeline reads cleanly; these aren't numbered
+backlog items, just polish that surfaced during the Phase I work.
+
+- **Long-token break in WrapText** (§2). Tokens whose cell width
+  exceeds the wrap width are now chunked into successive lines
+  instead of overflowing past the right margin. URLs in MOTD /
+  help / chargen render correctly on narrow Mudlet profiles.
+  Closes `terminal_rendering_followups.md` item #3.
+- **WrapText CR-drop regression coverage** (§2). Locks in the
+  CR-drop contract `WriteWrapped` / `WritePagedWrapped` depend on
+  via three new tests; documents the dependency in both helpers'
+  godocs. Closes `terminal_rendering_followups.md` item #6.
+- **World loader additive resync** (§9). Loader now picks up new
+  YAML rooms / items / mobs on every boot instead of silently
+  short-circuiting when the DB already has rows. Strictly additive
+  — operator-edited rows keep their drift. Boot summary log shows
+  per-table new-row counts.
+- **`auth_level` startup audit** (§6). Boot-time clamp brings any
+  row with `auth_level > AuthLevelMax` back into [0,2] with a warn
+  log. Fixes "invalid auth_level <N>" errors locking accounts out
+  of character select on DBs that predated migration 0019's CHECK
+  constraint.
+
 ---
 
 ## Phase J — Ops, CI, packaging — LANDED 2026-05-12

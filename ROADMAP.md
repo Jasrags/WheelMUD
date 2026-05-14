@@ -110,15 +110,31 @@ constants and helpers in `telnet/iac.go`.
       defanged to prevent style injection. Per-character override via
       the `prompt set/clear/show` command (migration 0023 added the
       `characters.prompt_template` column).
-- [ ] Width-aware wrap & cursor accounting (CJK fullwidth, combining
-      marks) — `WrapText` and `extendBuffer` count runes, not display
-      cells. Adopt `golang.org/x/text/width` (or vendor a small east-
-      asian-width table) and a `displayWidth(rune)` helper used by
-      both wrap and the line editor's cursor math.
-- [ ] Long-token break in `WrapText` — currently overflows tokens past
-      `width`. Add a `breakToken(token, width)` that splits on grapheme
-      boundaries (or just runes for ASCII) when a single token would
-      exceed the line, inserting a soft hyphen-free wrap point.
+- [x] Width-aware **wrap** (CJK fullwidth, combining marks) — Phase
+      I #44 (CHARSET), landed 2026-05-14. `telnet/wrap.go::WrapText`
+      gained a `cellWidth bool` arg; when true (UTF-8 negotiated via
+      CHARSET) column accounting switches to `runewidth.StringWidth`
+      so CJK glyphs count as 2 cells and zero-width joiners as 0.
+      `Session.WriteWrapped` / `WritePagedWrapped` pass
+      `Charset() == "UTF-8"`. Regression test
+      `TestWrapText_CellWidthCountsCJKAsTwo`.
+- [ ] Width-aware **cursor accounting** in `LineEdit` (line editor)
+      and `extendBuffer` (tab-completion repaint) — both still
+      byte/rune-based. A CJK character entered via UTF-8 is
+      inserted byte-by-byte, backspace erases bytes (not glyphs),
+      and tab completion's backspace count under-emits for 2-cell
+      glyphs. Bigger lift than the wrap side because it changes
+      byte-buffer semantics; tracked in
+      `terminal_rendering_followups.md` item #2. Trigger: any
+      real CJK player.
+- [x] Long-token break in `WrapText` — landed 2026-05-14 alongside
+      the CHARSET work. Tokens whose cell width exceeds the wrap
+      width are now split into successive width-cell chunks
+      separated by newlines; bare cut (no hyphen) so URLs stay
+      copy-pasteable. Pathological case (width=1 with a 2-cell
+      glyph) overflows by one cell to guarantee forward progress;
+      documented in the godoc. Coverage:
+      `TestWrapText_BreaksLongToken*` family.
 
 ## 3. Input loop & line editing
 
@@ -158,7 +174,17 @@ constants and helpers in `telnet/iac.go`.
       single account can own admin and player characters side-by-side).
       `CharacterRepo.Create` atomically promotes the very first
       character on the server to AuthAdmin; `mode/postauth.promoteToGame`
-      stamps `s.AuthLevel` from the chosen character.
+      stamps `s.AuthLevel` from the chosen character. Boot-time
+      data-integrity audit added 2026-05-14:
+      `CharacterRepo.ClampInvalidAuthLevels` runs after repo
+      construction in `cmd/server/main.go` and clamps any row with
+      `auth_level > AuthLevelMax` back into range, logging a warn
+      with the row count. The 0019 CHECK constraint forbids new
+      writes outside [0,2], but hand-edited DB rows or rows
+      predating the constraint were tripping the post-load scan
+      validator with "invalid auth_level <N>" and locking the
+      owning account out of character select. Recovery hatch on
+      every boot.
 - [x] Per-command argument completer — `Command.Completer` field;
       `help` ships a real one (sample: tab on `help <prefix>`)
 - [x] Broaden argument completers across the command catalog —
@@ -410,23 +436,33 @@ constants and helpers in `telnet/iac.go`.
 - [x] World data on disk (YAML/JSON area files) with a loader —
       `internal/world` package: `gopkg.in/yaml.v3` parsing, strict
       cross-reference validation (unique ids, exactly-one starter, valid
-      directions, all refs resolve), one-shot transactional sync into
-      the SQLite world tables. Default world embedded via
+      directions, all refs resolve), single-transaction sync into the
+      SQLite world tables. Default world embedded via
       `//go:embed all:default` at `internal/world/default/`;
-      `WORLD_DIR` env var overrides with a real filesystem path.
-      Loader is no-op when world tables already have rows
-      (`0006_world_external_id.sql` wipes the SQL seed and adds
-      `external_id` columns to rooms/items/mobs so reloads pick up
-      changes via DB wipe). Starter room pinned to id=1 to preserve
-      `repo.StarterRoomID`.
-- [ ] Hot-reload of area files without restart — `reload world` admin
-      command re-runs the loader against `WORLD_DIR`, diffs against
-      current rooms/exits/items/mobs by `external_id`, applies adds
-      and updates in a transaction, soft-deletes rows whose ids
-      vanished (mark `deleted_at`, skip in queries). Players in a
-      deleted room get teleported to the starter room with an
-      "the world shifts around you" message. `fsnotify` watcher is
-      a follow-up so manual reload is the v1 path.
+      `WORLD_DIR` env var overrides with a real filesystem path. As
+      of 2026-05-14 the loader performs an **additive resync** on
+      every boot: per-table pre-load probe selects existing
+      `external_id`s, and rows in YAML that aren't in the DB get
+      inserted; existing rows are left exactly as they are
+      (`UPDATE`s and DELETEs out of scope). Boot log emits a
+      structured `world: resync complete` line with per-table
+      new-row counts plus YAML row totals. Starter room still
+      pinned to id=1 when the slot is unoccupied; when occupied,
+      the YAML starter falls through to a regular auto-increment
+      row (first-loaded starter wins). The previous "no-op when
+      world tables already have rows" short-circuit was retired
+      because it silently dropped YAML changes; ZoneResetter then
+      warned every 5min with "resolve home room" errors for items
+      pointing at missing rooms.
+- [~] Hot-reload of area files without restart — additive resync
+      (above) covers the **adds** half of the contract: new zones
+      / rooms / exits / items / mob_templates land on every boot,
+      no DB wipe required. Pending: `reload world` admin verb
+      (no restart, no boot delay), update support (catch renames
+      and drift), soft-delete support for YAML rows that vanish
+      (mark `deleted_at`, teleport players in deleted rooms to
+      the starter with "the world shifts around you"), and an
+      `fsnotify` watcher for fully automatic reloads.
 - [~] Periodic + shutdown autosave — `internal/persist.Manager`
       hosts named `SaverFunc` registrations; the new `tick.Buckets
       .Save` bucket (default 30s, `DefaultSaveInterval`) calls
