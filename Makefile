@@ -30,3 +30,24 @@ zip:
 	zip -r /tmp/project.zip . \
 		-x "*.git*" "*.git/**" "project.zip" "*.env" "*.env.*" \
 		"node_modules/*" "tmp/*" "/tmp/*"
+
+# WHEELMUD_HOST / WHEELMUD_PORT stamp the generated Mudlet profile so
+# a player who imports it lands on the right server with one click.
+# Defaults match the dev workflow (localhost:2323); override on the
+# command line for a public release:
+#   make mudlet-package WHEELMUD_HOST=mymud.example.com WHEELMUD_PORT=2323
+WHEELMUD_HOST ?= localhost
+WHEELMUD_PORT ?= 2323
+
+.PHONY: mudlet-package
+mudlet-package:
+	@mkdir -p dist/mudlet
+	@sed -e 's/__WHEELMUD_HOST__/$(WHEELMUD_HOST)/g' \
+		-e 's/__WHEELMUD_PORT__/$(WHEELMUD_PORT)/g' \
+		clients/mudlet/src/profile.xml.template > dist/mudlet/wheelmud.profile
+	@cd clients/mudlet/src && \
+		rm -f ../../../dist/mudlet/wheelmud.mpackage && \
+		zip -q ../../../dist/mudlet/wheelmud.mpackage \
+			config.lua init.lua mapper.lua vitals.lua status.lua chat.lua
+	@echo "wrote dist/mudlet/wheelmud.mpackage"
+	@echo "wrote dist/mudlet/wheelmud.profile (host=$(WHEELMUD_HOST), port=$(WHEELMUD_PORT))"

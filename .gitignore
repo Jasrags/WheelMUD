@@ -36,3 +36,7 @@ docs/Wheel_of_Time_The_Last_Battle.jpg
 *.db
 *.db-wal
 *.db-shm
+
+# Build artifacts (Mudlet package zips, future client integration outputs).
+# Re-generate via `make mudlet-package`.
+/dist/

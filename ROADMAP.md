@@ -69,6 +69,16 @@ the doc stays anchored to code rather than drifting into wishlist territory.
       with a public-key allowlist from `ssh_admins` table. Sessions
       open with `AuthLevel=Admin` and a special `Mode` skipping the
       login prompt; intended for emergency console only.
+- [x] **Mudlet client package** (v1) — landed 2026-05-14.
+      `clients/mudlet/` ships a `.mpackage` plus a connection
+      profile that consume the V1 GMCP packages: HP/SP gauges
+      (Char.Vitals), character header (Char.Name + Char.Status),
+      auto-mapping (Room.Info), per-channel chat panes
+      (Comm.Channel.Text). Build with `make mudlet-package`
+      (optionally `WHEELMUD_HOST=` / `WHEELMUD_PORT=` overrides);
+      drop both artifacts into Mudlet's File → Import + Package
+      Manager → Install. Stretch items (triggers / alias
+      hotkeys / affect tracker) deferred to v2.
 
 Notes: parser lives in `telnet/server.go::bufferInput` and `RunSession`; option
 constants and helpers in `telnet/iac.go`.

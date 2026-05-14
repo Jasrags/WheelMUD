@@ -27,6 +27,9 @@ make run/server        # build then run the binary
 make run/live/server   # hot reload via cosmtrek/air
 go test -race ./...    # full test suite with race detector
 docker compose up      # build + run, exposes :2323
+make mudlet-package    # build dist/mudlet/wheelmud.{mpackage,profile}
+                       # — WHEELMUD_HOST/WHEELMUD_PORT override the
+                       #   stamped profile defaults
 ```
 
 Connect with: `telnet localhost 2323`.
@@ -221,6 +224,20 @@ catalog to an on-disk override.
 - **`internal/creature/`** — `Core` stat block (abilities, HP, saves,
   speed, conditions, position flags, DR/resists) shared by characters
   and mob_templates, plus the `Channeling` weave model.
+
+- **`clients/mudlet/`** — drop-in Mudlet package consuming the V1
+  GMCP frames. Source under `src/`: `config.lua` (mpackage metadata),
+  `init.lua` (namespace + sysUninstallPackage hook), `mapper.lua`
+  (Room.Info → Mudlet mapper), `vitals.lua` (Char.Vitals → gauges),
+  `status.lua` (Char.Name + Char.Status → header label), `chat.lua`
+  (Comm.Channel.Text → per-channel mini-consoles),
+  `profile.xml.template` (Mudlet connection profile with
+  HOST/PORT placeholders). `make mudlet-package` zips the Lua
+  files into `dist/mudlet/wheelmud.mpackage` and substitutes the
+  placeholders into `dist/mudlet/wheelmud.profile`. Contract: the
+  field names the Lua scripts read are exactly those declared on
+  `internal/gmcp/packages.go`; renaming a Go field requires a
+  matching package update + `config.lua` version bump.
 
 ### Things to watch when editing
 

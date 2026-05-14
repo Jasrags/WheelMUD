@@ -937,8 +937,11 @@ Lower urgency; do whichever lands free time.
     lifecycle; V1 outbound packages are Char.Name, Char.Vitals,
     Char.Status, Room.Info, Comm.Channel.Text. New world events
     `ChannelBroadcast` + `PlayerTold` cover every chat surface.
-    Mudlet's mapper / gauges / chat-capture panels now work
-    out-of-the-box.
+    Plus a `clients/mudlet/` package (v1) that consumes those
+    frames — drag-and-drop installs HP/SP gauges, auto-mapper,
+    per-channel chat panes, and character header. Build with
+    `make mudlet-package`. Stretch (triggers / aliases / affects)
+    deferred to v2 alongside `Char.Affects` and `Char.Quests`.
 47. **MCCP2/3** (§1). Compression; nice-to-have unless bandwidth is a
     real concern.
 48. **MXP** (§1). Clickable links; useful once help/news is rich.
