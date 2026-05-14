@@ -726,7 +726,12 @@ func (s *Session) WriteWrapped(text string) error {
 	}
 	rendered := cfmt.Sprint(text)
 	wrapped := WrapText(rendered, s.Width, s.Charset() == "UTF-8")
-	// WrapText emits LF-only line breaks; convert to CRLF for the wire.
+	// WrapText drops bare CR (wrap.go's `if c == '\r' { continue }`)
+	// and emits LF-only line breaks, so a single ReplaceAll converts
+	// every break to CRLF for the wire without doubling pre-CRLF
+	// input. A future WrapText change that preserves CR would
+	// produce `\r\r\n` here; the regression tests in wrap_test.go
+	// (`*_PreCRLF*`) catch that.
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
 	out := []byte(wrapped)
 	if s.ColorLevel == ColorLevelNone {
@@ -776,6 +781,8 @@ func (s *Session) WritePagedWrapped(text string) error {
 	}
 	rendered := cfmt.Sprint(text)
 	wrapped := WrapText(rendered, s.Width, s.Charset() == "UTF-8")
+	// Same CR-drop contract as WriteWrapped — see that helper's
+	// comment. Tests in wrap_test.go (`*_PreCRLF*`) cover both paths.
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
 	out := []byte(wrapped)
 	if s.ColorLevel == ColorLevelNone {

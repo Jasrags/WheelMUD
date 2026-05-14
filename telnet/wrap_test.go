@@ -183,3 +183,107 @@ func TestSessionWriteWrapped_ZeroWidthFallsBackToWriteString(t *testing.T) {
 		t.Fatalf("got %q", out)
 	}
 }
+
+// TestSessionWriteWrapped_PreCRLFAtNonZeroWidth locks in the
+// "WrapText drops CR, ReplaceAll emits CR back exactly once" chain
+// for the non-zero-width path. Speculated bug in
+// terminal_rendering_followups item #6: WriteWrapped's
+// strings.ReplaceAll("\n","\r\n") was thought to double pre-CRLF
+// input. The current code path is correct because WrapText strips
+// bare CR (wrap.go:49-52); this test ensures a future change that
+// preserves CR fails loud here.
+func TestSessionWriteWrapped_PreCRLFAtNonZeroWidth(t *testing.T) {
+	s, peer := newPipeSession(t)
+	s.Width = 80
+
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 256)
+		n, _ := peer.Read(buf)
+		got <- string(buf[:n])
+	}()
+
+	if err := s.WriteWrapped("line one\r\nline two"); err != nil {
+		t.Fatalf("WriteWrapped: %v", err)
+	}
+	out := <-got
+	if strings.Contains(out, "\r\r\n") {
+		t.Fatalf("CRLF doubled at non-zero width: %q", out)
+	}
+	if out != "line one\r\nline two" {
+		t.Fatalf("got %q, want %q", out, "line one\r\nline two")
+	}
+}
+
+// TestSessionWritePagedWrapped_PreCRLFAtNonZeroWidth covers the
+// second code path that shares the suspect ReplaceAll line
+// (session.go::WritePagedWrapped). Height=0 means the pager doesn't
+// push so we can read the raw wire bytes.
+func TestSessionWritePagedWrapped_PreCRLFAtNonZeroWidth(t *testing.T) {
+	s, peer := newPipeSession(t)
+	s.Width = 80
+	s.Height = 0 // skip pager so the bytes land on the wire directly
+
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 256)
+		n, _ := peer.Read(buf)
+		got <- string(buf[:n])
+	}()
+
+	if err := s.WritePagedWrapped("line one\r\nline two"); err != nil {
+		t.Fatalf("WritePagedWrapped: %v", err)
+	}
+	out := <-got
+	if strings.Contains(out, "\r\r\n") {
+		t.Fatalf("CRLF doubled: %q", out)
+	}
+	if out != "line one\r\nline two" {
+		t.Fatalf("got %q, want %q", out, "line one\r\nline two")
+	}
+}
+
+// TestSessionWriteWrapped_PreCRLFThroughActualWrap exercises the
+// interaction case: a body that BOTH contains a pre-CRLF break AND
+// hits a width-driven wrap break, so the input's `\r\n` and
+// WrapText's own `\n` end up in the same output buffer feeding
+// ReplaceAll. Every line break in the output must be exactly
+// `\r\n` — no doubled CR, no bare LF.
+func TestSessionWriteWrapped_PreCRLFThroughActualWrap(t *testing.T) {
+	s, peer := newPipeSession(t)
+	s.Width = 12
+
+	got := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 256)
+		n, _ := peer.Read(buf)
+		got <- string(buf[:n])
+	}()
+
+	// "alpha" is one input line (CRLF), then a longer line that
+	// WrapText itself splits into "bravo charlie" + "delta" at
+	// width 12.
+	if err := s.WriteWrapped("alpha\r\nbravo charlie delta"); err != nil {
+		t.Fatalf("WriteWrapped: %v", err)
+	}
+	out := <-got
+
+	if strings.Contains(out, "\r\r\n") {
+		t.Fatalf("CRLF doubled: %q", out)
+	}
+	// Walk the bytes: every `\r` must be immediately followed by
+	// `\n`, and every `\n` must be immediately preceded by `\r`.
+	// Catches stray bare LFs slipping through the ReplaceAll.
+	for i := 0; i < len(out); i++ {
+		if out[i] == '\r' {
+			if i+1 >= len(out) || out[i+1] != '\n' {
+				t.Fatalf("bare CR at byte %d: %q", i, out)
+			}
+		}
+		if out[i] == '\n' {
+			if i == 0 || out[i-1] != '\r' {
+				t.Fatalf("bare LF at byte %d: %q", i, out)
+			}
+		}
+	}
+}
