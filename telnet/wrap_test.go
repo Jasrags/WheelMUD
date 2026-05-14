@@ -31,12 +31,64 @@ func TestWrapText_ZeroOrNegativeWidthDisables(t *testing.T) {
 	}
 }
 
-func TestWrapText_WordLongerThanWidthOverflows(t *testing.T) {
+func TestWrapText_BreaksLongToken(t *testing.T) {
+	// "supercalifragilistic" is 20 runes — at width=8 it must chunk
+	// into 8 + 8 + 4. The surrounding short words wrap normally.
 	in := "tiny supercalifragilistic tail"
 	got := WrapText(in, 8, false)
-	want := "tiny\nsupercalifragilistic\ntail"
+	want := "tiny\nsupercal\nifragili\nstic\ntail"
 	if got != want {
 		t.Fatalf("WrapText\n got:  %q\n want: %q", got, want)
+	}
+}
+
+func TestWrapText_BreaksLongTokenCJK(t *testing.T) {
+	// Six CJK glyphs at 2 cells each = 12 cells. At width=6 (3
+	// glyphs per line), the token chunks into two lines of three
+	// glyphs.
+	in := "中文中文中文"
+	got := WrapText(in, 6, true)
+	want := "中文中\n文中文"
+	if got != want {
+		t.Fatalf("WrapText CJK chunk\n got:  %q\n want: %q", got, want)
+	}
+}
+
+func TestWrapText_TokenExactlyWidthNoBreak(t *testing.T) {
+	// A token whose width matches the wrap width exactly fits on
+	// one line — no break.
+	in := "exactfit"
+	got := WrapText(in, 8, false)
+	if got != in {
+		t.Fatalf("WrapText exact-fit\n got:  %q\n want: %q", got, in)
+	}
+}
+
+func TestWrapText_PathologicalWidthOneOverflows(t *testing.T) {
+	// width=1 with a 2-cell CJK glyph: the glyph cannot fit, but
+	// emitting nothing would loop forever. Contract: the glyph
+	// ships alone and overflows by one cell. The next glyph lands
+	// on its own line, etc.
+	in := "中文"
+	got := WrapText(in, 1, true)
+	want := "中\n文"
+	if got != want {
+		t.Fatalf("WrapText width=1 CJK\n got:  %q\n want: %q", got, want)
+	}
+}
+
+func TestWrapText_LongTokenInSentence(t *testing.T) {
+	// A long URL embedded mid-sentence breaks at the column
+	// boundary; the trailing word continues on its own line.
+	in := "see https://example.com/very-long-path for details"
+	got := WrapText(in, 12, false)
+	// "see " (col=4) — "https://example.com/very-long-path" is 34
+	// chars at width 12 → 12 + 12 + 10. "for" starts col 0 after
+	// the chunk; with "details" appended it's 11 chars → fits on
+	// the same line.
+	want := "see\nhttps://exam\nple.com/very\n-long-path\nfor details"
+	if got != want {
+		t.Fatalf("WrapText long URL\n got:  %q\n want: %q", got, want)
 	}
 }
 

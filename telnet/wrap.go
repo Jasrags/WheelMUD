@@ -18,10 +18,12 @@ import (
 // rune count is used — the legacy ASCII-only behavior that ships fast on
 // 7-bit text but mis-wraps CJK by half a line.
 //
-// Width <= 0 disables wrapping. Tokens longer than width are emitted on a
-// fresh line and overflow rather than being broken — splitting mid-word would
-// require either grapheme awareness or a hyphenation policy, neither of which
-// is in scope yet.
+// Width <= 0 disables wrapping. Tokens longer than width are split into
+// successive chunks at the column boundary — a bare cut, no hyphen —
+// so URLs and long item names stay copy-pasteable. Pathological cases
+// where the very first rune of a token already exceeds the width cap
+// (e.g. width=1 with a 2-cell CJK glyph) overflow by one chunk to
+// guarantee forward progress.
 func WrapText(text string, width int, cellWidth bool) string {
 	if width <= 0 || text == "" {
 		return text
@@ -73,23 +75,85 @@ func WrapText(text string, width int, cellWidth bool) string {
 			j++
 		}
 		word := text[i:j]
-		var wlen int
-		if cellWidth {
-			wlen = runewidth.StringWidth(word)
-		} else {
-			wlen = utf8.RuneCountInString(word)
+		i = j
+		wlen := tokenWidth(word, cellWidth)
+
+		if wlen <= width {
+			// Fits on a line. Soft-break to a new line if the
+			// remaining space on the current one is too tight.
+			if col > 0 && col+wlen > width {
+				trimTrailingSpace(&out)
+				out.WriteByte('\n')
+				col = 0
+			}
+			out.WriteString(word)
+			col += wlen
+			continue
 		}
-		if col > 0 && col+wlen > width {
-			// Trim a single trailing space if present, then break.
+
+		// Token itself exceeds width. Push it to a fresh line and
+		// chunk it at the column boundary.
+		if col > 0 {
 			trimTrailingSpace(&out)
 			out.WriteByte('\n')
 			col = 0
 		}
-		out.WriteString(word)
-		col += wlen
-		i = j
+		remaining := word
+		for remaining != "" {
+			head, tail := splitAtWidth(remaining, width, cellWidth)
+			out.WriteString(head)
+			if tail == "" {
+				col = tokenWidth(head, cellWidth)
+				break
+			}
+			out.WriteByte('\n')
+			remaining = tail
+		}
 	}
 	return out.String()
+}
+
+// tokenWidth returns the display-cell or rune count of s, switched
+// by the cellWidth flag. Extracted so the WrapText main loop reads
+// without duplicating the switch.
+func tokenWidth(s string, cellWidth bool) int {
+	if cellWidth {
+		return runewidth.StringWidth(s)
+	}
+	return utf8.RuneCountInString(s)
+}
+
+// splitAtWidth walks s rune by rune and returns (head, tail) where
+// head is the largest prefix whose cell width is <= width. When the
+// very first rune already exceeds the width cap, that rune still
+// lands in head — the chunk overflows by `RuneWidth(r) - width`
+// cells — so the caller's chunk loop is guaranteed to make forward
+// progress on any input. width <= 0 returns the whole string as
+// head, mirroring the WrapText "no wrap" contract.
+func splitAtWidth(s string, width int, cellWidth bool) (string, string) {
+	if width <= 0 || s == "" {
+		return s, ""
+	}
+	col := 0
+	cut := 0
+	for cut < len(s) {
+		r, sz := utf8.DecodeRuneInString(s[cut:])
+		w := 1
+		if cellWidth {
+			w = runewidth.RuneWidth(r)
+		}
+		if col+w > width {
+			if cut == 0 {
+				// Pathological width cap: first rune alone is wider
+				// than width. Emit it solo so the loop terminates.
+				return s[:sz], s[sz:]
+			}
+			break
+		}
+		col += w
+		cut += sz
+	}
+	return s[:cut], s[cut:]
 }
 
 // skipANSI returns the index just past an ANSI escape that starts at i.
