@@ -162,6 +162,36 @@ func TestManager_SupportsRemoveCancelsSubs(t *testing.T) {
 	}
 }
 
+func TestWireComm_PlayerSaidExcludesSpeaker(t *testing.T) {
+	// Speaker's own session must NOT receive a Comm.Channel.Text GMCP
+	// frame for their own say — the dispatcher already wrote the
+	// synchronous "You say" line, and a GMCP duplicate clutters
+	// Mudlet's chat-capture pane.
+	_, s, peer, bus, _, _, _ := newGMCPHarness(t)
+
+	gotCh := make(chan []byte, 1)
+	go func() { gotCh <- drainPeer(t, peer) }()
+
+	s.GMCPHandler(s, "Core.Supports.Set", []byte(`["Comm 1"]`))
+
+	// Publish PlayerSaid AS the speaker (matching the session's own
+	// CharacterID).
+	charID, _, roomID := s.InWorld()
+	bus.Publish(context.Background(), world.PlayerSaid{
+		SpeakerCharacterID: charID,
+		RoomID:             roomID,
+		Text:               "echo test",
+	})
+	time.Sleep(80 * time.Millisecond) // let the async worker drain
+	s.Conn.Close()
+	got := <-gotCh
+
+	// No Comm.Channel.Text frame for "echo test" should be on the wire.
+	if bytes.Contains(got, []byte(`"channel":"say"`)) {
+		t.Fatalf("speaker received self GMCP say frame: %q", got)
+	}
+}
+
 func TestSplitSupports(t *testing.T) {
 	cases := []struct {
 		in      string
@@ -229,6 +259,37 @@ func TestCharacterLevel_SumAcrossClasses(t *testing.T) {
 				t.Fatalf("characterLevel = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestClassDisplayName_CoversEveryKnownEnum(t *testing.T) {
+	// Walk every documented creature.Class value. Adding a new class
+	// without extending classDisplayName must fail this test so the
+	// addition can't silently ship "unknown" to Mudlet.
+	known := []creature.Class{
+		creature.ClassAlgaiDSiswai,
+		creature.ClassArmsman,
+		creature.ClassInitiate,
+		creature.ClassNoble,
+		creature.ClassWanderer,
+		creature.ClassWilder,
+		creature.ClassWoodsman,
+	}
+	for _, c := range known {
+		got := classDisplayName(c)
+		if got == "" || got == unknownEnumLabel {
+			t.Errorf("classDisplayName(%d) = %q — every known class must have a label", c, got)
+		}
+	}
+}
+
+func TestRaceDisplayName_CoversEveryKnownEnum(t *testing.T) {
+	known := []creature.Race{creature.RaceHuman, creature.RaceOgier}
+	for _, r := range known {
+		got := raceDisplayName(r)
+		if got == "" || got == unknownEnumLabel {
+			t.Errorf("raceDisplayName(%d) = %q — every known race must have a label", r, got)
+		}
 	}
 }
 

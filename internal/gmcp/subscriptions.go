@@ -159,6 +159,13 @@ func (m *Manager) wireComm(s *telnet.Session) {
 		if charID == 0 || roomID != ev.RoomID {
 			return
 		}
+		// Exclude the speaker's own session: their dispatcher already
+		// wrote a synchronous `You say, "..."` line via WriteString.
+		// Emitting a GMCP frame here would surface as a duplicate
+		// entry in Mudlet's chat-capture pane.
+		if charID == ev.SpeakerCharacterID {
+			return
+		}
 		speaker := lookupSpeakerName(m, ev.SpeakerCharacterID)
 		_ = s.WriteGMCP(PkgCommChannelText, CommChannelText{
 			Channel: "say", Talker: speaker, Text: ev.Text,
@@ -208,15 +215,18 @@ func isPlayer(ref combat.ActorRef, s *telnet.Session) bool {
 
 // lookupSpeakerName resolves a speaker character id to a display
 // name. Best-effort: on repo error or zero id, returns "Someone" so
-// the GMCP frame still ships intact.
+// the GMCP frame still ships intact. Repo errors log at debug level
+// so operators can diagnose a broken DB without players noticing.
 func lookupSpeakerName(m *Manager, charID int64) string {
 	if charID == 0 {
 		return "Someone"
 	}
-	if ch, err := m.characters.GetByID(context.Background(), charID); err == nil {
-		return ch.Name
+	ch, err := m.characters.GetByID(context.Background(), charID)
+	if err != nil {
+		slog.Debug("gmcp: lookupSpeakerName failed", "char_id", charID, "error", err)
+		return "Someone"
 	}
-	return "Someone"
+	return ch.Name
 }
 
 // Silence "imported and not used" on packages we will reference once

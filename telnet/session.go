@@ -173,13 +173,14 @@ type Session struct {
 	// dispatcher-goroutine GMCP emit paths.
 	gmcpSupports map[string]int
 
-	// gmcpSubs is the slice of eventbus subscriptions owned by this
-	// session — installed when the client opts into a package via
-	// Core.Supports, cancelled on Core.Supports.Remove or session
-	// teardown. Stored as interface{} to keep telnet/ free of an
-	// import on internal/eventbus; the GMCP manager type-asserts on
-	// retrieve. Under crossMu.
-	gmcpSubs []any
+	// gmcpSubs is the slice of cancellable subscription handles
+	// owned by this session — installed when the client opts into a
+	// package via Core.Supports, cancelled on Core.Supports.Remove
+	// or session teardown. Typed as the minimal Canceler interface
+	// to keep telnet/ free of an import on internal/eventbus; the
+	// real type behind each entry is *eventbus.Subscription, which
+	// satisfies Canceler trivially. Under crossMu.
+	gmcpSubs []Canceler
 
 	// gmcpLastVitals dedups Char.Vitals frames. Combat-hit events can
 	// fire multiple times per round; sending the same {hp,maxhp,sp,
@@ -342,10 +343,18 @@ func (s *Session) GMCPSupports() map[string]int {
 	return cp
 }
 
-// AddGMCPSub stashes an eventbus.Subscription handle to be cancelled
-// on session teardown. Stored as `any` so telnet/ does not need to
-// import internal/eventbus; the GMCP manager type-asserts on retrieve.
-func (s *Session) AddGMCPSub(sub any) {
+// Canceler is the minimal interface a cancellable subscription must
+// satisfy. *eventbus.Subscription implements it. The interface lives
+// in the telnet package so Session can hold per-session handles
+// without importing internal/eventbus.
+type Canceler interface {
+	Cancel()
+}
+
+// AddGMCPSub stashes a cancellable subscription handle to be released
+// on session teardown. A nil sub is a no-op so callers don't need to
+// guard.
+func (s *Session) AddGMCPSub(sub Canceler) {
 	if sub == nil {
 		return
 	}
@@ -357,7 +366,7 @@ func (s *Session) AddGMCPSub(sub any) {
 // TakeGMCPSubs returns the current subscription handles AND clears
 // them in one critical section so the caller can cancel them without
 // a race against a concurrent AddGMCPSub.
-func (s *Session) TakeGMCPSubs() []any {
+func (s *Session) TakeGMCPSubs() []Canceler {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	out := s.gmcpSubs

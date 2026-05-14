@@ -1,11 +1,18 @@
 package gmcp
 
 import (
+	"log/slog"
 	"sort"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
+
+// unknownEnumLabel is returned by the enum-to-display-name helpers
+// when a value falls outside the documented set. A non-empty sentinel
+// is preferable to "" because Mudlet scripts that branch on the value
+// otherwise silently fall through.
+const unknownEnumLabel = "unknown"
 
 // buildCharName extracts the display name for the Char.Name package.
 // Fullname is reserved for an honorific / title surface (e.g. "Bob the
@@ -116,6 +123,11 @@ func dominantClassName(levels map[creature.Class]int8) string {
 // classDisplayName maps the creature.Class enum to the player-facing
 // label. Kept here (not on the enum) because the enum is content-
 // neutral and the labels are MUD-flavor.
+//
+// When a new Class is added to internal/creature without updating this
+// switch, callers see "unknown" instead of an empty string and the
+// addition is logged at warn level so the regression is loud rather
+// than a Mudlet-side silent-fallthrough.
 func classDisplayName(c creature.Class) string {
 	switch c {
 	case creature.ClassAlgaiDSiswai:
@@ -133,11 +145,13 @@ func classDisplayName(c creature.Class) string {
 	case creature.ClassWoodsman:
 		return "Woodsman"
 	default:
-		return ""
+		slog.Warn("gmcp: classDisplayName missing case", "class", int(c))
+		return unknownEnumLabel
 	}
 }
 
-// raceDisplayName maps creature.Race to its label.
+// raceDisplayName maps creature.Race to its label. Same fallback
+// semantics as classDisplayName.
 func raceDisplayName(r creature.Race) string {
 	switch r {
 	case creature.RaceHuman:
@@ -145,6 +159,7 @@ func raceDisplayName(r creature.Race) string {
 	case creature.RaceOgier:
 		return "Ogier"
 	default:
-		return ""
+		slog.Warn("gmcp: raceDisplayName missing case", "race", int(r))
+		return unknownEnumLabel
 	}
 }

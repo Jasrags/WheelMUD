@@ -65,7 +65,16 @@ func (m *Manager) Handle(s *telnet.Session, pkg string, body []byte) {
 	case "Core.Ping":
 		// Echo back so Mudlet can measure round-trip time. Body is
 		// usually a number-of-milliseconds the client wants reflected.
-		if err := s.WriteGMCP("Core.Ping", json.RawMessage(body)); err != nil {
+		// Validate the body parses as JSON before echoing — re-emitting
+		// arbitrary client bytes inside a GMCP frame risks shipping
+		// malformed JSON that any third-party listener would choke on.
+		// On parse failure, echo `null` so the client still sees a
+		// round-trip event but no malformed payload.
+		var validated json.RawMessage
+		if err := json.Unmarshal(body, &validated); err != nil || len(validated) == 0 {
+			validated = json.RawMessage("null")
+		}
+		if err := s.WriteGMCP("Core.Ping", validated); err != nil {
 			slog.Debug("GMCP Core.Ping echo failed", "remote", s.RemoteAddress, "error", err)
 		}
 	case "Core.Supports.Set":
@@ -172,12 +181,12 @@ func (m *Manager) UnwireSession(s *telnet.Session) {
 // unwireLocked is the shared cancel path used by both UnwireSession
 // (full teardown) and handleSupports (rewire on opt-in change). The
 // "Locked" suffix is aspirational — Session.TakeGMCPSubs uses crossMu
-// internally; no explicit lock needed here.
+// internally; no explicit lock needed here. *eventbus.Subscription
+// satisfies the telnet.Canceler interface, so the cancel call is
+// type-safe and idempotent.
 func (m *Manager) unwireLocked(s *telnet.Session) {
-	for _, raw := range s.TakeGMCPSubs() {
-		if sub, ok := raw.(*eventbus.Subscription); ok {
-			sub.Cancel()
-		}
+	for _, sub := range s.TakeGMCPSubs() {
+		sub.Cancel()
 	}
 }
 
@@ -205,18 +214,30 @@ func (m *Manager) emitInitialSnapshot(s *telnet.Session) {
 	}
 
 	if wantsPkg(supports, CatChar, PkgCharName) {
-		_ = s.WriteGMCP(PkgCharName, buildCharName(&ch))
+		writeSnapshot(s, PkgCharName, buildCharName(&ch))
 	}
 	if wantsPkg(supports, CatChar, PkgCharVitals) {
 		v := buildCharVitals(&ch)
 		s.SetGMCPLastVitals(v.HP, v.MaxHP, v.SP, v.MaxSP)
-		_ = s.WriteGMCP(PkgCharVitals, v)
+		writeSnapshot(s, PkgCharVitals, v)
 	}
 	if wantsPkg(supports, CatChar, PkgCharStatus) {
-		_ = s.WriteGMCP(PkgCharStatus, buildCharStatus(&ch))
+		writeSnapshot(s, PkgCharStatus, buildCharStatus(&ch))
 	}
 	if wantsPkg(supports, CatRoom, PkgRoomInfo) {
 		m.emitRoomInfo(ctx, s, ch.CurrentRoomID)
+	}
+}
+
+// writeSnapshot wraps Session.WriteGMCP so initial-snapshot failures
+// (typically a dead pipe or a marshal bug) log at debug instead of
+// being thrown away under a `_ =`. The session is left intact — a
+// follow-on event-driven emit may still land if the connection
+// recovers.
+func writeSnapshot(s *telnet.Session, pkg string, body any) {
+	if err := s.WriteGMCP(pkg, body); err != nil {
+		slog.Debug("gmcp: snapshot write failed",
+			"remote", s.RemoteAddress, "pkg", pkg, "error", err)
 	}
 }
 
@@ -244,7 +265,7 @@ func (m *Manager) emitRoomInfo(ctx context.Context, s *telnet.Session, roomID in
 			zoneExt = z.ExternalID
 		}
 	}
-	_ = s.WriteGMCP(PkgRoomInfo, buildRoomInfo(room, exits, zoneExt))
+	writeSnapshot(s, PkgRoomInfo, buildRoomInfo(room, exits, zoneExt))
 }
 
 // wantsPkg reports whether a Supports map enables a specific outbound
