@@ -34,18 +34,23 @@ the doc stays anchored to code rather than drifting into wishlist territory.
       protocol than GMCP; useful for clients that don't speak JSON.
       Share the publish layer with GMCP behind a common `OOB` interface
       so handlers report variables once.
-- [ ] **MSSP** (MUD Server Status Protocol) — option 70. Respond to
-      `IAC DO MSSP` with name/uptime/players/codebase/contact crawled
-      from a `mssp.Vars()` snapshot built from `session.Registry` +
-      build info. No persistent state — pure read.
+- [x] **MSSP** (MUD Server Status Protocol) — option 70. Phase I #45,
+      landed 2026-05-14. `telnet/mssp.go::EncodeMSSP` builds the
+      wire block; `cmd/server/main.go::msspVars` produces the full
+      crawler variable set (NAME, PLAYERS, UPTIME, world stats from
+      boot snapshot, capability flags, public strings from the new
+      `mssp:` config block). Response wired through
+      `telnet/iac.go::handleOptionNegotiation` on inbound `DO MSSP`.
 - [ ] **MXP** (MUD eXtension Protocol) — clickable links, server-pushed
       UI. Negotiate option 91, wrap output in `<send>`/`<a>` tags via
       a `MXPWriter` shim that no-ops when not negotiated. Most value
       comes from making exits and `who` entries clickable.
-- [ ] **MNES / CHARSET** — UTF-8 negotiation. Send `IAC DO CHARSET`,
-      offer `UTF-8`, fall back to ASCII. Surface as `Session.Charset`
-      and have `WrapText` switch from rune-count to display-cell
-      counting when UTF-8 is negotiated (ties into §2 wide-glyph wrap).
+- [x] **CHARSET / UTF-8 negotiation** (RFC 2066, option 42) — Phase I
+      #44, landed 2026-05-14. Server sends `WILL CHARSET` on connect;
+      on client `DO CHARSET` we offer `;UTF-8`. `Session.Charset`
+      (crossMu accessor pair) drives `WrapText`'s display-cell vs.
+      rune-count branch. Wide-glyph wrap (§2) closed in the same PR
+      via `github.com/mattn/go-runewidth`. MNES envelope deferred.
 - [ ] TLS listener (telnet-over-TLS on a second port) — second
       `net.Listener` from `tls.Listen` on `:2992`, wrap conn before
       handing to `RunSession`. Cert path via `TLS_CERT`/`TLS_KEY` env;

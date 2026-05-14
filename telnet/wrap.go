@@ -3,6 +3,8 @@ package telnet
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // WrapText reflows text to width display columns, treating ANSI CSI escapes
@@ -10,11 +12,17 @@ import (
 // Existing newlines are preserved and reset the column counter; CR bytes are
 // dropped so the caller can rejoin with `\r\n`.
 //
+// When `cellWidth` is true the column accounting uses display-cell width
+// (CJK and emoji glyphs count as 2 cells, zero-width joiners as 0). This
+// is correct for terminals that have negotiated CHARSET UTF-8. When false,
+// rune count is used — the legacy ASCII-only behavior that ships fast on
+// 7-bit text but mis-wraps CJK by half a line.
+//
 // Width <= 0 disables wrapping. Tokens longer than width are emitted on a
 // fresh line and overflow rather than being broken — splitting mid-word would
 // require either grapheme awareness or a hyphenation policy, neither of which
 // is in scope yet.
-func WrapText(text string, width int) string {
+func WrapText(text string, width int, cellWidth bool) string {
 	if width <= 0 || text == "" {
 		return text
 	}
@@ -65,7 +73,12 @@ func WrapText(text string, width int) string {
 			j++
 		}
 		word := text[i:j]
-		wlen := utf8.RuneCountInString(word)
+		var wlen int
+		if cellWidth {
+			wlen = runewidth.StringWidth(word)
+		} else {
+			wlen = utf8.RuneCountInString(word)
+		}
 		if col > 0 && col+wlen > width {
 			// Trim a single trailing space if present, then break.
 			trimTrailingSpace(&out)

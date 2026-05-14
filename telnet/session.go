@@ -134,6 +134,20 @@ type Session struct {
 	// Cross-goroutine read (move-time iteration of Snapshot), so
 	// guarded by crossMu.
 	followingID int64
+	// charset is the negotiated character-set name (RFC 2066). Empty
+	// when CHARSET hasn't been negotiated; "UTF-8" once the client
+	// has sent SB CHARSET ACCEPTED. Written by the read goroutine in
+	// HandleSubnegotiation; read by WriteWrapped / WritePagedWrapped
+	// on the dispatcher goroutine — guarded by crossMu, accessed via
+	// Charset() / SetCharset().
+	charset string
+
+	// MSSPProvider is the closure the read goroutine invokes when the
+	// client sends `IAC DO MSSP`. Set once at session construction in
+	// cmd/server/main.go (no lock — read-only after wire-up). Nil for
+	// test fixtures and pre-wire code paths.
+	MSSPProvider func() []MSSPVar
+
 	// builderZones caches the set of zone IDs this session is
 	// authorised to edit (Phase G #33). Loaded by postauth.promoteToGame
 	// from builder_zones via BuilderZoneRepo.ListForCharacter, and
@@ -219,6 +233,25 @@ func (s *Session) LastTellFrom() string {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	return s.lastTellFrom
+}
+
+// SetCharset records the negotiated character-set name (RFC 2066).
+// Called from the read goroutine after a successful CHARSET ACCEPTED
+// subnegotiation. Pass "" to clear (e.g. on REJECTED).
+func (s *Session) SetCharset(name string) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.charset = name
+}
+
+// Charset returns the negotiated character-set name, or "" when
+// CHARSET has not been negotiated. Safe from any goroutine. Used by
+// WriteWrapped / WritePagedWrapped to pick between rune-count and
+// display-cell column accounting.
+func (s *Session) Charset() string {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	return s.charset
 }
 
 // InWorld returns a crossMu-protected snapshot of the in-world
@@ -500,7 +533,7 @@ func (s *Session) WriteWrapped(text string) error {
 		return s.WriteString(text)
 	}
 	rendered := cfmt.Sprint(text)
-	wrapped := WrapText(rendered, s.Width)
+	wrapped := WrapText(rendered, s.Width, s.Charset() == "UTF-8")
 	// WrapText emits LF-only line breaks; convert to CRLF for the wire.
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
 	out := []byte(wrapped)
@@ -550,7 +583,7 @@ func (s *Session) WritePagedWrapped(text string) error {
 		return s.WritePaged(rendered)
 	}
 	rendered := cfmt.Sprint(text)
-	wrapped := WrapText(rendered, s.Width)
+	wrapped := WrapText(rendered, s.Width, s.Charset() == "UTF-8")
 	wrapped = strings.ReplaceAll(wrapped, "\n", "\r\n")
 	out := []byte(wrapped)
 	if s.ColorLevel == ColorLevelNone {

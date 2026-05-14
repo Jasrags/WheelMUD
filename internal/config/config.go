@@ -27,6 +27,7 @@ type Config struct {
 	World  WorldConfig  `yaml:"world"`
 	Log    LogConfig    `yaml:"log"`
 	Audit  AuditConfig  `yaml:"audit"`
+	MSSP   MSSPConfig   `yaml:"mssp"`
 }
 
 type ServerConfig struct {
@@ -69,6 +70,19 @@ type LogConfig struct {
 	Level string `yaml:"level"`
 }
 
+// MSSPConfig holds the public-facing strings published in MSSP
+// responses to MUD crawlers. Zero-value strings are emitted as empty
+// values (most crawlers tolerate empty fields). Status defaults to
+// "Alpha" via Defaults(); the others have no default because they are
+// deployment-specific.
+type MSSPConfig struct {
+	Contact  string `yaml:"contact"`  // e.g. "admin@example.com"
+	Hostname string `yaml:"hostname"` // public DNS name
+	Location string `yaml:"location"` // e.g. "USA"
+	Website  string `yaml:"website"`  // e.g. "https://example.com"
+	Status   string `yaml:"status"`   // "Alpha" / "Beta" / "Live"
+}
+
 type AuditConfig struct {
 	// CommandsEnabled toggles per-character command audit logging
 	// (Phase J slice J3). Default false.
@@ -94,7 +108,8 @@ func Defaults() Config {
 			BackupIntervalHours: 6,
 			BackupRetention:     14,
 		},
-		Log: LogConfig{Level: "debug"},
+		Log:  LogConfig{Level: "debug"},
+		MSSP: MSSPConfig{Status: "Alpha"},
 	}
 }
 
@@ -144,6 +159,21 @@ func applyEnv(cfg *Config) {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.Audit.CommandsEnabled = b
 		}
+	}
+	if v := os.Getenv("MSSP_CONTACT"); v != "" {
+		cfg.MSSP.Contact = v
+	}
+	if v := os.Getenv("MSSP_HOSTNAME"); v != "" {
+		cfg.MSSP.Hostname = v
+	}
+	if v := os.Getenv("MSSP_LOCATION"); v != "" {
+		cfg.MSSP.Location = v
+	}
+	if v := os.Getenv("MSSP_WEBSITE"); v != "" {
+		cfg.MSSP.Website = v
+	}
+	if v := os.Getenv("MSSP_STATUS"); v != "" {
+		cfg.MSSP.Status = v
 	}
 	if v := os.Getenv("AUDIT_COMMANDS_EXCLUDE"); v != "" {
 		// Comma-separated list, trimmed; empty entries dropped so

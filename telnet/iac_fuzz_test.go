@@ -29,6 +29,20 @@ func FuzzReadIAC(f *testing.F) {
 	f.Add([]byte{TELNET_SB, TELNET_OPT_NAWS, 0, 80, TELNET_IAC, 0x42})
 	// Unknown IAC command.
 	f.Add([]byte{0x42})
+	// CHARSET option negotiation.
+	f.Add([]byte{TELNET_DO, TELNET_OPT_CHARSET})
+	f.Add([]byte{TELNET_DONT, TELNET_OPT_CHARSET})
+	// CHARSET ACCEPTED "UTF-8".
+	f.Add([]byte{TELNET_SB, TELNET_OPT_CHARSET, CHARSET_ACCEPTED, 'U', 'T', 'F', '-', '8', TELNET_IAC, TELNET_SE})
+	// CHARSET REJECTED.
+	f.Add([]byte{TELNET_SB, TELNET_OPT_CHARSET, CHARSET_REJECTED, TELNET_IAC, TELNET_SE})
+	// Empty CHARSET subnegotiation.
+	f.Add([]byte{TELNET_SB, TELNET_OPT_CHARSET, TELNET_IAC, TELNET_SE})
+	// MSSP option negotiation.
+	f.Add([]byte{TELNET_DO, TELNET_OPT_MSSP})
+	// MSSP-shaped (server normally sends; client wouldn't, but parser
+	// must handle anything).
+	f.Add([]byte{TELNET_SB, TELNET_OPT_MSSP, MSSP_VAR, 'X', MSSP_VAL, 'Y', TELNET_IAC, TELNET_SE})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Closed pipe — Session won't write through it. HandleSubnegotiation

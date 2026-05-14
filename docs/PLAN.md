@@ -921,9 +921,17 @@ Lower urgency; do whichever lands free time.
 
 À la carte; pick what your client population wants.
 
-44. **CHARSET / UTF-8 negotiation** (§1). Cheapest; unblocks accented
-    names.
-45. **MSSP** (§1). Tiny, but gets WheelMUD on MUD-listing sites.
+44. ~~**CHARSET / UTF-8 negotiation** (§1).~~ Landed 2026-05-14.
+    `WILL CHARSET` on connect; on `DO CHARSET` the server offers
+    `;UTF-8`. `Session.Charset` drives `WrapText`'s display-cell
+    counting via `go-runewidth` (the §2 wide-glyph item closed in
+    the same PR). `telnet/charset_test.go` covers the handshake.
+45. ~~**MSSP** (§1).~~ Landed 2026-05-14. Full crawler variable set
+    (NAME / PLAYERS / UPTIME / world stats / capability flags) in
+    `cmd/server/main.go::msspVars`; encoder in `telnet/mssp.go`;
+    optional `mssp:` config block adds CONTACT / HOSTNAME /
+    LOCATION / WEBSITE / STATUS. Provider closure
+    (`Session.MSSPProvider`) wired at session construction.
 46. **GMCP** (§1). Highest-value modern protocol; opens
     MUSHclient/Mudlet integrations, in-client UI panels.
 47. **MCCP2/3** (§1). Compression; nice-to-have unless bandwidth is a

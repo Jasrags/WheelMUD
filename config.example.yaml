@@ -65,3 +65,18 @@ audit:
   commands_exclude:
     - look
     - prompt
+
+mssp:
+  # Public-facing strings advertised in MSSP responses to MUD crawlers
+  # (ROADMAP §1 / Phase I #45). All optional; omitted fields show empty
+  # in the crawler listing. Status defaults to "Alpha".
+  # Env: MSSP_CONTACT
+  contact: ""
+  # Env: MSSP_HOSTNAME
+  hostname: ""
+  # Env: MSSP_LOCATION
+  location: ""
+  # Env: MSSP_WEBSITE
+  website: ""
+  # Env: MSSP_STATUS
+  status: "Alpha"

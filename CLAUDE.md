@@ -227,6 +227,16 @@ catalog to an on-disk override.
 - The protocol parser lives in `telnet/server.go`.
 - `Session.Input` is owned by the read goroutine inside `RunSession`. Do
   not mutate it from another goroutine.
+- **Telnet option negotiation responses** go through
+  `telnet/iac.go::handleOptionNegotiation` (WILL/WONT/DO/DONT) and
+  the `HandleSubnegotiation` switch (SB…SE). New options follow the
+  CHARSET / MSSP pattern: add the option constant + sub-codes,
+  append a `WILL <opt>` to `NegotiateTelnet`, and write the response
+  via `s.WriteRaw` from `handleOptionNegotiation`. Session-state
+  toggles set by subnegotiation (e.g. `Session.charset`) use the
+  `crossMu` accessor pair (`SetCharset` / `Charset`). MSSP variables
+  are produced by a `Session.MSSPProvider` closure wired in
+  `cmd/server/main.go::msspVars`; provider == nil silently no-ops.
 - `Session.WriteRaw` is the only safe write path; it holds `writeMu`.
   Layer helpers on top of it rather than calling `Conn.Write` directly.
 - **Cross-session output** (broadcasts to peers, channel fanout, mob

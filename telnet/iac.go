@@ -33,7 +33,23 @@ const (
 	TELNET_OPT_SUP_GO_AHD byte = 3  // Suppress Go Ahead: RFC 858
 	TELNET_OPT_TERM_TYPE  byte = 24 // Terminal Type: RFC 1091
 	TELNET_OPT_NAWS       byte = 31 // NAWS, Negotiate About Window Size: RFC 1073
+	TELNET_OPT_CHARSET    byte = 42 // CHARSET: RFC 2066
+	TELNET_OPT_MSSP       byte = 70 // MSSP: mssp.org
+
+	// CHARSET sub-option codes (RFC 2066 §3).
+	CHARSET_REQUEST  byte = 1
+	CHARSET_ACCEPTED byte = 2
+	CHARSET_REJECTED byte = 3
+
+	// MSSP sub-option codes (mssp.org spec).
+	MSSP_VAR byte = 1
+	MSSP_VAL byte = 2
 )
+
+// charsetSeparator is the single byte we send between REQUEST and the
+// charset list. RFC 2066 lets the server pick any byte that doesn't
+// appear in the names; ';' is the convention every major client expects.
+const charsetSeparator = ';'
 
 // maxSubnegotiationLen caps the bytes accepted between IAC SB and IAC SE so a
 // malicious client cannot exhaust memory by streaming an unterminated SB.
@@ -50,9 +66,6 @@ var (
 	TelnetRequestDontEcho            = []byte{TELNET_IAC, TELNET_WONT, TELNET_OPT_ECHO}
 	TelnetRequestLineModeOff         = []byte{TELNET_IAC, TELNET_DONT, TELNET_OPT_ECHO}
 	TelnetRequestNAWS                = []byte{TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS}
-	TelnetRequestChangeCharset       = []byte{TELNET_IAC, TELNET_SB, 0x42, 0x01, TELNET_IAC, TELNET_SE}
-	TelnetResponseAcceptedCharset    = []byte{TELNET_IAC, TELNET_SB, 0x42, 0x00, TELNET_IAC, TELNET_SE}
-	TelnetResponseRejectedCharset    = []byte{TELNET_IAC, TELNET_SB, 0x42, 0x02, TELNET_IAC, TELNET_SE}
 	TelnetGoAhead                    = []byte{TELNET_IAC, TELNET_GA}
 )
 
@@ -77,6 +90,7 @@ func ReadIAC(s *Session, r *bufio.Reader) (dataByte byte, hasData bool, err erro
 			return 0, false, fmt.Errorf("read IAC option: %w", oerr)
 		}
 		slog.Debug("Received IAC", "cmd", DescribeByte(cmd), "opt", DescribeByte(opt))
+		handleOptionNegotiation(s, cmd, opt)
 		return 0, false, nil
 	case TELNET_GA, TELNET_NOP, TELNET_DM, TELNET_BRK, TELNET_IP,
 		TELNET_AO, TELNET_AYT, TELNET_EC, TELNET_EL, TELNET_EOR, TELNET_SE:
@@ -140,8 +154,88 @@ func HandleSubnegotiation(s *Session, opt byte, data []byte) {
 			s.Height = int(binary.BigEndian.Uint16(data[2:4]))
 			slog.Info("Received terminal window size", "width", s.Width, "height", s.Height)
 		}
+	case TELNET_OPT_CHARSET:
+		handleCharsetSubnegotiation(s, data)
 	default:
 		slog.Info("Unhandled subnegotiation option", "option", DescribeByte(opt), "data", data)
+	}
+}
+
+// handleOptionNegotiation is the WILL/WONT/DO/DONT response dispatcher.
+// It runs on the read goroutine after ReadIAC consumes the option byte
+// and writes any required response through s.WriteRaw (which takes
+// writeMu). DONT/WONT are logged only — we don't proactively renegotiate.
+//
+// CHARSET (RFC 2066): when the client says DO CHARSET we send a REQUEST
+// listing UTF-8. The client replies with SB CHARSET ACCEPTED <name> SE
+// or SB CHARSET REJECTED SE, handled in handleCharsetSubnegotiation.
+//
+// MSSP (mssp.org): when the client says DO MSSP we emit the full
+// variable block built by the closure on Session.MSSPProvider. Nil
+// provider = silently no-op (test fixtures and pre-wire codepaths).
+func handleOptionNegotiation(s *Session, cmd, opt byte) {
+	if cmd != TELNET_DO {
+		// WILL/WONT/DONT have nothing we currently need to do beyond
+		// the debug log emitted by the caller. Future MCCP / MSDP /
+		// GMCP handlers may want to track WILL/WONT here.
+		return
+	}
+	switch opt {
+	case TELNET_OPT_CHARSET:
+		if err := s.WriteRaw(buildCharsetRequest("UTF-8")); err != nil {
+			slog.Debug("CHARSET REQUEST write failed", "remote", s.RemoteAddress, "error", err)
+		}
+	case TELNET_OPT_MSSP:
+		provider := s.MSSPProvider
+		if provider == nil {
+			return
+		}
+		vars := provider()
+		if len(vars) == 0 {
+			return
+		}
+		if err := s.WriteRaw(EncodeMSSP(vars)); err != nil {
+			slog.Debug("MSSP response write failed", "remote", s.RemoteAddress, "error", err)
+		}
+	}
+}
+
+// buildCharsetRequest assembles a `IAC SB CHARSET REQUEST <sep><name>
+// IAC SE` block offering exactly one charset. RFC 2066 §3 lets us pick
+// any separator byte that doesn't appear in the names; we use ';'.
+func buildCharsetRequest(charset string) []byte {
+	out := make([]byte, 0, 6+1+len(charset)+2)
+	out = append(out, TELNET_IAC, TELNET_SB, TELNET_OPT_CHARSET, CHARSET_REQUEST)
+	out = append(out, charsetSeparator)
+	out = append(out, charset...)
+	out = append(out, TELNET_IAC, TELNET_SE)
+	return out
+}
+
+// handleCharsetSubnegotiation processes a CHARSET subnegotiation
+// payload (the bytes between SB CHARSET and IAC SE). The first byte is
+// the sub-option code; on ACCEPTED the rest is the chosen charset
+// name. We only stamp Session.Charset when the client picked UTF-8 —
+// anything else is logged and left empty (the WrapText fast-path keeps
+// rune counting, which is the safe default for non-UTF-8 transports).
+func handleCharsetSubnegotiation(s *Session, data []byte) {
+	if len(data) == 0 {
+		slog.Debug("Empty CHARSET subnegotiation", "remote", s.RemoteAddress)
+		return
+	}
+	switch data[0] {
+	case CHARSET_ACCEPTED:
+		name := string(data[1:])
+		if name == "UTF-8" || name == "utf-8" {
+			s.SetCharset("UTF-8")
+			slog.Info("CHARSET negotiated", "charset", "UTF-8", "remote", s.RemoteAddress)
+			return
+		}
+		slog.Debug("CHARSET ACCEPTED with unrecognized name", "name", name, "remote", s.RemoteAddress)
+	case CHARSET_REJECTED:
+		slog.Debug("CHARSET REJECTED by client", "remote", s.RemoteAddress)
+	default:
+		slog.Debug("Unhandled CHARSET sub-option", "code", data[0], "remote", s.RemoteAddress)
 	}
 }
 
@@ -196,6 +290,10 @@ func DescribeByte(b byte) string {
 		return "TERMINAL-TYPE"
 	case TELNET_OPT_NAWS:
 		return "NAWS"
+	case TELNET_OPT_CHARSET:
+		return "CHARSET"
+	case TELNET_OPT_MSSP:
+		return "MSSP"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", b)
 	}
@@ -209,6 +307,8 @@ func NegotiateTelnet(conn net.Conn) error {
 		{TELNET_IAC, TELNET_DO, TELNET_OPT_TERM_TYPE},
 		{TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS},
 		{TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO},
+		{TELNET_IAC, TELNET_WILL, TELNET_OPT_CHARSET},
+		{TELNET_IAC, TELNET_WILL, TELNET_OPT_MSSP},
 	}
 	for _, cmd := range commands {
 		if _, err := writer.Write(cmd); err != nil {
