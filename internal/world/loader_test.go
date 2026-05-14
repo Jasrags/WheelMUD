@@ -604,7 +604,14 @@ func TestLoadAndSync_RejectsMobWithBothPathAndWanderRadius(t *testing.T) {
 	}
 }
 
-func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
+func TestLoadAndSync_FirstStarterWinsAcrossResync(t *testing.T) {
+	// Resync semantics: when the DB already has a row at
+	// repo.StarterRoomID (id=1), a subsequent LoadAndSync with a
+	// different "starter: true" declaration in YAML must NOT try to
+	// force id=1 again (would violate the UNIQUE PK and abort the
+	// resync). The first-loaded starter is preserved; the new YAML's
+	// starter still lands as an ordinary auto-increment row so its
+	// rooms / exits / items remain reachable from the world graph.
 	ctx := context.Background()
 	conn, err := db.Open(ctx, ":memory:")
 	if err != nil {
@@ -615,7 +622,6 @@ func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	if _, err := LoadAndSync(ctx, conn, goodWorld); err != nil {
 		t.Fatalf("first load: %v", err)
 	}
-	// Second load with a *different* world should still be a no-op.
 	other := fstest.MapFS{
 		"other/zone.yaml": &fstest.MapFile{Data: []byte("id: other\nname: Other\n")},
 		"other/rooms.yaml": &fstest.MapFile{Data: []byte(`
@@ -637,6 +643,15 @@ func TestLoadAndSync_AlreadyLoadedIsNoop(t *testing.T) {
 	}
 	if r.ExternalID != "plaza.fountain" {
 		t.Fatalf("ExternalID = %q, expected first-load value plaza.fountain", r.ExternalID)
+	}
+	// The new YAML's starter must still have landed somewhere — its
+	// auto-increment id will not be 1, but it should be findable.
+	otherRoom, err := rooms.FindByExternalID(ctx, "other.start")
+	if err != nil {
+		t.Fatalf("FindByExternalID(other.start): %v", err)
+	}
+	if otherRoom.ID == repo.StarterRoomID {
+		t.Fatalf("other.start collided with starter id %d", otherRoom.ID)
 	}
 }
 

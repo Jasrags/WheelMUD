@@ -170,17 +170,33 @@ catalog to an on-disk override.
   damage across in-room party members at XP-award time. No
   persistence — server restart drops party state.
 
-- **`internal/world/`** — YAML zone loader that syncs `WORLD_DIR` into
-  the DB on startup. On-disk tree is hierarchical (continent → nation
-  → region → settlement → building); see `data/world/README.md` for
-  the full zone.yaml schema, optional `shop:` / `banker:` mob
-  sub-blocks, and the room-id / currency-string / typed-item-stats
-  conventions. `LoadAndSync` parses + validates YAML on every boot
-  (even when DB is populated) and returns a `LoadedWorld` whose
-  `ItemSpecsByZone` feeds the `ZoneResetter`. Also hosts the
-  `Restocker` (refills sub-max `shop_stock`, on
-  `tick.Buckets.AreaReset`), the `ZoneResetter` (mob respawn from
-  anchored templates → door restoration via
+- **`internal/world/`** — YAML zone loader that performs an additive
+  resync against the DB on every boot. On-disk tree is hierarchical
+  (continent → nation → region → settlement → building); see
+  `data/world/README.md` for the full zone.yaml schema, optional
+  `shop:` / `banker:` mob sub-blocks, and the room-id / currency-
+  string / typed-item-stats conventions. `LoadAndSync` parses +
+  validates YAML, then runs `resyncWorld` inside a single
+  transaction: per-table pre-load probe selects existing
+  `external_id`s, and each row that isn't yet in DB lands; existing
+  rows are left exactly as they are. Strictly additive — no updates,
+  no deletes. Boot log emits a `world: resync complete` line with
+  per-table new-row counts (`zones_new`, `rooms_new`, etc.) plus the
+  total YAML row counts so an operator can see exactly what landed.
+  `LoadedWorld.ItemSpecsByZone` is built from parsed YAML regardless
+  of insert outcome so the `ZoneResetter` always has the recipe
+  list. Bootstrap starter: when no row sits at `repo.StarterRoomID`
+  (id=1), the YAML's `starter: true` row is inserted there FIRST
+  (before any auto-increment rooms grab id=1). When the slot is
+  taken, the YAML starter lands as a regular auto-increment row —
+  first-loaded starter wins; operators who want to swap starters
+  must wipe id=1. Mob_templates are gated as a bundle: if the
+  external_id already exists, template + instance + shop / banker /
+  trainer / weave_teacher / dialogue / triggers are all skipped
+  (refreshing aux blocks would stomp operator edits or duplicate
+  UNIQUE rows). Also hosts the `Restocker` (refills sub-max
+  `shop_stock`, on `tick.Buckets.AreaReset`), the `ZoneResetter`
+  (mob respawn from anchored templates → door restoration via
   `ExitRepo.RestoreAuthored` → item respawn via
   `ItemRepo.FindByExternalID` + `Create`), and `Clock.HourOfDay`.
 

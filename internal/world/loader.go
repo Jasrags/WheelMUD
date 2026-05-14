@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/dialogue"
@@ -17,22 +18,35 @@ import (
 )
 
 // LoadAndSync reads YAML zone folders from src, validates the world,
-// and populates the rooms / exits / items / mobs tables. The insert
-// path short-circuits when the world tables already have rows (boot-
-// time only — pick up YAML changes by wiping the DB), but the YAML
-// is always parsed + validated so the returned LoadedWorld carries
-// the in-memory recipes ZoneResetter consumes.
+// and performs an additive resync against the DB on every boot: new
+// zones / rooms / exits / items / mob_templates that exist in YAML
+// but not yet in the DB get inserted; existing rows are left exactly
+// as they are. The returned LoadedWorld always carries the in-memory
+// recipes ZoneResetter consumes regardless of how many rows landed.
+//
+// Resync semantics (strictly additive — no updates, no deletes):
+//
+//   - A YAML edit that renames an existing row's `name` is INVISIBLE
+//     to the resync. The DB row's name stays as it was at first load.
+//     Operators who want the rename must wipe the row first.
+//   - A YAML row that disappears stays in the DB. Operator-driven GC.
+//   - For mob_templates: if the template's external_id already
+//     exists, the whole bundle is skipped (template + initial
+//     instance + shop / banker / trainer / weave_teacher / dialogue
+//     / triggers). Refreshing aux blocks would either stomp operator
+//     edits or duplicate UNIQUE rows.
+//   - If a pre-existing starter sits at id=1 and YAML declares a
+//     different starter, the YAML's starter is inserted as a regular
+//     auto-increment row. First-load starter wins.
 //
 // All inserts happen in a single transaction so a partial failure
-// rolls back to an empty world rather than leaving the DB half-loaded.
+// rolls back to the pre-resync state rather than a half-loaded DB.
 //
-// The "already loaded?" probe and the subsequent insert are NOT
-// atomic. This is safe today because the loader runs once per process
-// at boot and the project ships a single server binary. If LoadAndSync
-// is ever invoked concurrently (e.g. exposed as an admin endpoint or
-// run from two boot paths against a shared DB) it must be wrapped in
-// an application-level mutex or rewritten to do the probe + load
-// inside one transaction.
+// The probe (SELECTs for existing rows) and subsequent inserts run
+// in the same transaction, so concurrent boots remain safe modulo
+// SQLite's BEGIN-level locking. LoadAndSync should still be called
+// once per process at boot; if it ever becomes an admin endpoint,
+// guard with an application-level mutex on top of the transaction.
 func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) (LoadedWorld, error) {
 	world, err := parseWorld(src)
 	if err != nil {
@@ -42,26 +56,23 @@ func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) (LoadedWorld, error
 		return LoadedWorld{}, fmt.Errorf("world: validate: %w", err)
 	}
 
-	already, err := worldAlreadyLoaded(ctx, db)
+	started := time.Now()
+	summary, err := resyncWorld(ctx, db, world)
 	if err != nil {
-		return LoadedWorld{}, fmt.Errorf("world: probe existing rows: %w", err)
+		return LoadedWorld{}, fmt.Errorf("world: resync: %w", err)
 	}
-	if !already {
-		if err := insertWorld(ctx, db, world); err != nil {
-			return LoadedWorld{}, fmt.Errorf("world: insert: %w", err)
-		}
-		slog.Info("world: load complete",
-			"zones", len(world.Zones),
-			"rooms", len(world.Rooms),
-			"items", len(world.Items),
-			"mobs", len(world.Mobs))
-	} else {
-		slog.Info("world: already loaded, skipping insert",
-			"zones", len(world.Zones),
-			"rooms", len(world.Rooms),
-			"items", len(world.Items),
-			"mobs", len(world.Mobs))
-	}
+	slog.Info("world: resync complete",
+		"zones_new", summary.zones,
+		"rooms_new", summary.rooms,
+		"exits_new", summary.exits,
+		"items_new", summary.items,
+		"mobs_new", summary.mobs,
+		"yaml_zones", len(world.Zones),
+		"yaml_rooms", len(world.Rooms),
+		"yaml_items", len(world.Items),
+		"yaml_mobs", len(world.Mobs),
+		"elapsed", time.Since(started),
+	)
 
 	itemSpecs, err := buildItemSpecs(world)
 	if err != nil {
@@ -70,22 +81,14 @@ func LoadAndSync(ctx context.Context, db *sql.DB, src fs.FS) (LoadedWorld, error
 	return LoadedWorld{ItemSpecsByZone: itemSpecs}, nil
 }
 
-// worldAlreadyLoaded probes whether either of the two top-level world
-// tables has rows. Today rooms + zones are inserted in the same
-// transaction so they're always either both empty or both populated;
-// covering both is cheap insurance against a future change that
-// splits the insert path (e.g. zone reset rules loaded after a hot
-// reload). Without this, a half-loaded DB with a populated zones
-// table but no rooms would re-enter the loader and fail with a
-// duplicate-zone error mid-insert.
-func worldAlreadyLoaded(ctx context.Context, db *sql.DB) (bool, error) {
-	row := db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM rooms) OR EXISTS(SELECT 1 FROM zones)`)
-	var exists int
-	if err := row.Scan(&exists); err != nil {
-		return false, err
-	}
-	return exists != 0, nil
+// resyncSummary is the per-table count of newly-inserted rows. Zero
+// across the board means the DB was already in sync with the YAML.
+type resyncSummary struct {
+	zones int
+	rooms int
+	exits int
+	items int
+	mobs  int
 }
 
 // parseWorld walks src for `*/zone.yaml` and parses each matched zone.
@@ -145,46 +148,60 @@ func findZoneDirs(src fs.FS) ([]string, error) {
 	return dirs, nil
 }
 
-// insertWorld writes the parsed world into the DB inside a single
-// transaction. The starter room is forced to id=1 so the
-// repo.StarterRoomID constant stays valid; everything else
-// auto-increments.
-func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
+// resyncWorld writes the new (YAML-but-not-yet-in-DB) world rows
+// inside a single transaction and returns the per-table count of
+// inserts. Existing rows are skipped via per-table pre-load probes.
+//
+// The starter room is forced to id=1 only when id=1 isn't already
+// occupied; see insertRooms for the starterOccupied logic.
+func resyncWorld(ctx context.Context, db *sql.DB, w *World) (resyncSummary, error) {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return resyncSummary{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	zoneIDs, err := insertZones(ctx, tx, w.Zones)
+	var s resyncSummary
+
+	zoneIDs, nZones, err := insertZones(ctx, tx, w.Zones)
 	if err != nil {
-		return err
+		return s, err
 	}
-	roomIDs, err := insertRooms(ctx, tx, w.Rooms, zoneIDs)
+	s.zones = nZones
+
+	roomIDs, roomZones, nRooms, err := insertRooms(ctx, tx, w.Rooms, zoneIDs)
 	if err != nil {
-		return err
+		return s, err
 	}
-	if err := insertExits(ctx, tx, w.Rooms, roomIDs); err != nil {
-		return err
+	s.rooms = nRooms
+
+	nExits, err := insertExits(ctx, tx, w.Rooms, roomIDs)
+	if err != nil {
+		return s, err
 	}
-	if err := insertItems(ctx, tx, w.Items, roomIDs); err != nil {
-		return err
+	s.exits = nExits
+
+	nItems, err := insertItems(ctx, tx, w.Items, roomIDs)
+	if err != nil {
+		return s, err
 	}
-	roomZones := make(map[string]int64, len(w.Rooms))
-	for _, r := range w.Rooms {
-		if zid, ok := zoneIDs[r.ZoneExternalID]; ok {
-			roomZones[r.ID] = zid
-		}
-	}
+	s.items = nItems
+
+	// roomZones came back from insertRooms pre-loaded from DB and
+	// extended with newly-inserted rooms. Mobs may reference rooms
+	// that came from EITHER source — insertRooms returned the union
+	// of both, so we feed it directly to insertMobs.
 	roomAdjacency := buildRoomAdjacency(w.Rooms)
-	if err := insertMobs(ctx, tx, w.Mobs, roomIDs, roomZones, roomAdjacency); err != nil {
-		return err
+	nMobs, err := insertMobs(ctx, tx, w.Mobs, roomIDs, roomZones, roomAdjacency)
+	if err != nil {
+		return s, err
 	}
+	s.mobs = nMobs
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return s, fmt.Errorf("commit: %w", err)
 	}
-	return nil
+	return s, nil
 }
 
 // insertZones writes every zone row and returns a map from
@@ -197,9 +214,16 @@ func insertWorld(ctx context.Context, db *sql.DB, w *World) error {
 // Validation has already proved zone external_ids are unique and the
 // reset_mode is one of the known values, so the only failure path
 // here is a transport-level driver error.
-func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int64, error) {
-	out := make(map[string]int64, len(zones))
+func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int64, int, error) {
+	out, err := loadExistingZoneIDs(ctx, tx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("preload zones: %w", err)
+	}
+	inserted := 0
 	for _, z := range zones {
+		if _, exists := out[z.ID]; exists {
+			continue
+		}
 		minLevel, maxLevel := 1, 60
 		if z.LevelRange != nil {
 			minLevel, maxLevel = z.LevelRange.Min, z.LevelRange.Max
@@ -233,15 +257,39 @@ func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int6
 			z.Climate, ambientJSON,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("insert zone %q: %w", z.ID, err)
+			return nil, 0, fmt.Errorf("insert zone %q: %w", z.ID, err)
 		}
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("last insert id for zone %q: %w", z.ID, err)
+			return nil, 0, fmt.Errorf("last insert id for zone %q: %w", z.ID, err)
 		}
 		out[z.ID] = id
+		inserted++
 	}
-	return out, nil
+	return out, inserted, nil
+}
+
+// loadExistingZoneIDs pre-populates the resync's external_id → id map
+// from the DB. Resync uses this so the per-row insert loop can skip
+// rows that already exist and downstream insertRooms can still
+// resolve every room's owning zone — whether the zone is brand new
+// or has been in the DB for months.
+func loadExistingZoneIDs(ctx context.Context, tx *sql.Tx) (map[string]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT external_id, id FROM zones`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var ext string
+		var id int64
+		if err := rows.Scan(&ext, &id); err != nil {
+			return nil, err
+		}
+		out[ext] = id
+	}
+	return out, rows.Err()
 }
 
 // insertRooms inserts every room and returns a map from external_id ->
@@ -260,8 +308,11 @@ func insertZones(ctx context.Context, tx *sql.Tx, zones []Zone) (map[string]int6
 // transactional. Atomicity across all four kinds matters more here
 // than reuse, so the column list is duplicated. Keep the INSERT
 // columns in sync with room_sqlite.go::Create if either changes.
-func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[string]int64) (map[string]int64, error) {
-	out := make(map[string]int64, len(rooms))
+func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[string]int64) (map[string]int64, map[string]int64, int, error) {
+	out, roomZones, err := loadExistingRoomIDs(ctx, tx)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("preload rooms: %w", err)
+	}
 	triggers := repo.NewSQLiteTriggerRepo(tx)
 
 	resolveZone := func(r Room) (int64, error) {
@@ -270,6 +321,23 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[stri
 			return 0, fmt.Errorf("room %q references unknown zone %q", r.ID, r.ZoneExternalID)
 		}
 		return id, nil
+	}
+
+	// starterOccupied tracks whether some pre-existing row already
+	// sits at repo.StarterRoomID. If yes, the YAML's starter (which
+	// the validator guarantees exists exactly once) gets inserted
+	// later in the regular auto-increment path rather than forcing
+	// id=1 — that would violate the UNIQUE PK and abort the resync.
+	// The original starter from the bootstrap load wins; subsequent
+	// "starter: true" YAML declarations land as ordinary rooms.
+	// Operators who genuinely want to change which room is the
+	// starter must wipe the row first.
+	starterOccupied := false
+	for _, id := range out {
+		if id == repo.StarterRoomID {
+			starterOccupied = true
+			break
+		}
 	}
 
 	// Validation has already established exactly one starter exists.
@@ -281,30 +349,52 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[stri
 		}
 	}
 
+	inserted := 0
+
+	// If the starter slot is unoccupied AND the YAML starter isn't
+	// already in the DB, insert it FIRST with explicit id=1. Doing
+	// this ahead of any auto-increment insert is load-bearing: if a
+	// non-starter room grabs id=1 via auto-increment first, the later
+	// explicit `INSERT id=1` violates the UNIQUE PK. (This is what
+	// goes wrong when the starter's zone sorts alphabetically AFTER
+	// some other zone in the combined world.Rooms slice.)
 	starter := rooms[starterIdx]
-	starterZoneID, err := resolveZone(starter)
-	if err != nil {
-		return nil, err
-	}
-	starterCols, starterVals := roomInsertValues(starter, starterZoneID)
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO rooms(id, `+starterCols+`) VALUES (?, `+repo.Placeholders(len(starterVals))+`)`,
-		append([]any{repo.StarterRoomID}, starterVals...)...,
-	); err != nil {
-		return nil, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
-	}
-	out[starter.ID] = repo.StarterRoomID
-	if err := insertRoomTriggers(ctx, triggers, repo.StarterRoomID, starter); err != nil {
-		return nil, err
+	if _, exists := out[starter.ID]; !exists && !starterOccupied {
+		zoneID, err := resolveZone(starter)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		cols, vals := roomInsertValues(starter, zoneID)
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO rooms(id, `+cols+`) VALUES (?, `+repo.Placeholders(len(vals))+`)`,
+			append([]any{repo.StarterRoomID}, vals...)...,
+		); err != nil {
+			return nil, nil, 0, fmt.Errorf("insert starter room %q: %w", starter.ID, err)
+		}
+		out[starter.ID] = repo.StarterRoomID
+		roomZones[starter.ID] = zoneID
+		if err := insertRoomTriggers(ctx, triggers, repo.StarterRoomID, starter); err != nil {
+			return nil, nil, 0, err
+		}
+		inserted++
 	}
 
+	// Insert the rest (or the starter as a regular auto-increment row
+	// when starterOccupied=true and its external_id isn't yet in DB).
 	for i, r := range rooms {
-		if i == starterIdx {
+		if _, exists := out[r.ID]; exists {
+			continue
+		}
+		// Skip the bootstrap starter slot we already handled above. If
+		// starterOccupied is true OR the starter was already in DB, the
+		// guard above didn't run and the starter falls through to the
+		// regular auto-increment path here.
+		if i == starterIdx && !starterOccupied {
 			continue
 		}
 		zoneID, err := resolveZone(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, 0, err
 		}
 		cols, vals := roomInsertValues(r, zoneID)
 		res, err := tx.ExecContext(ctx,
@@ -312,18 +402,46 @@ func insertRooms(ctx context.Context, tx *sql.Tx, rooms []Room, zoneIDs map[stri
 			vals...,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("insert room %q: %w", r.ID, err)
+			return nil, nil, 0, fmt.Errorf("insert room %q: %w", r.ID, err)
 		}
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("last insert id for room %q: %w", r.ID, err)
+			return nil, nil, 0, fmt.Errorf("last insert id for room %q: %w", r.ID, err)
 		}
 		out[r.ID] = id
+		roomZones[r.ID] = zoneID
 		if err := insertRoomTriggers(ctx, triggers, id, r); err != nil {
-			return nil, err
+			return nil, nil, 0, err
 		}
+		inserted++
 	}
-	return out, nil
+	return out, roomZones, inserted, nil
+}
+
+// loadExistingRoomIDs pre-populates both lookup maps the resync
+// downstream stages depend on: external_id → int id, AND external_id
+// → owning zone_id. Pulling both columns in one SELECT keeps the
+// boot probe to a single query and lets us route mob spawn-anchor
+// metadata at the DB-canonical zone (rather than at whatever the
+// YAML currently declares — which may have drifted).
+func loadExistingRoomIDs(ctx context.Context, tx *sql.Tx) (map[string]int64, map[string]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT external_id, id, zone_id FROM rooms`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	ids := map[string]int64{}
+	zones := map[string]int64{}
+	for rows.Next() {
+		var ext string
+		var id, zone int64
+		if err := rows.Scan(&ext, &id, &zone); err != nil {
+			return nil, nil, err
+		}
+		ids[ext] = id
+		zones[ext] = zone
+	}
+	return ids, zones, rows.Err()
 }
 
 // insertRoomTriggers materialises a Room's `triggers:` block as
@@ -419,7 +537,23 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 	return cols, vals
 }
 
-func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[string]int64) error {
+// exitKey is the composite of the exits table's UNIQUE constraint
+// (from_room_id, direction). The resync pre-loads the existing set
+// so new exits land while existing ones are left undisturbed —
+// notably preserving any runtime door state (closed/locked) that
+// the OLC editor or AreaReset may have toggled away from the YAML
+// authoring.
+type exitKey struct {
+	from int64
+	dir  string
+}
+
+func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[string]int64) (int, error) {
+	existing, err := loadExistingExitKeys(ctx, tx)
+	if err != nil {
+		return 0, fmt.Errorf("preload exits: %w", err)
+	}
+	inserted := 0
 	for _, r := range rooms {
 		from := roomIDs[r.ID]
 		// Exits are sorted by direction so insert order is
@@ -430,11 +564,14 @@ func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[stri
 		}
 		sort.Strings(dirs)
 		for _, dir := range dirs {
+			if existing[exitKey{from: from, dir: dir}] {
+				continue
+			}
 			ex := r.Exits[dir]
 			to, ok := roomIDs[ex.To]
 			if !ok {
 				// validate() already caught this, but defensively.
-				return fmt.Errorf("exit from %q dir %q targets unknown room %q", r.ID, dir, ex.To)
+				return 0, fmt.Errorf("exit from %q dir %q targets unknown room %q", r.ID, dir, ex.To)
 			}
 			pickable := true // schema default
 			if ex.Pickable != nil {
@@ -455,16 +592,53 @@ func insertExits(ctx context.Context, tx *sql.Tx, rooms []Room, roomIDs map[stri
 				// time. ZoneResetter reads these on each AreaReset pass.
 				repo.BoolToInt(ex.Closed), repo.BoolToInt(ex.Locked),
 			); err != nil {
-				return fmt.Errorf("insert exit %q->%q: %w", r.ID, dir, err)
+				return 0, fmt.Errorf("insert exit %q->%q: %w", r.ID, dir, err)
 			}
+			inserted++
 		}
 	}
-	return nil
+	return inserted, nil
 }
 
-func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[string]int64) error {
+// loadExistingExitKeys returns a set of (from_room_id, direction)
+// pairs already present in the exits table. Used by the resync to
+// skip exits the DB has already seen on prior boots.
+func loadExistingExitKeys(ctx context.Context, tx *sql.Tx) (map[exitKey]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT from_room_id, direction FROM exits`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[exitKey]bool{}
+	for rows.Next() {
+		var k exitKey
+		if err := rows.Scan(&k.from, &k.dir); err != nil {
+			return nil, err
+		}
+		out[k] = true
+	}
+	return out, rows.Err()
+}
+
+func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[string]int64) (int, error) {
+	existing, err := loadExistingItemExternalIDs(ctx, tx)
+	if err != nil {
+		return 0, fmt.Errorf("preload items: %w", err)
+	}
+	inserted := 0
 	for _, it := range items {
-		roomID := roomIDs[it.Room]
+		if existing[it.ID] {
+			continue
+		}
+		roomID, ok := roomIDs[it.Room]
+		if !ok || roomID == 0 {
+			// Validation has already caught unknown rooms in the
+			// in-memory world. Defensive guard against a roomIDs map
+			// that doesn't include the target — would otherwise
+			// silently insert with room_id=0, which is the original
+			// "resolve home room" bug this resync is fixing.
+			return 0, fmt.Errorf("item %q targets unknown room %q", it.ID, it.Room)
+		}
 		// Validation has already proved Type/Quality/Flags/Stats are
 		// well-formed, so the conversions below cannot fail in
 		// practice — but we still propagate any error rather than
@@ -479,15 +653,15 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[stri
 		}
 		value, err := decodeItemValue(it.Value)
 		if err != nil {
-			return fmt.Errorf("insert item %q: %w", it.ID, err)
+			return 0, fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
 		stats, err := convertItemStats(it)
 		if err != nil {
-			return fmt.Errorf("insert item %q: %w", it.ID, err)
+			return 0, fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
 		statsJSON, err := encodeItemStatsJSON(stats)
 		if err != nil {
-			return fmt.Errorf("insert item %q: %w", it.ID, err)
+			return 0, fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
 		flags := decodeItemFlags(it.Flags)
 		// Loader-spawned items always start on a room floor — no owner,
@@ -503,10 +677,33 @@ func insertItems(ctx context.Context, tx *sql.Tx, items []Item, roomIDs map[stri
 			string(t), it.Weight, int64(value), string(q),
 			int64(flags), statsJSON,
 		); err != nil {
-			return fmt.Errorf("insert item %q: %w", it.ID, err)
+			return 0, fmt.Errorf("insert item %q: %w", it.ID, err)
 		}
+		inserted++
 	}
-	return nil
+	return inserted, nil
+}
+
+// loadExistingItemExternalIDs returns the set of items.external_id
+// already in the DB. Used by the resync to skip items the DB
+// already knows about — preserving any runtime mutations like
+// `owner_character_id` (a player picked it up) or `parent_item_id`
+// (it's inside a container now).
+func loadExistingItemExternalIDs(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT external_id FROM items`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var ext string
+		if err := rows.Scan(&ext); err != nil {
+			return nil, err
+		}
+		out[ext] = true
+	}
+	return out, rows.Err()
 }
 
 // encodeItemStatsJSON marshals the typed stats struct produced by
@@ -587,7 +784,7 @@ func validateMobPath(mobID string, path []string, roomIDs map[string]int64, adj 
 	return nil
 }
 
-func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones map[string]int64, roomAdj map[string]map[string]bool) error {
+func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones map[string]int64, roomAdj map[string]map[string]bool) (int, error) {
 	templates := repo.NewSQLiteMobTemplateRepo(tx)
 	instances := repo.NewSQLiteMobInstanceRepo(tx)
 	shops := repo.NewSQLiteShopRepo(tx)
@@ -596,9 +793,29 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(tx)
 	triggers := repo.NewSQLiteTriggerRepo(tx)
 
+	// Pre-load existing template external_ids. A YAML mob whose
+	// template is already in the DB skips its entire bundle —
+	// template + initial instance + shop/banker/trainer/
+	// weave_teacher/dialogue/triggers. Refreshing the auxiliary
+	// blocks would either stomp on operator edits or duplicate rows
+	// (most aux tables UNIQUE on mob_template_id). To replay
+	// authoring changes the operator wipes the template row.
+	existingExternals, err := templates.ListExternalIDs(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("preload mob templates: %w", err)
+	}
+	existing := make(map[string]bool, len(existingExternals))
+	for _, ext := range existingExternals {
+		existing[ext] = true
+	}
+
+	inserted := 0
 	for _, m := range mobs {
+		if existing[m.ID] {
+			continue
+		}
 		if m.XPValue < 0 {
-			return fmt.Errorf("mob %q: xp_value must be >= 0, got %d "+
+			return 0, fmt.Errorf("mob %q: xp_value must be >= 0, got %d "+
 				"(0 = fall back to challenge_code table)", m.ID, m.XPValue)
 		}
 		roomID := roomIDs[m.Room]
@@ -608,7 +825,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 		}
 		if len(m.Path) > 0 {
 			if err := validateMobPath(m.ID, m.Path, roomIDs, roomAdj); err != nil {
-				return err
+				return 0, err
 			}
 		}
 		// PathRoomIDs is the resolved-at-boot cache. Built here so
@@ -628,7 +845,7 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 		// inconsistency at boot than have the radius silently
 		// ignored at runtime.
 		if len(m.Path) > 0 && m.WanderRadius > 0 {
-			return fmt.Errorf("mob %q: cannot set both `path` and `wander_radius` "+
+			return 0, fmt.Errorf("mob %q: cannot set both `path` and `wander_radius` "+
 				"(path takes precedence; pick one)", m.ID)
 		}
 		tpl := creature.MobTemplate{
@@ -655,13 +872,13 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 		if m.Dialogue != nil {
 			djson, err := buildDialogueJSON(m.Dialogue)
 			if err != nil {
-				return fmt.Errorf("mob %q dialogue: %w", m.ID, err)
+				return 0, fmt.Errorf("mob %q dialogue: %w", m.ID, err)
 			}
 			tpl.DialogueJSON = djson
 		}
 		created, err := templates.Create(ctx, tpl)
 		if err != nil {
-			return fmt.Errorf("insert mob template %q: %w", m.ID, err)
+			return 0, fmt.Errorf("insert mob template %q: %w", m.ID, err)
 		}
 		// Stamp the §9 spawn anchor so the §19 Respawner can top up
 		// this mob's population on AreaReset ticks. roomZones[m.Room]
@@ -669,42 +886,43 @@ func insertMobs(ctx context.Context, tx *sql.Tx, mobs []Mob, roomIDs, roomZones 
 		// so a zero zone is a loader bug worth surfacing.
 		zoneID := roomZones[m.Room]
 		if zoneID == 0 {
-			return fmt.Errorf("mob %q in room %q: room has no zone", m.ID, m.Room)
+			return 0, fmt.Errorf("mob %q in room %q: room has no zone", m.ID, m.Room)
 		}
 		if err := templates.SetSpawnAnchor(ctx, created.ID, zoneID, roomID); err != nil {
-			return fmt.Errorf("set spawn anchor for mob %q: %w", m.ID, err)
+			return 0, fmt.Errorf("set spawn anchor for mob %q: %w", m.ID, err)
 		}
 		created.RespawnZoneResetID = zoneID
 		created.HomeRoomID = roomID
 		spawn := creature.NewInstanceFromTemplate(created, roomID, 0)
 		if _, err := instances.Create(ctx, spawn); err != nil {
-			return fmt.Errorf("spawn mob instance %q: %w", m.ID, err)
+			return 0, fmt.Errorf("spawn mob instance %q: %w", m.ID, err)
 		}
 		if m.Shop != nil {
 			if err := insertShop(ctx, shops, created.ID, m); err != nil {
-				return fmt.Errorf("insert shop for mob %q: %w", m.ID, err)
+				return 0, fmt.Errorf("insert shop for mob %q: %w", m.ID, err)
 			}
 		}
 		if m.Banker != nil {
 			if err := insertBanker(ctx, bankers, created.ID, m); err != nil {
-				return fmt.Errorf("insert banker for mob %q: %w", m.ID, err)
+				return 0, fmt.Errorf("insert banker for mob %q: %w", m.ID, err)
 			}
 		}
 		if m.Trainer != nil {
 			if err := insertTrainer(ctx, trainers, created.ID, m); err != nil {
-				return fmt.Errorf("insert trainer for mob %q: %w", m.ID, err)
+				return 0, fmt.Errorf("insert trainer for mob %q: %w", m.ID, err)
 			}
 		}
 		if m.WeaveTeacher != nil {
 			if err := insertWeaveTeacher(ctx, weaveTeachers, created.ID, m); err != nil {
-				return fmt.Errorf("insert weave teacher for mob %q: %w", m.ID, err)
+				return 0, fmt.Errorf("insert weave teacher for mob %q: %w", m.ID, err)
 			}
 		}
 		if err := insertMobTriggers(ctx, triggers, created.ID, m); err != nil {
-			return err
+			return 0, err
 		}
+		inserted++
 	}
-	return nil
+	return inserted, nil
 }
 
 // insertMobTriggers materialises a Mob's `triggers:` block as
