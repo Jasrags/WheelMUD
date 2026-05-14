@@ -74,11 +74,17 @@ func TestHandleCharsetSubnegotiation_AcceptedUTF8StampsCharset(t *testing.T) {
 	}
 }
 
-func TestHandleCharsetSubnegotiation_AcceptedLowercaseUTF8(t *testing.T) {
-	s, _ := newPipeSession(t)
-	handleCharsetSubnegotiation(s, append([]byte{CHARSET_ACCEPTED}, []byte("utf-8")...))
-	if got := s.Charset(); got != "UTF-8" {
-		t.Fatalf("Charset() = %q, want %q", got, "UTF-8")
+func TestHandleCharsetSubnegotiation_AcceptedCaseInsensitive(t *testing.T) {
+	// RFC 2066 §2 + RFC 2278: IANA charset names are case-insensitive.
+	cases := []string{"utf-8", "Utf-8", "UTF-8", "uTf-8", "uTF-8"}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, _ := newPipeSession(t)
+			handleCharsetSubnegotiation(s, append([]byte{CHARSET_ACCEPTED}, []byte(name)...))
+			if got := s.Charset(); got != "UTF-8" {
+				t.Fatalf("Charset() = %q for input %q, want %q", got, name, "UTF-8")
+			}
+		})
 	}
 }
 
@@ -125,6 +131,36 @@ func TestHandleOptionNegotiation_DOMsspWritesProviderBlock(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("WheelMUD")) {
 		t.Fatalf("payload missing NAME value: %v", got)
+	}
+}
+
+func TestHandleOptionNegotiation_DOMsspIsOncePerSession(t *testing.T) {
+	s, peer := newPipeSession(t)
+	calls := 0
+	s.MSSPProvider = func() []MSSPVar {
+		calls++
+		return []MSSPVar{{Name: "NAME", Value: "WheelMUD"}}
+	}
+
+	gotCh := make(chan []byte, 1)
+	go func() { gotCh <- drainPeerBytes(t, peer, 256) }()
+
+	// Two DO MSSP frames back-to-back. Only the first should elicit a
+	// response; the second is dropped per RFC 855 + the replay guard.
+	readIACBytes(t, s, TELNET_DO, TELNET_OPT_MSSP)
+	readIACBytes(t, s, TELNET_DO, TELNET_OPT_MSSP)
+	s.Conn.Close()
+	got := <-gotCh
+
+	if calls != 1 {
+		t.Fatalf("MSSPProvider invocations = %d, want 1", calls)
+	}
+	if !bytes.Contains(got, []byte("WheelMUD")) {
+		t.Fatalf("first DO MSSP did not elicit a response: %v", got)
+	}
+	// Sanity: only one MSSP SB block on the wire.
+	if n := bytes.Count(got, []byte{TELNET_IAC, TELNET_SB, TELNET_OPT_MSSP}); n != 1 {
+		t.Fatalf("expected 1 MSSP SB block, saw %d", n)
 	}
 }
 

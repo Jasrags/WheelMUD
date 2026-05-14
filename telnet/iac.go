@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 )
 
 const (
@@ -190,6 +191,12 @@ func handleOptionNegotiation(s *Session, cmd, opt byte) {
 		if provider == nil {
 			return
 		}
+		// Respond once per session. CAS-to-true on the first DO; any
+		// subsequent DO MSSP is dropped silently per RFC 855 and to
+		// blunt amplification by a misbehaving client.
+		if !s.msspSent.CompareAndSwap(false, true) {
+			return
+		}
 		vars := provider()
 		if len(vars) == 0 {
 			return
@@ -226,7 +233,10 @@ func handleCharsetSubnegotiation(s *Session, data []byte) {
 	switch data[0] {
 	case CHARSET_ACCEPTED:
 		name := string(data[1:])
-		if name == "UTF-8" || name == "utf-8" {
+		// IANA charset names are case-insensitive (RFC 2278) and the
+		// CHARSET option (RFC 2066 §2) inherits that — accept any
+		// casing of "UTF-8" the client chose to echo back.
+		if strings.EqualFold(name, "UTF-8") {
 			s.SetCharset("UTF-8")
 			slog.Info("CHARSET negotiated", "charset", "UTF-8", "remote", s.RemoteAddress)
 			return

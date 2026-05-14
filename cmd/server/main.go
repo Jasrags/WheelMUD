@@ -2871,9 +2871,16 @@ func (srv *server) msspVars() []telnet.MSSPVar {
 		{Name: "VT100", Value: "1"},
 		{Name: "UTF-8", Value: "1"},
 		{Name: "256 COLORS", Value: "1"},
-		{Name: "TRUECOLOR", Value: "1"},
+		// Truecolor support exists in the renderer (cfmt +
+		// ColorLevelTrueColor) but there's no server-side terminal
+		// capability detection that confirms a given client supports
+		// 24-bit SGR — Session.ColorLevel is set via the `colors`
+		// verb or account settings, not negotiated. Advertise "0"
+		// until TERM-driven detection lands; otherwise crawler
+		// listings overstate the out-of-the-box experience.
+		{Name: "TRUECOLOR", Value: "0"},
 		{Name: "XTERM 256 COLORS", Value: "1"},
-		{Name: "XTERM TRUE COLORS", Value: "1"},
+		{Name: "XTERM TRUE COLORS", Value: "0"},
 		{Name: "MCCP", Value: "0"},
 		{Name: "MCP", Value: "0"},
 		{Name: "MSDP", Value: "0"},

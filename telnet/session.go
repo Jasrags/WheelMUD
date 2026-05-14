@@ -148,6 +148,14 @@ type Session struct {
 	// test fixtures and pre-wire code paths.
 	MSSPProvider func() []MSSPVar
 
+	// msspSent is the once-per-session guard against `DO MSSP` replay
+	// floods: RFC 855 forbids re-negotiating an already-agreed option,
+	// and a single MSSP response is ~500 bytes plus a Registry snapshot
+	// allocation, so a bot spamming `DO MSSP` would otherwise amplify
+	// CPU + bandwidth on every read-loop iteration. CAS to true on the
+	// first response; subsequent DOs are dropped silently.
+	msspSent atomic.Bool
+
 	// builderZones caches the set of zone IDs this session is
 	// authorised to edit (Phase G #33). Loaded by postauth.promoteToGame
 	// from builder_zones via BuilderZoneRepo.ListForCharacter, and
