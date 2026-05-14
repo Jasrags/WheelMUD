@@ -30,12 +30,13 @@ const (
 	TELNET_EOR  byte = 239 // End of Record.
 
 	// Common options
-	TELNET_OPT_ECHO       byte = 1  // Echo: RFC 857
-	TELNET_OPT_SUP_GO_AHD byte = 3  // Suppress Go Ahead: RFC 858
-	TELNET_OPT_TERM_TYPE  byte = 24 // Terminal Type: RFC 1091
-	TELNET_OPT_NAWS       byte = 31 // NAWS, Negotiate About Window Size: RFC 1073
-	TELNET_OPT_CHARSET    byte = 42 // CHARSET: RFC 2066
-	TELNET_OPT_MSSP       byte = 70 // MSSP: mssp.org
+	TELNET_OPT_ECHO       byte = 1   // Echo: RFC 857
+	TELNET_OPT_SUP_GO_AHD byte = 3   // Suppress Go Ahead: RFC 858
+	TELNET_OPT_TERM_TYPE  byte = 24  // Terminal Type: RFC 1091
+	TELNET_OPT_NAWS       byte = 31  // NAWS, Negotiate About Window Size: RFC 1073
+	TELNET_OPT_CHARSET    byte = 42  // CHARSET: RFC 2066
+	TELNET_OPT_MSSP       byte = 70  // MSSP: mssp.org
+	TELNET_OPT_GMCP       byte = 201 // GMCP: mudlet.org/manual
 
 	// CHARSET sub-option codes (RFC 2066 §3).
 	CHARSET_REQUEST  byte = 1
@@ -157,6 +158,8 @@ func HandleSubnegotiation(s *Session, opt byte, data []byte) {
 		}
 	case TELNET_OPT_CHARSET:
 		handleCharsetSubnegotiation(s, data)
+	case TELNET_OPT_GMCP:
+		handleGMCPSubnegotiation(s, data)
 	default:
 		slog.Info("Unhandled subnegotiation option", "option", DescribeByte(opt), "data", data)
 	}
@@ -204,6 +207,12 @@ func handleOptionNegotiation(s *Session, cmd, opt byte) {
 		if err := s.WriteRaw(EncodeMSSP(vars)); err != nil {
 			slog.Debug("MSSP response write failed", "remote", s.RemoteAddress, "error", err)
 		}
+	case TELNET_OPT_GMCP:
+		// Flip the per-session GMCP flag. The client now drives the
+		// session via inbound Core.Hello + Core.Supports.Set frames;
+		// the server has nothing to write in response to bare DO GMCP.
+		// Idempotent — repeated DOs are harmless.
+		s.SetGMCPEnabled(true)
 	}
 }
 
@@ -217,6 +226,45 @@ func buildCharsetRequest(charset string) []byte {
 	out = append(out, charset...)
 	out = append(out, TELNET_IAC, TELNET_SE)
 	return out
+}
+
+// handleGMCPSubnegotiation processes a GMCP subnegotiation payload.
+// Wire shape: `<package-name> <space> <json-body>` (the SB framing
+// has already been stripped by readSubnegotiation). The first ASCII
+// space splits the name from the body; a missing space means the
+// frame is name-only (body defaults to "null"). Hands off to the
+// session's GMCPHandler closure if one is wired; otherwise drops.
+func handleGMCPSubnegotiation(s *Session, data []byte) {
+	if len(data) == 0 {
+		slog.Debug("Empty GMCP subnegotiation", "remote", s.RemoteAddress)
+		return
+	}
+	if s.GMCPHandler == nil {
+		// Pre-wire path (tests, account-menu-only sessions) — drop
+		// silently. A nil handler is not an error.
+		return
+	}
+	var pkg string
+	var body []byte
+	if sp := indexSpace(data); sp >= 0 {
+		pkg = string(data[:sp])
+		body = data[sp+1:]
+	} else {
+		pkg = string(data)
+		body = []byte("null")
+	}
+	s.GMCPHandler(s, pkg, body)
+}
+
+// indexSpace returns the position of the first 0x20 byte or -1.
+// Lighter than bytes.IndexByte for this hot path.
+func indexSpace(b []byte) int {
+	for i, c := range b {
+		if c == ' ' {
+			return i
+		}
+	}
+	return -1
 }
 
 // handleCharsetSubnegotiation processes a CHARSET subnegotiation
@@ -304,6 +352,8 @@ func DescribeByte(b byte) string {
 		return "CHARSET"
 	case TELNET_OPT_MSSP:
 		return "MSSP"
+	case TELNET_OPT_GMCP:
+		return "GMCP"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", b)
 	}
@@ -319,6 +369,7 @@ func NegotiateTelnet(conn net.Conn) error {
 		{TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO},
 		{TELNET_IAC, TELNET_WILL, TELNET_OPT_CHARSET},
 		{TELNET_IAC, TELNET_WILL, TELNET_OPT_MSSP},
+		{TELNET_IAC, TELNET_WILL, TELNET_OPT_GMCP},
 	}
 	for _, cmd := range commands {
 		if _, err := writer.Write(cmd); err != nil {

@@ -14,7 +14,7 @@ var oocChannel = repo.Channel{ID: 1, Name: "ooc", Color: "cyan"}
 func TestChannel_BroadcastReachesOthers(t *testing.T) {
 	sessions, alice, _, aOut, bOut := commPair(t)
 	chars := repo.NewMemoryCharacterRepo()
-	cmd := NewChannel(oocChannel, sessions, chars)
+	cmd := NewChannel(oocChannel, sessions, chars, nil)
 
 	runCmd(t, cmd, alice, "anyone awake")
 
@@ -39,7 +39,7 @@ func TestChannel_NoArgsTogglesAndPersists(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	alice.CharacterID = created.ID
-	cmd := NewChannel(oocChannel, sessions, chars)
+	cmd := NewChannel(oocChannel, sessions, chars, nil)
 
 	runCmd(t, cmd, alice, "")
 	if !alice.IsChannelMuted("ooc") {
@@ -70,7 +70,7 @@ func TestChannel_NoArgsTogglesAndPersists(t *testing.T) {
 func TestChannel_MutedPeerSkipped(t *testing.T) {
 	sessions, alice, bob, _, bOut := commPair(t)
 	chars := repo.NewMemoryCharacterRepo()
-	cmd := NewChannel(oocChannel, sessions, chars)
+	cmd := NewChannel(oocChannel, sessions, chars, nil)
 
 	bob.SetChannelMuted(map[string]bool{"ooc": true})
 
@@ -83,7 +83,7 @@ func TestChannel_MutedPeerSkipped(t *testing.T) {
 func TestChannel_SpeakingWhileMutedRefuses(t *testing.T) {
 	sessions, alice, _, aOut, _ := commPair(t)
 	chars := repo.NewMemoryCharacterRepo()
-	cmd := NewChannel(oocChannel, sessions, chars)
+	cmd := NewChannel(oocChannel, sessions, chars, nil)
 
 	alice.SetChannelMuted(map[string]bool{"ooc": true})
 	runCmd(t, cmd, alice, "hi all")

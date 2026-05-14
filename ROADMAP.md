@@ -24,12 +24,17 @@ the doc stays anchored to code rather than drifting into wishlist territory.
       around `Session.WriteRaw` and flush per write. MCCP3 (option 87)
       adds upstream compression — lower priority. Track compressed-byte
       counters for telemetry.
-- [ ] **GMCP** (Generic MUD Communication Protocol) — out-of-band JSON
-      messages over option 201. Define a `gmcp.Message{Package, Body}`
-      type, route inbound packages (`Core.Hello`, `Char.Login`,
-      `Room.Info`, `Comm.Channel.Text`) to a registry of handlers,
-      and a publish helper for server-pushed updates (room desc,
-      vitals, channels). Per-session opt-in tracked on `Session`.
+- [x] **GMCP** (Generic MUD Communication Protocol) — Phase I #46,
+      landed 2026-05-14. Option 201 negotiation in
+      `telnet/iac.go`; `internal/gmcp.Manager` owns inbound Core.*
+      dispatch (Hello / Ping / Supports.Set/Add/Remove) and per-
+      session eventbus subscription lifecycle. V1 outbound: Char.Name,
+      Char.Vitals (deduped), Char.Status, Room.Info, Comm.Channel.Text
+      (covers `say`, every chat channel, and tells via new
+      `world.ChannelBroadcast` + `world.PlayerTold` events). Initial
+      snapshot fires on Core.Supports.Set. Char.Items.* deferred to
+      V2 pending inventory-change events on `get`/`drop`/`wear`/
+      `unwear`. MSSP `GMCP=1` flipped.
 - [ ] **MSDP** (MUD Server Data Protocol) — option 69. Simpler key/value
       protocol than GMCP; useful for clients that don't speak JSON.
       Share the publish layer with GMCP behind a common `OOB` interface

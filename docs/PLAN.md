@@ -932,8 +932,13 @@ Lower urgency; do whichever lands free time.
     optional `mssp:` config block adds CONTACT / HOSTNAME /
     LOCATION / WEBSITE / STATUS. Provider closure
     (`Session.MSSPProvider`) wired at session construction.
-46. **GMCP** (§1). Highest-value modern protocol; opens
-    MUSHclient/Mudlet integrations, in-client UI panels.
+46. ~~**GMCP** (§1).~~ Landed 2026-05-14. `internal/gmcp.Manager`
+    owns inbound Core.* dispatch + per-session subscription
+    lifecycle; V1 outbound packages are Char.Name, Char.Vitals,
+    Char.Status, Room.Info, Comm.Channel.Text. New world events
+    `ChannelBroadcast` + `PlayerTold` cover every chat surface.
+    Mudlet's mapper / gauges / chat-capture panels now work
+    out-of-the-box.
 47. **MCCP2/3** (§1). Compression; nice-to-have unless bandwidth is a
     real concern.
 48. **MXP** (§1). Clickable links; useful once help/news is rich.

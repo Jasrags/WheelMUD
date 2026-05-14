@@ -33,6 +33,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/effects"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/gmcp"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
 	luaeng "github.com/Jasrags/WheelMUD/internal/lua"
@@ -108,6 +109,7 @@ type server struct {
 	triggers    *trigger.Dispatcher
 	quest       *quest.Engine
 	luaRunner   *luaeng.Runner
+	gmcp        *gmcp.Manager
 	metrics     *metrics.Metrics
 	metricsHTTP *http.Server
 	newInitial  func() telnet.Mode
@@ -946,6 +948,12 @@ func main() {
 	triggerDispatcher.Start(context.Background())
 	questEngine.Start(context.Background())
 
+	// GMCP manager — owns per-session subscription lifecycle for the
+	// Char.*, Room.*, and Comm.* outbound packages plus inbound Core.*
+	// dispatch. Wired onto each Session.GMCPHandler in acceptLoop, and
+	// torn down in handleConnection's defer via UnwireSession.
+	gmcpManager := gmcp.New(bus, sessions, characters, rooms, exits, zones)
+
 	// affects.Expired subscriber: emits one cfmt line per entry to
 	// the owning session via WriteAsync (cross-session output rule).
 	// Catalog-driven affects carry an authored MessageOnExpire string
@@ -1064,6 +1072,7 @@ func main() {
 		triggers:   triggerDispatcher,
 		quest:      questEngine,
 		luaRunner:  luaRunner,
+		gmcp:       gmcpManager,
 		cfg:        cfg,
 		startedAt:  time.Now(),
 		worldStats: collectMSSPWorldStats(context.Background(), zones, rooms, mobTemplates, items),
@@ -1244,6 +1253,10 @@ func (srv *server) acceptLoop(ln net.Listener) {
 		// starts negotiation; the read goroutine consults this on every
 		// inbound DO MSSP. Read-only after this point, so no lock.
 		s.MSSPProvider = srv.msspVars
+		// GMCP handler closure — same wire-before-RunSession pattern.
+		// The closure handles every inbound SB GMCP frame from this
+		// client and dispatches Core.* into the Manager.
+		s.GMCPHandler = srv.gmcp.Handle
 
 		srv.wg.Add(1)
 		safego.Go("session-"+s.RemoteAddress, func() {
@@ -1596,13 +1609,13 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewSay(sessions, rooms, bus),
 		cmd.NewShout(sessions, rooms),
 		cmd.NewYell(sessions, rooms),
-		cmd.NewTell(sessions),
-		cmd.NewReply(sessions),
+		cmd.NewTell(sessions, bus),
+		cmd.NewReply(sessions, bus),
 	); err != nil {
 		return nil, err
 	}
 	for _, ch := range channels {
-		if err := r.Register(cmd.NewChannel(ch, sessions, characters)); err != nil {
+		if err := r.Register(cmd.NewChannel(ch, sessions, characters, bus)); err != nil {
 			return nil, err
 		}
 	}
@@ -1983,6 +1996,12 @@ func (srv *server) handleConnection(s *telnet.Session) {
 		// disbands; a member departure shrinks. No-op for guests.
 		if s.CharacterID != 0 && srv.groups != nil {
 			srv.groups.ClearForCharacter(s.CharacterID)
+		}
+		// Phase I #46: cancel any GMCP subscriptions this session
+		// installed. Safe even when the client never sent DO GMCP;
+		// TakeGMCPSubs returns an empty slice in that case.
+		if srv.gmcp != nil {
+			srv.gmcp.UnwireSession(s)
 		}
 	}()
 	slog.Info("Client connected", "remote", s.RemoteAddress)
@@ -2885,7 +2904,7 @@ func (srv *server) msspVars() []telnet.MSSPVar {
 		{Name: "MCP", Value: "0"},
 		{Name: "MSDP", Value: "0"},
 		{Name: "MSP", Value: "0"},
-		{Name: "GMCP", Value: "0"},
+		{Name: "GMCP", Value: "1"},
 		{Name: "MXP", Value: "0"},
 		{Name: "MNES", Value: "0"},
 		{Name: "SSL", Value: "0"},

@@ -341,7 +341,7 @@ func TestCompleteGive_SlotRouting(t *testing.T) {
 
 func TestNewTell_CompleterEnumeratesPeers(t *testing.T) {
 	sessions, alice, _, _, _ := commPair(t)
-	tell := NewTell(sessions)
+	tell := NewTell(sessions, nil)
 	if tell.Completer == nil {
 		t.Fatal("tell missing completer")
 	}

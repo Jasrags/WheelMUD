@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/display"
+	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -26,7 +28,7 @@ import (
 // crash even if the periodic save bucket hasn't fired. Failure to
 // persist is logged but does not block the toggle (the in-memory map
 // stays authoritative for this session).
-func NewChannel(ch repo.Channel, sessions *session.Registry, characters repo.CharacterRepo) *telnet.Command {
+func NewChannel(ch repo.Channel, sessions *session.Registry, characters repo.CharacterRepo, bus *eventbus.Bus) *telnet.Command {
 	name := strings.ToLower(ch.Name)
 	color := ch.Color
 	if color == "" {
@@ -70,6 +72,14 @@ func NewChannel(ch repo.Channel, sessions *session.Registry, characters repo.Cha
 					_, peerName, _ := peer.InWorld()
 					slog.Debug("channel: peer write failed", "channel", name, "to", peerName, "error", err)
 				}
+			}
+			if bus != nil {
+				bus.Publish(c.Ctx, world.ChannelBroadcast{
+					Channel:            name,
+					SpeakerCharacterID: c.Session.CharacterID,
+					SpeakerName:        speaker,
+					Text:               text,
+				})
 			}
 			return c.Session.WriteString(selfMsg)
 		},

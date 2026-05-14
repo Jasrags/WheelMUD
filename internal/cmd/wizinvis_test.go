@@ -59,7 +59,7 @@ func TestTell_HiddenAdminAppearsOfflineToPlayer(t *testing.T) {
 	sessions, alice, bob, aOut, bOut := commPair(t)
 	bob.AuthLevel = telnet.AuthAdmin
 	bob.SetHidden(true)
-	tell := NewTell(sessions)
+	tell := NewTell(sessions, nil)
 
 	runCmd(t, tell, alice, "Bob hi there")
 
@@ -76,7 +76,7 @@ func TestTell_HiddenAdminVisibleToOtherAdmin(t *testing.T) {
 	alice.AuthLevel = telnet.AuthAdmin
 	bob.AuthLevel = telnet.AuthAdmin
 	bob.SetHidden(true)
-	tell := NewTell(sessions)
+	tell := NewTell(sessions, nil)
 
 	runCmd(t, tell, alice, "Bob ops chat")
 

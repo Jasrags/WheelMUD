@@ -172,7 +172,7 @@ func TestSay_DoesNotReachOtherRooms(t *testing.T) {
 
 func TestTell_DeliversAndSetsLastTellFrom(t *testing.T) {
 	sessions, alice, bob, aOut, bOut := commPair(t)
-	tell := NewTell(sessions)
+	tell := NewTell(sessions, nil)
 
 	runCmd(t, tell, alice, "Bob this is private")
 
@@ -192,7 +192,7 @@ func TestTell_DeliversAndSetsLastTellFrom(t *testing.T) {
 
 func TestTell_UnknownTargetFriendlyError(t *testing.T) {
 	sessions, alice, _, aOut, _ := commPair(t)
-	tell := NewTell(sessions)
+	tell := NewTell(sessions, nil)
 
 	runCmd(t, tell, alice, "Ghost are you there?")
 
@@ -203,8 +203,8 @@ func TestTell_UnknownTargetFriendlyError(t *testing.T) {
 
 func TestReply_RoutesToLastTellFrom(t *testing.T) {
 	sessions, alice, bob, aOut, bOut := commPair(t)
-	tell := NewTell(sessions)
-	reply := NewReply(sessions)
+	tell := NewTell(sessions, nil)
+	reply := NewReply(sessions, nil)
 
 	runCmd(t, tell, alice, "Bob hi")
 	bOut.Reset()
@@ -224,7 +224,7 @@ func TestReply_RoutesToLastTellFrom(t *testing.T) {
 
 func TestReply_NoLastTellFromIsFriendly(t *testing.T) {
 	sessions, _, bob, _, bOut := commPair(t)
-	reply := NewReply(sessions)
+	reply := NewReply(sessions, nil)
 
 	runCmd(t, reply, bob, "anyone?")
 

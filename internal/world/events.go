@@ -46,6 +46,34 @@ type PlayerLoggedIn struct {
 	RoomID      int64
 }
 
+// ChannelBroadcast fires after a successful chat-channel send (gossip,
+// ooc, newbie, etc.) — every per-channel verb in
+// internal/cmd/channel.go publishes one of these. Subscribers (Phase
+// I #46 GMCP `Comm.Channel.Text` emitter) consume it to push
+// out-of-band frames to opted-in clients. Text is post-sanitized
+// (control bytes stripped, cfmt defanged) so subscribers can render
+// it verbatim. Channel is the lowercase canonical name from the
+// channel catalog.
+type ChannelBroadcast struct {
+	Channel            string
+	SpeakerCharacterID int64
+	SpeakerName        string
+	Text               string
+}
+
+// PlayerTold fires after a successful `tell` delivery — one event per
+// resolved recipient. Phase I #46 GMCP `Comm.Channel.Text` emits two
+// frames per event: one to the recipient (channel=tell.in) and one
+// to the sender (channel=tell.out) so Mudlet's chat-capture pane
+// can route both halves to a tell-only window. Text is sanitized.
+type PlayerTold struct {
+	FromCharacterID int64
+	ToCharacterID   int64
+	FromName        string
+	ToName          string
+	Text            string
+}
+
 // PlayerLoggedOut fires once when a session with an active character
 // disconnects. Published from handleConnection's defer block before
 // session.Registry.Unbind so trigger action handlers can still find

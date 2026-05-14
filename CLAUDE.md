@@ -237,6 +237,19 @@ catalog to an on-disk override.
   `crossMu` accessor pair (`SetCharset` / `Charset`). MSSP variables
   are produced by a `Session.MSSPProvider` closure wired in
   `cmd/server/main.go::msspVars`; provider == nil silently no-ops.
+- **GMCP** (option 201) follows the same closure-injection pattern.
+  `Session.GMCPHandler` is set at session construction to
+  `internal/gmcp.Manager.Handle`; the manager dispatches Core.* and
+  installs per-session eventbus subscriptions on Core.Supports.Set.
+  Subscription handles live on `Session.gmcpSubs` (via
+  `AddGMCPSub` / `TakeGMCPSubs`) and MUST be cancelled in
+  `handleConnection`'s defer via `gmcp.Manager.UnwireSession(s)` —
+  otherwise eventbus handlers leak across reconnects. Outbound
+  frames go through `Session.WriteGMCP(pkg, body)`, which silently
+  no-ops when the client hasn't negotiated GMCP. GMCP bytes are
+  out-of-band telnet (not visible to the terminal display), so
+  WriteGMCP uses `WriteRaw` rather than `WriteAsync` — no prompt
+  repaint needed.
 - `Session.WriteRaw` is the only safe write path; it holds `writeMu`.
   Layer helpers on top of it rather than calling `Conn.Write` directly.
 - **Cross-session output** (broadcasts to peers, channel fanout, mob

@@ -3,6 +3,7 @@ package telnet
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -148,6 +149,46 @@ type Session struct {
 	// test fixtures and pre-wire code paths.
 	MSSPProvider func() []MSSPVar
 
+	// gmcpEnabled flips true the first time the client sends
+	// `IAC DO GMCP`. Read by every outbound GMCP send path so a
+	// non-GMCP client (raw telnet, pre-negotiation flush) silently
+	// drops package frames instead of leaking IAC SB bytes onto the
+	// terminal display. Atomic so the read goroutine's set is visible
+	// to the dispatcher's reads without taking crossMu.
+	gmcpEnabled atomic.Bool
+
+	// GMCPHandler is the closure invoked from HandleSubnegotiation for
+	// option 201 inbound payloads. Set once at session construction in
+	// cmd/server/main.go (mirrors MSSPProvider); nil for test
+	// fixtures and the early splash path. Signature carries the
+	// already-decoded package name + JSON body — frame parsing happens
+	// at the telnet layer.
+	GMCPHandler func(s *Session, pkg string, body []byte)
+
+	// gmcpSupports is the client's most recent Core.Supports.Set
+	// state: package-name -> version. Adjusted by Core.Supports.Add
+	// and Core.Supports.Remove. Read by the GMCP subscription
+	// rebuilder when supports change. Under crossMu — written by the
+	// read goroutine inside Manager.Handle, read by the
+	// dispatcher-goroutine GMCP emit paths.
+	gmcpSupports map[string]int
+
+	// gmcpSubs is the slice of eventbus subscriptions owned by this
+	// session — installed when the client opts into a package via
+	// Core.Supports, cancelled on Core.Supports.Remove or session
+	// teardown. Stored as interface{} to keep telnet/ free of an
+	// import on internal/eventbus; the GMCP manager type-asserts on
+	// retrieve. Under crossMu.
+	gmcpSubs []any
+
+	// gmcpLastVitals dedups Char.Vitals frames. Combat-hit events can
+	// fire multiple times per round; sending the same {hp,maxhp,sp,
+	// maxsp} every time is wasted bandwidth + log noise. Under crossMu.
+	gmcpLastVitals struct {
+		HP, MaxHP, SP, MaxSP int32
+		valid                bool
+	}
+
 	// msspSent is the once-per-session guard against `DO MSSP` replay
 	// floods: RFC 855 forbids re-negotiating an already-agreed option,
 	// and a single MSSP response is ~500 bytes plus a Registry snapshot
@@ -260,6 +301,140 @@ func (s *Session) Charset() string {
 	s.crossMu.Lock()
 	defer s.crossMu.Unlock()
 	return s.charset
+}
+
+// SetGMCPEnabled flips the GMCP flag. Called from
+// handleOptionNegotiation on inbound DO GMCP. Safe from any goroutine.
+func (s *Session) SetGMCPEnabled(v bool) { s.gmcpEnabled.Store(v) }
+
+// GMCPEnabled reports whether the client has negotiated GMCP. Safe
+// from any goroutine.
+func (s *Session) GMCPEnabled() bool { return s.gmcpEnabled.Load() }
+
+// SetGMCPSupports replaces the client's package opt-in map. nil
+// clears. Caller owns the input — we copy so subsequent mutation
+// doesn't race readers.
+func (s *Session) SetGMCPSupports(m map[string]int) {
+	var cp map[string]int
+	if len(m) > 0 {
+		cp = make(map[string]int, len(m))
+		for k, v := range m {
+			cp[k] = v
+		}
+	}
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.gmcpSupports = cp
+}
+
+// GMCPSupports returns the client's current package opt-in map. May
+// be nil before Core.Supports.Set arrives.
+func (s *Session) GMCPSupports() map[string]int {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	if len(s.gmcpSupports) == 0 {
+		return nil
+	}
+	cp := make(map[string]int, len(s.gmcpSupports))
+	for k, v := range s.gmcpSupports {
+		cp[k] = v
+	}
+	return cp
+}
+
+// AddGMCPSub stashes an eventbus.Subscription handle to be cancelled
+// on session teardown. Stored as `any` so telnet/ does not need to
+// import internal/eventbus; the GMCP manager type-asserts on retrieve.
+func (s *Session) AddGMCPSub(sub any) {
+	if sub == nil {
+		return
+	}
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.gmcpSubs = append(s.gmcpSubs, sub)
+}
+
+// TakeGMCPSubs returns the current subscription handles AND clears
+// them in one critical section so the caller can cancel them without
+// a race against a concurrent AddGMCPSub.
+func (s *Session) TakeGMCPSubs() []any {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	out := s.gmcpSubs
+	s.gmcpSubs = nil
+	return out
+}
+
+// SetGMCPLastVitals records the most recently emitted Char.Vitals
+// frame so the next emit can be skipped when the four counters
+// haven't moved. valid=false is the "no prior emit" sentinel that
+// forces the first emit through.
+func (s *Session) SetGMCPLastVitals(hp, maxHP, sp, maxSP int32) {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	s.gmcpLastVitals.HP = hp
+	s.gmcpLastVitals.MaxHP = maxHP
+	s.gmcpLastVitals.SP = sp
+	s.gmcpLastVitals.MaxSP = maxSP
+	s.gmcpLastVitals.valid = true
+}
+
+// GMCPLastVitalsEquals reports whether the supplied vitals exactly
+// match the cached snapshot. Returns false on first call (no prior
+// emit), so the first vitals frame after login always goes through.
+func (s *Session) GMCPLastVitalsEquals(hp, maxHP, sp, maxSP int32) bool {
+	s.crossMu.Lock()
+	defer s.crossMu.Unlock()
+	v := s.gmcpLastVitals
+	return v.valid && v.HP == hp && v.MaxHP == maxHP && v.SP == sp && v.MaxSP == maxSP
+}
+
+// WriteGMCP frames a GMCP package and writes it to the wire. Silently
+// no-ops when the client has not negotiated GMCP — callers don't need
+// to guard on GMCPEnabled. Body is JSON-marshalled; bare strings can
+// be passed by wrapping in their typed payload (e.g. CharVitals).
+//
+// The wire bytes are out-of-band telnet (IAC SB ... IAC SE) and not
+// visible to the terminal display, so this uses WriteRaw — no prompt
+// repaint dance like WriteAsync.
+func (s *Session) WriteGMCP(pkg string, body any) error {
+	if !s.gmcpEnabled.Load() {
+		return nil
+	}
+	frame, err := encodeGMCPFrame(pkg, body)
+	if err != nil {
+		return fmt.Errorf("encode GMCP %s: %w", pkg, err)
+	}
+	return s.WriteRaw(frame)
+}
+
+// encodeGMCPFrame builds `IAC SB GMCP <pkg> <space> <json> IAC SE`
+// with IAC escaping. Implementation lives in the telnet package so
+// WriteGMCP doesn't import internal/gmcp (which would form a cycle —
+// the GMCP manager imports telnet).
+func encodeGMCPFrame(pkg string, body any) ([]byte, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, 5+len(pkg)+1+len(payload)+2)
+	out = append(out, TELNET_IAC, TELNET_SB, TELNET_OPT_GMCP)
+	out = appendGMCPField(out, []byte(pkg))
+	out = append(out, ' ')
+	out = appendGMCPField(out, payload)
+	out = append(out, TELNET_IAC, TELNET_SE)
+	return out, nil
+}
+
+func appendGMCPField(out, s []byte) []byte {
+	for _, b := range s {
+		if b == TELNET_IAC {
+			out = append(out, TELNET_IAC, TELNET_IAC)
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // InWorld returns a crossMu-protected snapshot of the in-world

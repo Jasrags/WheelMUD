@@ -86,8 +86,10 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo, bus *eventbus.Bus) 
 // NewTell builds the global private-message command. Resolves the
 // target by character name through session.Registry, writes one
 // line to each side, and updates the recipient's LastTellFrom so
-// `reply` knows where to write back.
-func NewTell(sessions *session.Registry) *telnet.Command {
+// `reply` knows where to write back. bus is optional — when non-nil,
+// publishes a world.PlayerTold event after the recipient write so
+// the Phase I #46 GMCP layer can emit Comm.Channel.Text frames.
+func NewTell(sessions *session.Registry, bus *eventbus.Bus) *telnet.Command {
 	return &telnet.Command{
 		Name:    "tell",
 		Help:    "Tell <name> <text> — send a private message",
@@ -131,13 +133,23 @@ func NewTell(sessions *session.Registry) *telnet.Command {
 			if err := peer.WriteAsync("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\""); err != nil {
 				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
 			}
+			if bus != nil {
+				bus.Publish(c.Ctx, world.PlayerTold{
+					FromCharacterID: c.Session.CharacterID,
+					ToCharacterID:   peer.CharacterID,
+					FromName:        speaker,
+					ToName:          peer.CharacterName,
+					Text:            text,
+				})
+			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")
 		},
 	}
 }
 
-// NewReply builds the reply-to-last-tell command.
-func NewReply(sessions *session.Registry) *telnet.Command {
+// NewReply builds the reply-to-last-tell command. bus is optional —
+// mirrors NewTell's publish of world.PlayerTold for the GMCP layer.
+func NewReply(sessions *session.Registry, bus *eventbus.Bus) *telnet.Command {
 	return &telnet.Command{
 		Name:    "reply",
 		Help:    "reply <text> — answer the last `tell` you received",
@@ -163,6 +175,15 @@ func NewReply(sessions *session.Registry) *telnet.Command {
 			peer.SetLastTellFrom(speaker)
 			if err := peer.WriteAsync("{{" + speaker + " tells you,}}::magenta \"{{" + text + "}}::white\""); err != nil {
 				slog.Debug("comm: peer write failed", "to", peer.CharacterName, "error", err)
+			}
+			if bus != nil {
+				bus.Publish(c.Ctx, world.PlayerTold{
+					FromCharacterID: c.Session.CharacterID,
+					ToCharacterID:   peer.CharacterID,
+					FromName:        speaker,
+					ToName:          peer.CharacterName,
+					Text:            text,
+				})
 			}
 			return c.Session.WriteString("{{You tell " + peer.CharacterName + ",}}::magenta \"{{" + text + "}}::white\"\r\n")
 		},
