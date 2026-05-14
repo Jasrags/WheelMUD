@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // idleTimeout bounds how long a session may sit without any input.
@@ -138,6 +140,14 @@ func shouldEndSession(err error) bool {
 }
 
 func dispatchByte(s *Session, r *bufio.Reader, b byte) error {
+	// Any non-UTF-8-continuation byte resets the pending UTF-8
+	// sequence — the prior partial is now garbage. The lead-byte
+	// case below re-sets utf8Have via collectUTF8Lead; every other
+	// branch (IAC / ESC / line break / control / ASCII printable)
+	// implicitly accepts the reset.
+	if b < 0x80 || b > 0xBF {
+		s.utf8Have = 0
+	}
 	switch {
 	case b == TELNET_IAC:
 		data, hasData, err := ReadIAC(s, r)
@@ -174,12 +184,87 @@ func dispatchByte(s *Session, r *bufio.Reader, b byte) error {
 		return handleKill(s, killToEnd)
 	case b == ASCII_ETB: // Ctrl-W
 		return handleKill(s, killPrevWord)
+	case b >= 0x80 && b <= 0xBF:
+		// UTF-8 continuation byte. Append to the pending sequence,
+		// dispatch a complete rune once enough bytes have arrived,
+		// or drop the sequence if it's malformed.
+		return collectUTF8Continuation(s, b)
+	case b >= 0xC2 && b <= 0xF4:
+		// UTF-8 lead byte. Start a new pending sequence and wait
+		// for the continuations.
+		return collectUTF8Lead(s, b)
 	case unicode.IsPrint(rune(b)):
+		// ASCII printable. Any stale UTF-8 partial is now garbage —
+		// reset before the byte-level Insert.
+		s.utf8Have = 0
 		return bufferInput(s, b)
 	default:
+		s.utf8Have = 0
 		slog.Debug("Received unhandled byte", "byte", b)
 		return nil
 	}
+}
+
+// utf8ExpectedLen returns the total UTF-8 sequence length implied by
+// a lead byte. Returns 0 for an invalid lead.
+func utf8ExpectedLen(lead byte) int {
+	switch {
+	case lead < 0x80:
+		return 1
+	case lead < 0xC2:
+		return 0 // invalid (continuation byte, or overlong 2-byte)
+	case lead < 0xE0:
+		return 2
+	case lead < 0xF0:
+		return 3
+	case lead <= 0xF4:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// collectUTF8Lead stamps the first byte of a non-ASCII rune sequence.
+// No echo emitted yet — wait for continuations.
+func collectUTF8Lead(s *Session, b byte) error {
+	s.utf8Pending[0] = b
+	s.utf8Have = 1
+	return nil
+}
+
+// collectUTF8Continuation appends a continuation byte. If the rune is
+// now complete, decode it and dispatch as a single InsertRune call.
+// Malformed sequences (continuation without a lead, invalid decode)
+// reset state silently with a debug log.
+func collectUTF8Continuation(s *Session, b byte) error {
+	if s.utf8Have == 0 {
+		// Stray continuation byte — no lead. Drop it.
+		slog.Debug("UTF-8 continuation without lead", "byte", b)
+		return nil
+	}
+	if s.utf8Have >= len(s.utf8Pending) {
+		s.utf8Have = 0
+		slog.Debug("UTF-8 sequence overran 4 bytes")
+		return nil
+	}
+	s.utf8Pending[s.utf8Have] = b
+	s.utf8Have++
+
+	expected := utf8ExpectedLen(s.utf8Pending[0])
+	if expected == 0 {
+		s.utf8Have = 0
+		return nil
+	}
+	if s.utf8Have < expected {
+		return nil // need more
+	}
+	r, n := utf8.DecodeRune(s.utf8Pending[:expected])
+	s.utf8Have = 0
+	if r == utf8.RuneError && n < expected {
+		slog.Debug("UTF-8 sequence decoded as RuneError")
+		return nil
+	}
+	return bufferInputRune(s, r)
 }
 
 type motionKind int
@@ -341,12 +426,18 @@ func handleLineBreak(s *Session) error {
 func handleBackspace(s *Session) error {
 	return s.EditAndWrite(func() []byte {
 		if s.InPasswordMode {
-			// Password mode keeps the legacy end-of-buffer-only behavior so
-			// the asterisk echo stays in lockstep with the buffer length.
+			// Password mode keeps the end-of-buffer-only model. Strip
+			// one whole rune (not one byte) so a CJK password char
+			// erases as one asterisk, matching the one-`*`-per-rune
+			// echo bufferInputRune emits on the way in.
 			if len(s.Input.Buf) == 0 {
 				return nil
 			}
-			s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-1]
+			_, size := utf8.DecodeLastRune(s.Input.Buf)
+			if size == 0 {
+				size = 1 // defensive: malformed tail, drop one byte
+			}
+			s.Input.Buf = s.Input.Buf[:len(s.Input.Buf)-size]
 			s.Input.Cursor = len(s.Input.Buf)
 			return []byte("\b \b")
 		}
@@ -365,6 +456,26 @@ func bufferInput(s *Session, b byte) error {
 			return []byte("*")
 		}
 		return s.Input.Insert(b)
+	})
+}
+
+// bufferInputRune is the multi-byte rune analogue of bufferInput,
+// dispatched once a complete UTF-8 sequence has been assembled by
+// the collector. Password mode emits one asterisk per glyph (not one
+// per byte) so a CJK password char doesn't render as three stars.
+func bufferInputRune(s *Session, r rune) error {
+	return s.EditAndWrite(func() []byte {
+		if s.InPasswordMode {
+			// End-only model: append the rune's UTF-8 encoding to
+			// the buffer, advance cursor to end, echo a single
+			// asterisk for the entire glyph.
+			encbuf := make([]byte, utf8.UTFMax)
+			n := utf8.EncodeRune(encbuf, r)
+			s.Input.Buf = append(s.Input.Buf, encbuf[:n]...)
+			s.Input.Cursor = len(s.Input.Buf)
+			return []byte("*")
+		}
+		return s.Input.InsertRune(r)
 	})
 }
 
@@ -443,10 +554,12 @@ func extendBuffer(s *Session, partial, replacement string) error {
 		s.Input.Buf = append(s.Input.Buf, replacement...)
 		s.Input.Cursor = len(s.Input.Buf)
 
-		// Erase one display cell per rune of the old partial. ASCII verbs are
-		// the steady state today; this stays correct if non-ASCII candidates
-		// land later (and validVerb is loosened).
-		return []byte(strings.Repeat("\b \b", utf8.RuneCountInString(partial)) + replacement)
+		// Erase one display cell per rune-width of the old partial. ASCII
+		// verbs are the steady state today; runewidth.StringWidth gives
+		// rune-count for ASCII and cell-count for CJK / emoji so this
+		// stays correct if non-ASCII candidates land later (and validVerb
+		// is loosened).
+		return []byte(strings.Repeat("\b \b", runewidth.StringWidth(partial)) + replacement)
 	})
 }
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/i582/cfmt/cmd/cfmt"
@@ -47,7 +48,17 @@ type Session struct {
 	// Same goroutine-affinity rules as Input.
 	History        History
 	InPasswordMode bool
-	ColorLevel     int
+
+	// utf8Pending and utf8Have buffer continuation bytes of an
+	// in-flight UTF-8 sequence so the dispatcher can hand a complete
+	// rune to LineEdit.InsertRune (rather than calling Insert(b)
+	// three times per CJK glyph, which can't echo correctly when the
+	// cursor is mid-buffer). Owned by the read goroutine; no lock.
+	// Reset to zero on session start, on any non-printable byte
+	// (control / IAC / line break), and on malformed sequences.
+	utf8Pending [4]byte
+	utf8Have    int
+	ColorLevel  int
 	// AuthLevel is the privilege the session has earned. Defaults to
 	// AuthGuest until login mode promotes it. Registry.Dispatch checks
 	// this against Command.Auth.
@@ -946,7 +957,9 @@ func (s *Session) WriteAsync(text string) error {
 	case len(inputBuf) == 0:
 		inputEcho = nil
 	case masked:
-		inputEcho = bytes.Repeat([]byte("*"), len(inputBuf))
+		// One asterisk per rune, not per byte — a CJK password
+		// glyph (3 UTF-8 bytes) must echo as one `*`, not three.
+		inputEcho = bytes.Repeat([]byte("*"), utf8.RuneCount(inputBuf))
 	default:
 		inputEcho = inputBuf
 	}
