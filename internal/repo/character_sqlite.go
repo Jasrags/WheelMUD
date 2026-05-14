@@ -741,6 +741,31 @@ func (r *SQLiteCharacterRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// ClampInvalidAuthLevels brings out-of-range auth_level rows back into
+// [0, AuthLevelMax] at boot. The UPDATE only matches rows above the
+// max because the CHECK constraint (migration 0019) forbids negatives;
+// any row that exists must therefore be either valid or above the
+// ceiling. Clamping upward to AuthLevelMax is the safer recovery: it
+// preserves the operator's apparent intent (a value > admin reads as
+// "at least admin") rather than silently demoting an unknown row to
+// player.
+//
+// Idempotent. Returns the number of rows mutated; the caller is
+// expected to log a warn when > 0 so the data anomaly surfaces.
+func (r *SQLiteCharacterRepo) ClampInvalidAuthLevels(ctx context.Context) (int, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET auth_level = ? WHERE auth_level > ?`,
+		AuthLevelMax, AuthLevelMax)
+	if err != nil {
+		return 0, fmt.Errorf("clamp invalid auth_level: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("clamp invalid auth_level: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // characterSelect is the canonical SELECT used by FindByName /
 // ListByAccount. Columns ordered: identity → CurrentRoomID → Core
 // block → player block. scanCharacter mirrors the order.

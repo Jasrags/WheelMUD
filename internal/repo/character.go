@@ -364,6 +364,21 @@ type CharacterRepo interface {
 	// channeling_json, last_news_seen, …) are removed with the row.
 	// Returns ErrCharacterNotFound when no row matches id.
 	Delete(ctx context.Context, id int64) error
+
+	// ClampInvalidAuthLevels is a boot-time data integrity audit. Any
+	// character row with auth_level outside the legal range [0,
+	// AuthLevelMax] is clamped down to AuthLevelMax. Returns the
+	// number of rows mutated. The schema's CHECK constraint
+	// (migration 0019) prevents writes outside the range under
+	// normal code paths, but a hand-edited DB row or a legacy row
+	// that predates the constraint can still trip the post-load
+	// scan validator with "invalid auth_level <N>" and lock the
+	// owning account out of character select. This is the recovery
+	// hatch: a single UPDATE at boot that brings the row back into
+	// range with a warn-level log so the operator notices.
+	//
+	// Idempotent: a clean DB returns (0, nil).
+	ClampInvalidAuthLevels(ctx context.Context) (int, error)
 }
 
 // LevelUpFields is the persistence shape for a single class-level

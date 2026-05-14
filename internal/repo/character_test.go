@@ -1138,6 +1138,34 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 			t.Fatalf("a1 got %+v", got)
 		}
 	})
+
+	t.Run(name+"/clamp_auth_level_idempotent_on_clean_db", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		// First character is auto-promoted to admin (=2) — still in range.
+		if _, err := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Solo"}); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		clamped, err := cr.ClampInvalidAuthLevels(ctx)
+		if err != nil {
+			t.Fatalf("clamp: %v", err)
+		}
+		if clamped != 0 {
+			t.Fatalf("clean DB clamped %d rows; want 0", clamped)
+		}
+	})
+
+	t.Run(name+"/clamp_auth_level_empty_db", func(t *testing.T) {
+		cr, _ := newRepo(t)
+		clamped, err := cr.ClampInvalidAuthLevels(context.Background())
+		if err != nil {
+			t.Fatalf("clamp: %v", err)
+		}
+		if clamped != 0 {
+			t.Fatalf("empty DB clamped %d rows; want 0", clamped)
+		}
+	})
 }
 
 // runRecordCoinVersionTests exercises the optimistic-concurrency
@@ -1210,6 +1238,52 @@ func TestMemoryCharacterRepo(t *testing.T) {
 	}
 	runCharacterRepoTests(t, "memory", mk)
 	runRecordCoinVersionTests(t, "memory", mk)
+}
+
+// TestMemoryCharacterRepo_ClampAuthLevelHighValue exercises the
+// audit's mutation path. The SQLite schema CHECK constraint
+// (migration 0019) forbids inserting a row above AuthLevelMax, so
+// staging a "bad row" for the corresponding SQLite test isn't
+// possible through the public API. The memory repo has no such
+// constraint and serves as the contract proof.
+func TestMemoryCharacterRepo_ClampAuthLevelHighValue(t *testing.T) {
+	ctx := context.Background()
+	cr := NewMemoryCharacterRepo()
+	ar := NewMemoryAccountRepo()
+	acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+
+	first, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Solo"})  // auto-admin
+	second, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Duet"}) // default player
+
+	// Hand-stamp a high auth_level on the second character via the
+	// repo's internal map — simulating a hand-edited DB row.
+	cr.mu.Lock()
+	cr.byLower["duet"].AuthLevel = 7
+	cr.mu.Unlock()
+
+	clamped, err := cr.ClampInvalidAuthLevels(ctx)
+	if err != nil {
+		t.Fatalf("clamp: %v", err)
+	}
+	if clamped != 1 {
+		t.Fatalf("clamped = %d, want 1", clamped)
+	}
+
+	got, _ := cr.GetByID(ctx, second.ID)
+	if got.AuthLevel != AuthLevelMax {
+		t.Fatalf("second.AuthLevel = %d, want %d", got.AuthLevel, AuthLevelMax)
+	}
+	// Bootstrap admin must be untouched.
+	got, _ = cr.GetByID(ctx, first.ID)
+	if got.AuthLevel != AuthLevelAdmin {
+		t.Fatalf("first.AuthLevel = %d, want %d", got.AuthLevel, AuthLevelAdmin)
+	}
+
+	// Re-running is a no-op now that everything is in range.
+	clamped, _ = cr.ClampInvalidAuthLevels(ctx)
+	if clamped != 0 {
+		t.Fatalf("re-clamp returned %d; want 0 (idempotent)", clamped)
+	}
 }
 
 func TestSQLiteCharacterRepo(t *testing.T) {

@@ -215,6 +215,21 @@ func main() {
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(conn)
 	builderZones := repo.NewSQLiteBuilderZoneRepo(conn)
 
+	// Boot-time data integrity audit: a character row with auth_level
+	// outside [0, AuthLevelMax] would later trip the post-load scan
+	// validator with "invalid auth_level <N>" and lock the owning
+	// account out of character select. The schema's CHECK constraint
+	// (migration 0019) forbids this under normal code paths, but a
+	// hand-edited row or a row that predates the constraint can still
+	// be present. Clamp + warn so a fresh boot recovers instead of
+	// requiring manual SQL.
+	if clamped, err := characters.ClampInvalidAuthLevels(context.Background()); err != nil {
+		slog.Warn("auth_level audit: clamp failed", "error", err)
+	} else if clamped > 0 {
+		slog.Warn("auth_level audit: clamped out-of-range rows",
+			"rows", clamped, "ceiling", repo.AuthLevelMax)
+	}
+
 	loaded, err := world.LoadAndSync(context.Background(), conn, world.SourceFS())
 	if err != nil {
 		slog.Error("World load failed", "error", err)

@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/gookit/color v1.3.2
 	github.com/i582/cfmt v1.4.0
+	github.com/mattn/go-runewidth v0.0.23
 	github.com/prometheus/client_golang v1.23.2
 	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/crypto v0.50.0
@@ -20,7 +21,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

@@ -527,6 +527,22 @@ func (r *MemoryCharacterRepo) Delete(_ context.Context, id int64) error {
 	return ErrCharacterNotFound
 }
 
+// ClampInvalidAuthLevels mirrors the SQLite impl. The memory repo has
+// no schema CHECK so a test can stage a high value and observe the
+// audit clamping it back to AuthLevelMax.
+func (r *MemoryCharacterRepo) ClampInvalidAuthLevels(_ context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clamped := 0
+	for _, c := range r.byLower {
+		if c.AuthLevel > AuthLevelMax {
+			c.AuthLevel = AuthLevelMax
+			clamped++
+		}
+	}
+	return clamped, nil
+}
+
 func (r *MemoryCharacterRepo) MarkNewsSeen(_ context.Context, id int64, when time.Time) error {
 	if when.IsZero() {
 		return nil
