@@ -399,9 +399,21 @@ investment / new-weave learning intentionally **stay in old Phase D**
     YAML / loader / `redit` OLC / `zonemap` reporter
     (loader-lockstep). Existing `combat.handleCharacterDeath`
     respawn path picks up the new BoundRoomID without changes.
-    Still deferred: drop-on-death toggle; PvP XP awards on
-    character kill; two-UPDATE TOCTOU on RecordXP + RecordXPDebt
-    (safe under single-session-per-account).
+    **PvP XP awards LANDED 2026-05-14**: shared `creditXPShares`
+    helper extracted from mob's `awardKillXP` (mob path
+    byte-equivalent via thin wrapper); `handleCharacterDeath`
+    snapshots `Fight.DamageTally` under `m.mu` and, after the
+    death/respawn events, strips the victim from the tally and
+    runs `creditXPShares` with `pvpXPForKill(attackerLevel,
+    victimLevel)`. New `pvp_xp.go`:
+    `PvPXPPerVictimLevel = 50`, `PvPLevelDiffCap = 5` — kills
+    where attacker outlevels victim by more than the cap return
+    0 (anti-farm). Non-combat deaths (empty killer from
+    `HandleAffectDeath`) and empty-tally edges short-circuit.
+    Still deferred: drop-on-death toggle; two-UPDATE TOCTOU on
+    RecordXP + RecordXPDebt (safe under single-session-per-account).
+    **§19 is now functionally complete** — all remaining items
+    are optional polish or multi-session prerequisites.
 20. **Aggro / threat tables** (§11). Slice 1 LANDED 2026-05-07:
     `Fight.Threat map[ActorRef]map[ActorRef]int32` (defender →
     attacker → cumulative). Damage adds 1:1 from the same site that

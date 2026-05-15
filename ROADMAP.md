@@ -1081,8 +1081,23 @@ will need on top of those tables.
       flag reporter (loader-lockstep). The existing
       `combat.handleCharacterDeath` respawn path picks up the new
       value automatically — no death-side changes needed.
-      Still pending: drop-on-death toggle if play-tests demand it;
-      PvP XP awards on character kill; two-UPDATE TOCTOU on
+      **PvP XP awards landed 2026-05-14** — `combat.handleCharacterDeath`
+      now snapshots `Fight.DamageTally` under `m.mu` (mirrors
+      mob_death's critical section) and, after the existing
+      death/respawn events, runs the new shared `creditXPShares`
+      helper. New `pvp_xp.go`: `pvpXPForKill(attackerLevel,
+      victimLevel) int64` returns `PvPXPPerVictimLevel(50) *
+      victimLevel`, zeroed when `attacker - victim >
+      PvPLevelDiffCap(5)` so high-level alts can't farm low ones.
+      Refactor extracted the per-character XP loop out of
+      `awardKillXP` into shared `creditXPShares` so mob and PvP
+      paths share group-expand / allocateXP / ApplyXPAward /
+      CombatXPAwarded plumbing — mob path is byte-equivalent to
+      before. Non-combat deaths (HandleAffectDeath, empty
+      killer) and empty-tally edges short-circuit; victim is
+      stripped from the tally before allocation so a self-damage
+      reflect can't credit XP back. Still pending: drop-on-death
+      toggle if play-tests demand it; two-UPDATE TOCTOU on
       RecordXP + RecordXPDebt (safe under single-session-per-account
       today). Mob respawn via §9 zone reset already shipped
       (`internal/world/respawn.go::ZoneResetter.respawnMobs`).
