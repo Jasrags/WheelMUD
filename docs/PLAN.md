@@ -494,9 +494,26 @@ catalogs.
 23. ~~**Levels & XP curve** (§12). Reads the §12 class / level table;
     awards feat slots, skill points, ability bumps, weave slots on
     train.~~ Closed 2026-05-07 (slices 1–4 landed; see ROADMAP §12).
-24. **Mid-game skill rank investment** (§12). Per-character
+24. ~~**Mid-game skill rank investment** (§12). Per-character
     `character_skills` writes; respects class-skill / cross-class
-    caps from the chargen catalog.
+    caps from the chargen catalog.~~ **Closed 2026-05-14.** Slice 1
+    (class + background, 1pt/rank, cap level+3) landed 2026-05-07
+    (see ROADMAP §12). **Cross-class slice LANDED 2026-05-14**:
+    `learn` now lists the full catalog. Class/background entries
+    keep 1pt/rank + cap level+3 (`IsClassSkill=true`); cross-class
+    entries cost 2pt/rank + cap `(level+3)/2` (`IsClassSkill=false`).
+    `learn.go` adds `classSkillSet` / `crossClassSkillRankCap` /
+    `skillCostAndCap` helpers; `isClassOrBackgroundSkill` picks the
+    bucket at commit time and feeds the existing `RecordSkillRank`
+    write path unchanged. Menu header shows dual cap
+    (`"6 (class) / 3 (cross)"`); each row carries `[class]`/`[bg]`/
+    `[cross]` tag with bucket-specific cap. `learn info` shows
+    Cost/rank and Rank-cap. Unknown-token refusal text changed
+    from "not available to you" → "No such skill." (cross-class is
+    now available; only off-catalog tokens refuse). Refusal
+    ordering preserved (cap → budget → repo → audit on success).
+    No schema, no repo signature change, no new pending pool.
+    Deferred: prefix-match disambiguation.
 25. ~~**Affects / buffs / debuffs with durations** (§12).~~
     **#25 closed 2026-05-10.** Remaining producer threads
     (combat-on-hit, weave-cast, healer NPC, light fuel, player

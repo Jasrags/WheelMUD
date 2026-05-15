@@ -1449,14 +1449,25 @@ will need on top of those tables.
       newRanks, isClassSkill, newPending)` — atomic UPSERT in a
       sqlite TX (read skills_json → merge → UPDATE skills_json +
       pending_skill_points). `learn <id|#> [n]` works anywhere
-      (no trainer required); allowed list = union of class-skills
-      across `ClassLevels` ∪ background skills; cap = `level + 3`;
-      cost = 1 pending point per rank. `learn info <id>` is
-      read-only. Refusals don't mutate or audit; success writes
-      one `learn` audit row. Pending: cross-class picks at half
-      rate (deferred per chargen V1 stance), prefix-disambiguation
-      for skill tokens, skill-check rolls (`d20 + ranks + mod`)
-      against skill DCs in combat / weave paths.
+      (no trainer required); class-skill / background-skill picks
+      cost 1 pending point per rank, cap = `level + 3`,
+      `IsClassSkill=true`. `learn info <id>` is read-only. Refusals
+      don't mutate or audit; success writes one `learn` audit row.
+      **Cross-class slice landed 2026-05-14** — `learn` now lists
+      every catalog skill. Cross-class picks (any catalog skill
+      that's not in `ClassLevels` class-skills ∪ background skills)
+      cost 2 pending points per rank, cap = `(level + 3) / 2`
+      (floor), stored with `IsClassSkill=false`. Menu header shows
+      dual cap (`"N (class) / M (cross)"`); per-row tag is
+      `[class]` / `[bg]` / `[cross]` with bucket-specific cap.
+      `learn info` shows Cost/rank + Rank-cap. Helper changes in
+      `internal/cmd/learn.go`: `classSkillSet`,
+      `crossClassSkillRankCap`, `skillCostAndCap`,
+      `isClassOrBackgroundSkill`, `allLearnableSkillIDs`. No schema
+      change; existing `IsClassSkill=true` rows untouched. Phase E
+      #24 closed. Pending: prefix-disambiguation for skill tokens,
+      skill-check rolls (`d20 + ranks + mod`) against skill DCs in
+      combat / weave paths.
 - [ ] Weave (One Power) list with slot levels — replaces the
       generic spell/mana model. `weaves` table (id, name, level
       0–9, school/affinity (Air/Earth/Fire/Water/Spirit — multiple),
