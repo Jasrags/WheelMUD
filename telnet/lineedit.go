@@ -115,10 +115,12 @@ func (l *LineEdit) Backspace() []byte {
 	if l.Cursor == 0 {
 		return nil
 	}
+	// DecodeLastRune on a non-empty slice always returns size >= 1
+	// (RuneError + size 1 for a malformed trailing byte). The
+	// Cursor==0 guard above ensures the slice is non-empty, so a
+	// size==0 check would be dead. Malformed bytes degrade
+	// gracefully: w=1, single-byte removal.
 	r, size := utf8.DecodeLastRune(l.Buf[:l.Cursor])
-	if size == 0 {
-		return nil
-	}
 	w := runeCellWidth(r)
 	l.Buf = append(l.Buf[:l.Cursor-size], l.Buf[l.Cursor:]...)
 	l.Cursor -= size
@@ -139,10 +141,9 @@ func (l *LineEdit) Delete() []byte {
 	if l.Cursor >= len(l.Buf) {
 		return nil
 	}
+	// DecodeRune on a non-empty slice always returns size >= 1; the
+	// Cursor>=len guard above is the empty-slice check.
 	r, size := utf8.DecodeRune(l.Buf[l.Cursor:])
-	if size == 0 {
-		return nil
-	}
 	w := runeCellWidth(r)
 	l.Buf = append(l.Buf[:l.Cursor], l.Buf[l.Cursor+size:]...)
 	suffix := l.Buf[l.Cursor:]
@@ -160,9 +161,6 @@ func (l *LineEdit) MoveLeft() []byte {
 		return nil
 	}
 	r, size := utf8.DecodeLastRune(l.Buf[:l.Cursor])
-	if size == 0 {
-		return nil
-	}
 	l.Cursor -= size
 	return bytes.Repeat([]byte{ASCII_BS}, runeCellWidth(r))
 }
@@ -175,9 +173,6 @@ func (l *LineEdit) MoveRight() []byte {
 		return nil
 	}
 	_, size := utf8.DecodeRune(l.Buf[l.Cursor:])
-	if size == 0 {
-		return nil
-	}
 	out := append([]byte(nil), l.Buf[l.Cursor:l.Cursor+size]...)
 	l.Cursor += size
 	return out

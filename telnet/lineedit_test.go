@@ -300,6 +300,25 @@ func TestLineEditMoveHome_AfterCJK(t *testing.T) {
 	}
 }
 
+func TestLineEditBackspace_CombiningMark(t *testing.T) {
+	// U+0301 COMBINING ACUTE ACCENT is 2 UTF-8 bytes (0xCC 0x81) and
+	// runewidth.RuneWidth returns 0 for it. runeCellWidth's floor of
+	// 1 bumps that to one cell so the cursor still advances on
+	// backspace. A future refactor that removes the floor would
+	// regress this case; pin it.
+	l := LineEdit{}
+	_ = l.InsertRune('́')
+	got := l.Backspace()
+	// w = 1 (floored), suffix empty. Echo: \b + (empty) + ' ' + \b.
+	want := []byte{ASCII_BS, ' ', ASCII_BS}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("echo = % x, want % x", got, want)
+	}
+	if len(l.Buf) != 0 || l.Cursor != 0 {
+		t.Fatalf("state = % x cur=%d, want empty cur=0", l.Buf, l.Cursor)
+	}
+}
+
 func TestLineEditKillPrevWord_CJK(t *testing.T) {
 	// "ab 中文 " (cursor at end after the trailing space).
 	// KillPrevWord skips the trailing space then walks back through
