@@ -118,15 +118,24 @@ constants and helpers in `telnet/iac.go`.
       `Session.WriteWrapped` / `WritePagedWrapped` pass
       `Charset() == "UTF-8"`. Regression test
       `TestWrapText_CellWidthCountsCJKAsTwo`.
-- [ ] Width-aware **cursor accounting** in `LineEdit` (line editor)
-      and `extendBuffer` (tab-completion repaint) — both still
-      byte/rune-based. A CJK character entered via UTF-8 is
-      inserted byte-by-byte, backspace erases bytes (not glyphs),
-      and tab completion's backspace count under-emits for 2-cell
-      glyphs. Bigger lift than the wrap side because it changes
-      byte-buffer semantics; tracked in
-      `terminal_rendering_followups.md` item #2. Trigger: any
-      real CJK player.
+- [x] Width-aware **cursor accounting** in `LineEdit` and the byte
+      dispatcher — landed 2026-05-14. `telnet/lineedit.go`
+      primitives (Insert / InsertRune / Backspace / Delete /
+      Move* / Kill* / Replace) walk by rune via
+      `utf8.DecodeRune` / `DecodeLastRune` and emit cell-count BS
+      via `runewidth.RuneWidth` / `StringWidth`. The byte
+      dispatcher (`telnet/server.go::dispatchByte`) accumulates
+      UTF-8 continuation bytes in `Session.utf8Pending` / `utf8Have`
+      and hands a complete rune to `LineEdit.InsertRune` — one
+      call per glyph, not three per byte. Password mode echoes one
+      `*` per glyph; `extendBuffer` (tab-completion repaint) uses
+      `runewidth.StringWidth` for the BS count; `WriteAsync`'s
+      masked redraw counts asterisks by rune. Coverage: 9 CJK
+      lineedit tests + 6 dispatcher/echo tests + 1 combining-mark
+      regression. Deferred: grapheme-cluster awareness — a `é`
+      typed as `e + COMBINING ACUTE` still edits in two
+      backspaces (one per codepoint). Closes
+      `terminal_rendering_followups.md` item #2.
 - [x] Long-token break in `WrapText` — landed 2026-05-14 alongside
       the CHARSET work. Tokens whose cell width exceeds the wrap
       width are now split into successive width-cell chunks

@@ -975,6 +975,15 @@ backlog items, just polish that surfaced during the Phase I work.
   log. Fixes "invalid auth_level <N>" errors locking accounts out
   of character select on DBs that predated migration 0019's CHECK
   constraint.
+- **Width-aware cursor accounting** (§2). The byte dispatcher now
+  accumulates UTF-8 continuation bytes and hands complete runes to
+  a new `LineEdit.InsertRune`; backspace / delete / motion / kill /
+  replace primitives walk by rune and emit cell-count BS. Password
+  mode echoes one `*` per glyph; `extendBuffer` and `WriteAsync`'s
+  masked redraw follow the same cell-count contract. Pairs with
+  the §44 wrap-side cell-width work to make the full input + output
+  pipeline UTF-8 / CJK correct. Closes
+  `terminal_rendering_followups.md` item #2.
 
 ---
 
