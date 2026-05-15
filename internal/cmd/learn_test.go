@@ -31,6 +31,11 @@ func newLearnFixture(t *testing.T, pending int32, level int8) *learnFixture {
 		Name:               "Alice",
 		CurrentRoomID:      1,
 		ClassLevels:        map[creature.Class]int8{creature.ClassArmsman: level},
+		// Sentinel: matches no catalog background, so background_skills
+		// don't leak into class-bucket membership. Keeps the cross-
+		// class tests deterministic regardless of which Background is
+		// enum 0.
+		Background:         creature.Background(-1),
 		PendingSkillPoints: pending,
 	}); err != nil {
 		t.Fatalf("seed alice: %v", err)
@@ -157,17 +162,58 @@ func TestLearn_BudgetRefusalDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestLearn_CrossClassRefusal(t *testing.T) {
-	// "stealth" is NOT an armsman class skill.
+func TestLearn_CrossClassSpend(t *testing.T) {
+	// "hide" is a real catalog skill but NOT an armsman class skill,
+	// so it's cross-class: cost = 2 pts/rank, cap = (3+3)/2 = 3,
+	// stored with IsClassSkill=false.
 	f := newLearnFixture(t, 5, 3)
-	runCmd(t, f.learnCmd(), f.alice, "stealth")
+	runCmd(t, f.learnCmd(), f.alice, "hide")
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	key := chargen.HashID("hide")
+	if got.Skills[key].Ranks != 1 {
+		t.Errorf("hide ranks = %d, want 1", got.Skills[key].Ranks)
+	}
+	if got.Skills[key].IsClassSkill {
+		t.Errorf("hide IsClassSkill = true, want false (cross-class)")
+	}
+	if got.PendingSkillPoints != 3 {
+		t.Errorf("PendingSkillPoints = %d, want 3 (5 − 2pt cross-class)", got.PendingSkillPoints)
+	}
+}
+
+func TestLearn_CrossClassCapRefusalDoesNotMutate(t *testing.T) {
+	// L3 cross-class cap = (3+3)/2 = 3. Asking for 4 must refuse.
+	f := newLearnFixture(t, 20, 3)
+	runCmd(t, f.learnCmd(), f.alice, "hide 4")
 	out := f.aOut.String()
-	if !strings.Contains(out, "not available") {
-		t.Fatalf("expected cross-class refusal:\n%s", out)
+	if !strings.Contains(out, "cap of 3") {
+		t.Fatalf("expected cross-class cap refusal:\n%s", out)
 	}
 	got, _ := f.characters.FindByName(context.Background(), "Alice")
-	if got.PendingSkillPoints != 5 {
-		t.Errorf("refusal mutated pending: %d", got.PendingSkillPoints)
+	key := chargen.HashID("hide")
+	if got.Skills[key].Ranks != 0 {
+		t.Errorf("cap refusal mutated ranks: %d", got.Skills[key].Ranks)
+	}
+	if got.PendingSkillPoints != 20 {
+		t.Errorf("cap refusal mutated pending: %d", got.PendingSkillPoints)
+	}
+	rows, _ := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10})
+	if len(rows) != 0 {
+		t.Errorf("cap refusal must not audit: %d rows", len(rows))
+	}
+}
+
+func TestLearn_CrossClassBudgetRefusal(t *testing.T) {
+	// 1pt available, cross-class costs 2 → must refuse.
+	f := newLearnFixture(t, 1, 3)
+	runCmd(t, f.learnCmd(), f.alice, "hide")
+	out := f.aOut.String()
+	if !strings.Contains(out, "Not enough skill points") {
+		t.Fatalf("expected cross-class budget refusal:\n%s", out)
+	}
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	if got.PendingSkillPoints != 1 {
+		t.Errorf("budget refusal mutated pending: %d", got.PendingSkillPoints)
 	}
 }
 
@@ -175,8 +221,45 @@ func TestLearn_UnknownTokenRefusal(t *testing.T) {
 	f := newLearnFixture(t, 5, 3)
 	runCmd(t, f.learnCmd(), f.alice, "frobnicate")
 	out := f.aOut.String()
-	if !strings.Contains(out, "not available") {
+	if !strings.Contains(out, "No such skill") {
 		t.Fatalf("expected unknown-skill refusal:\n%s", out)
+	}
+	got, _ := f.characters.FindByName(context.Background(), "Alice")
+	if got.PendingSkillPoints != 5 {
+		t.Errorf("unknown-token mutated pending: %d", got.PendingSkillPoints)
+	}
+}
+
+func TestLearn_MenuShowsAllBucketsWithTags(t *testing.T) {
+	f := newLearnFixture(t, 5, 3)
+	runCmd(t, f.learnCmd(), f.alice, "")
+	out := f.aOut.String()
+	// Armsman class skill: climb → [class]; cross-class catalog skill:
+	// hide → [cross]. Both must appear.
+	if !strings.Contains(out, "Climb") || !strings.Contains(out, "[class]") {
+		t.Errorf("menu missing class skill tag:\n%s", out)
+	}
+	if !strings.Contains(out, "Hide") || !strings.Contains(out, "[cross]") {
+		t.Errorf("menu missing cross-class skill tag:\n%s", out)
+	}
+	// Header shows both caps.
+	if !strings.Contains(out, "6 (class) / 3 (cross)") {
+		t.Errorf("menu header missing dual cap:\n%s", out)
+	}
+}
+
+func TestLearn_AuditOnCrossClassSuccess(t *testing.T) {
+	f := newLearnFixture(t, 5, 3)
+	runCmd(t, f.learnCmd(), f.alice, "hide")
+	rows, err := f.audits.List(context.Background(), repo.AdminAuditFilter{Limit: 10})
+	if err != nil {
+		t.Fatalf("list audits: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("audit rows = %d, want 1", len(rows))
+	}
+	if rows[0].Verb != "learn" || rows[0].Target != "hide" || rows[0].Args != "ranks=1" {
+		t.Errorf("audit row = %+v, want verb=learn target=hide args=ranks=1", rows[0])
 	}
 }
 
@@ -207,17 +290,20 @@ func TestLearn_AuditOnSuccessOnly(t *testing.T) {
 
 func TestLearn_NumericMenuTokenResolves(t *testing.T) {
 	f := newLearnFixture(t, 5, 3)
-	// Bare menu first to know the order; allowed = sorted armsman
-	// class skills. We don't assert which is "1" because order is
-	// alphabetical and stable; just verify a numeric pick increments
-	// SOME class skill by 1 and decrements pending.
+	// Menu order is the full catalog sorted alphabetically. "1"
+	// resolves to "appraise" — a cross-class skill for armsman. Cost
+	// = 2 pts, IsClassSkill=false, one entry recorded.
 	runCmd(t, f.learnCmd(), f.alice, "1")
 	got, _ := f.characters.FindByName(context.Background(), "Alice")
-	if got.PendingSkillPoints != 4 {
-		t.Errorf("PendingSkillPoints = %d, want 4 (numeric pick)", got.PendingSkillPoints)
+	if got.PendingSkillPoints != 3 {
+		t.Errorf("PendingSkillPoints = %d, want 3 (5 − 2pt cross-class)", got.PendingSkillPoints)
 	}
 	if len(got.Skills) != 1 {
 		t.Errorf("Skills = %d entries, want 1", len(got.Skills))
+	}
+	key := chargen.HashID("appraise")
+	if got.Skills[key].Ranks != 1 || got.Skills[key].IsClassSkill {
+		t.Errorf("appraise entry = %+v, want ranks=1 IsClassSkill=false", got.Skills[key])
 	}
 }
 

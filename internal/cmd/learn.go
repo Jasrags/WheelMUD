@@ -6,16 +6,17 @@ package cmd
 // `train` (slice 4) on level-up; this verb is the symmetric spend
 // path.
 //
-// V1 scope:
-//   - Allowed list = union of class-skills (across all ClassLevels
-//     keys) ∪ background skills. Cross-class picks are deferred,
-//     mirroring the chargen V1 stance (chargen_features_followups.md).
-//   - 1 pending point per rank. Cross-class half-rate is deferred.
-//   - Per-skill cap = characterLevel + 3.
+// Scope:
+//   - Class skills (union of class-skills across all ClassLevels keys)
+//     and background skills cost 1 pending point per rank, cap =
+//     characterLevel + 3, persisted with IsClassSkill=true.
+//   - Cross-class skills (any other catalog skill) cost 2 pending
+//     points per rank, cap = (characterLevel + 3) / 2 (floor),
+//     persisted with IsClassSkill=false. d20 baseline.
 //   - No trainer NPC required — learn works anywhere.
 //
-// Refusals (skill not allowed, over-cap, over-budget, unknown id) do
-// NOT mutate or audit. Successful spends write one admin_audit row.
+// Refusals (over-cap, over-budget, unknown id) do NOT mutate or audit.
+// Successful spends write one admin_audit row.
 
 import (
 	"fmt"
@@ -66,10 +67,10 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 				slog.Error("learn: char lookup", "char", s.CharacterID, "error", err)
 				return s.WriteString("{{You can't find your records.}}::red\r\n")
 			}
-			allowed := allowedSkillIDsFor(char, cat)
+			all := allLearnableSkillIDs(cat)
 
 			if len(args) == 0 {
-				return writeLearnMenu(s, char, allowed, cat)
+				return writeLearnMenu(s, char, all, cat)
 			}
 
 			// `learn info <skill|#>` — read-only descriptor.
@@ -77,13 +78,13 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 				if len(args) < 2 {
 					return s.WriteString("{{Type 'learn info <skill>' for a skill description.}}::yellow\r\n")
 				}
-				return writeLearnInfo(s, args[1], allowed, cat)
+				return writeLearnInfo(s, args[1], char, all, cat)
 			}
 
 			// `learn <skill|#> [n]` — spend.
-			id, ok := matchSkillToken(args[0], allowed, cat)
+			id, ok := matchSkillToken(args[0], all, cat)
 			if !ok {
-				return s.WriteString("{{That skill is not available to you.}}::yellow\r\n")
+				return s.WriteString("{{No such skill.}}::yellow\r\n")
 			}
 			n := 1
 			if len(args) >= 2 {
@@ -102,7 +103,7 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 // internal/display helpers (SectionHeader / Subsection / FieldRow) so
 // the look matches `score` and the chargen review.
 func writeLearnMenu(s *telnet.Session, char repo.Character,
-	allowed []string, cat *chargen.Catalog,
+	all []string, cat *chargen.Catalog,
 ) error {
 	if err := display.SectionHeader(s, "Skill Training"); err != nil {
 		return err
@@ -111,19 +112,21 @@ func writeLearnMenu(s *telnet.Session, char repo.Character,
 		strconv.Itoa(int(char.PendingSkillPoints)), 14); err != nil {
 		return err
 	}
-	skillCap := skillRankCap(char)
+	classCap := classSkillRankCap(char)
+	crossCap := crossClassSkillRankCap(char)
 	if err := display.FieldRow(s, "Per-skill cap",
-		strconv.Itoa(skillCap), 14); err != nil {
+		fmt.Sprintf("%d (class) / %d (cross)", classCap, crossCap), 14); err != nil {
 		return err
 	}
-	if len(allowed) == 0 {
-		return s.WriteString("\r\n  {{(no class or background skills available)}}::gray\r\n")
+	if len(all) == 0 {
+		return s.WriteString("\r\n  {{(no skills in catalog)}}::gray\r\n")
 	}
 	if err := display.Subsection(s, "Available skills"); err != nil {
 		return err
 	}
+	classSet := classSkillSet(char, cat)
 	bgSet := backgroundSkillSet(char, cat)
-	for i, id := range allowed {
+	for i, id := range all {
 		sk, _ := cat.Skill(id)
 		name := id
 		ability := ""
@@ -132,14 +135,24 @@ func writeLearnMenu(s *telnet.Session, char repo.Character,
 			ability = sk.Ability
 		}
 		ranks := char.Skills[chargen.HashID(id)].Ranks
-		tag := "[class]"
-		if _, ok := bgSet[id]; ok {
-			tag = "[bg]"
+		var tag string
+		var cap int
+		switch {
+		case isClassOrBackground(id, classSet, bgSet):
+			cap = classCap
+			if _, ok := bgSet[id]; ok {
+				tag = "[bg]"
+			} else {
+				tag = "[class]"
+			}
+		default:
+			cap = crossCap
+			tag = "[cross]"
 		}
 		if err := s.WriteString(fmt.Sprintf(
 			"  {{%2d)}}::gray {{%-22s}}::yellow|bold {{%-3s}}::gray  ranks={{%d}}::green|bold/%d %s\r\n",
 			i+1, display.Defang(name, ""), display.Defang(ability, ""),
-			ranks, skillCap, tag,
+			ranks, cap, tag,
 		)); err != nil {
 			return err
 		}
@@ -150,13 +163,14 @@ func writeLearnMenu(s *telnet.Session, char repo.Character,
 	)
 }
 
-// writeLearnInfo prints the descriptor for one skill. Read-only.
-func writeLearnInfo(s *telnet.Session, token string, allowed []string,
-	cat *chargen.Catalog,
+// writeLearnInfo prints the descriptor for one skill plus the per-
+// character cost and cap for that bucket. Read-only.
+func writeLearnInfo(s *telnet.Session, token string, char repo.Character,
+	all []string, cat *chargen.Catalog,
 ) error {
-	id, ok := matchSkillToken(token, allowed, cat)
+	id, ok := matchSkillToken(token, all, cat)
 	if !ok {
-		return s.WriteString("{{That skill is not available to you.}}::yellow\r\n")
+		return s.WriteString("{{No such skill.}}::yellow\r\n")
 	}
 	sk, _ := cat.Skill(id)
 	if sk == nil {
@@ -169,6 +183,20 @@ func writeLearnInfo(s *telnet.Session, token string, allowed []string,
 		return err
 	}
 	if err := display.FieldRow(s, "Key ability", abilityFullName(sk.Ability), 14); err != nil {
+		return err
+	}
+	isClass := isClassOrBackgroundSkill(char, cat, id)
+	cost, cap := skillCostAndCap(char, isClass)
+	bucket := "cross-class"
+	if isClass {
+		bucket = "class"
+	}
+	if err := display.FieldRow(s, "Cost / rank",
+		fmt.Sprintf("%d pt (%s)", cost, bucket), 14); err != nil {
+		return err
+	}
+	if err := display.FieldRow(s, "Rank cap",
+		strconv.Itoa(cap), 14); err != nil {
 		return err
 	}
 	if sk.Description != "" {
@@ -186,13 +214,16 @@ func writeLearnInfo(s *telnet.Session, token string, allowed []string,
 }
 
 // commitLearn enforces cap + budget then calls RecordSkillRank. On
-// success it writes a confirmation line and audits.
+// success it writes a confirmation line and audits. Class-skill picks
+// cost 1 pending point per rank at cap level+3; cross-class picks
+// cost 2 pending points per rank at cap (level+3)/2.
 func commitLearn(c *telnet.Context, characters repo.CharacterRepo,
 	audits repo.AdminAuditRepo, char repo.Character, cat *chargen.Catalog,
 	skillID string, n int,
 ) error {
 	s := c.Session
-	skillCap := skillRankCap(char)
+	isClass := isClassOrBackgroundSkill(char, cat, skillID)
+	costPerRank, skillCap := skillCostAndCap(char, isClass)
 	key := chargen.HashID(skillID)
 	cur := char.Skills[key].Ranks
 	target := int(cur) + n
@@ -201,7 +232,7 @@ func commitLearn(c *telnet.Context, characters repo.CharacterRepo,
 			"{{That would push %s past your cap of %d.}}::yellow\r\n",
 			display.Defang(skillID, ""), skillCap))
 	}
-	cost := int32(n) // 1pt per rank, V1
+	cost := int32(n) * costPerRank
 	if cost > char.PendingSkillPoints {
 		return s.WriteString(fmt.Sprintf(
 			"{{Not enough skill points: need %d, have %d.}}::yellow\r\n",
@@ -209,7 +240,7 @@ func commitLearn(c *telnet.Context, characters repo.CharacterRepo,
 	}
 	newPending := char.PendingSkillPoints - cost
 	if err := characters.RecordSkillRank(c.Ctx, char.ID, key,
-		int8(target), true, newPending); err != nil {
+		int8(target), isClass, newPending); err != nil {
 		slog.Error("learn: record skill rank",
 			"char", char.ID, "skill", skillID, "error", err)
 		return s.WriteString("{{The lesson slips away as you reach for it.}}::red\r\n")
@@ -232,34 +263,59 @@ func commitLearn(c *telnet.Context, characters repo.CharacterRepo,
 		cur, target, newPending, pts))
 }
 
-// allowedSkillIDsFor returns the union of class-skills (across every
-// class in ClassLevels) and background skills, deduped, stable-sorted.
-// Mirrors chargen_features.go::allowedSkillIDs but reads from the
-// persisted Character rather than chargen draft state.
-func allowedSkillIDsFor(ch repo.Character, cat *chargen.Catalog) []string {
+// allLearnableSkillIDs returns every catalog skill id, sorted, for
+// the spend menu. Cross-class picks are routed to a higher cost and
+// halved cap by commitLearn; the menu does not pre-filter.
+func allLearnableSkillIDs(cat *chargen.Catalog) []string {
 	if cat == nil {
 		return nil
 	}
-	seen := make(map[string]struct{}, 16)
+	skills := cat.Skills()
+	out := make([]string, 0, len(skills))
+	for _, sk := range skills {
+		if sk == nil {
+			continue
+		}
+		out = append(out, sk.ID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// classSkillSet returns the union of class-skills across every class
+// in the character's ClassLevels map, as a set keyed by skill id.
+func classSkillSet(ch repo.Character, cat *chargen.Catalog) map[string]struct{} {
+	out := map[string]struct{}{}
+	if cat == nil {
+		return out
+	}
 	for k := range ch.ClassLevels {
 		for _, cl := range cat.Classes() {
 			if cl.Enum != k {
 				continue
 			}
 			for _, id := range cl.ClassSkills {
-				seen[id] = struct{}{}
+				out[id] = struct{}{}
 			}
 		}
 	}
-	for id := range backgroundSkillSet(ch, cat) {
-		seen[id] = struct{}{}
-	}
-	out := make([]string, 0, len(seen))
-	for id := range seen {
-		out = append(out, id)
-	}
-	sort.Strings(out)
 	return out
+}
+
+// isClassOrBackground returns true if skill id is in either bucket.
+func isClassOrBackground(id string, classSet, bgSet map[string]struct{}) bool {
+	if _, ok := classSet[id]; ok {
+		return true
+	}
+	_, ok := bgSet[id]
+	return ok
+}
+
+// isClassOrBackgroundSkill is the per-character bucket check used at
+// commit time. Returns true for class skills (any ClassLevels entry)
+// and background skills; false for cross-class.
+func isClassOrBackgroundSkill(ch repo.Character, cat *chargen.Catalog, id string) bool {
+	return isClassOrBackground(id, classSkillSet(ch, cat), backgroundSkillSet(ch, cat))
 }
 
 // backgroundSkillSet returns the character's background skill ids as
@@ -282,20 +338,20 @@ func backgroundSkillSet(ch repo.Character, cat *chargen.Catalog) map[string]stru
 }
 
 // matchSkillToken resolves a player-typed token (numeric menu index
-// or string id, case-insensitive) against the allowed list. Returns
-// the canonical catalog id on hit.
-func matchSkillToken(token string, allowed []string, cat *chargen.Catalog) (string, bool) {
+// or string id / display name, case-insensitive) against the full
+// learnable list. Returns the canonical catalog id on hit.
+func matchSkillToken(token string, all []string, cat *chargen.Catalog) (string, bool) {
 	if token == "" {
 		return "", false
 	}
 	if n, err := strconv.Atoi(token); err == nil {
-		if n >= 1 && n <= len(allowed) {
-			return allowed[n-1], true
+		if n >= 1 && n <= len(all) {
+			return all[n-1], true
 		}
 		return "", false
 	}
 	t := strings.ToLower(token)
-	for _, id := range allowed {
+	for _, id := range all {
 		if strings.EqualFold(id, t) {
 			return id, true
 		}
@@ -307,11 +363,27 @@ func matchSkillToken(token string, allowed []string, cat *chargen.Catalog) (stri
 	return "", false
 }
 
-// skillRankCap is the per-skill ceiling for a class skill at the
-// character's total level (sum of ClassLevels). d20 baseline:
-// level + 3.
-func skillRankCap(ch repo.Character) int {
+// classSkillRankCap is the per-skill ceiling for a class or background
+// skill at the character's total level (sum of ClassLevels). d20
+// baseline: level + 3.
+func classSkillRankCap(ch repo.Character) int {
 	return characterLevel(ch) + 3
+}
+
+// crossClassSkillRankCap is the per-skill ceiling for a cross-class
+// skill. d20 baseline: floor((level + 3) / 2).
+func crossClassSkillRankCap(ch repo.Character) int {
+	return (characterLevel(ch) + 3) / 2
+}
+
+// skillCostAndCap returns the per-rank pending-point cost and per-
+// skill rank ceiling for the character's chosen bucket. isClass true
+// → (1, level+3); false → (2, (level+3)/2).
+func skillCostAndCap(ch repo.Character, isClass bool) (int32, int) {
+	if isClass {
+		return 1, classSkillRankCap(ch)
+	}
+	return 2, crossClassSkillRankCap(ch)
 }
 
 // abilityFullName expands the YAML 3-letter ability token. Mirrors
