@@ -351,3 +351,220 @@ func TestDebt_FullAwardWhenNoDebt(t *testing.T) {
 		t.Errorf("award = %+v, want {Amount:100 DebtTaken:0}", awards)
 	}
 }
+
+// pvpDeathSetup wires up two characters (attacker, victim) at the
+// requested levels, both in roomID=1, builds a Manager, opens a Fight
+// with the supplied DamageTally pre-seeded, and subscribes to
+// CombatXPAwarded events. The test then drives the pipeline by
+// calling mgr.handleCharacterDeath directly — this skips the full
+// combat tick (no BAB/RNG/HP math) so the death-side wiring is
+// isolated from the resolveAction surface.
+//
+// XP for each character is set from progression.XPForLevel(level) so
+// LevelForXP(ch.XP) reads back the requested level exactly.
+type pvpDeathFixture struct {
+	chars             *repo.MemoryCharacterRepo
+	mgr               *Manager
+	attacker, victim  ActorRef
+	awards            *[]CombatXPAwarded
+	awardsMu          *sync.Mutex
+}
+
+func pvpDeathSetup(t *testing.T, attackerLevel, victimLevel int, victimXPDebt int64, tally map[int64]int32) pvpDeathFixture {
+	t.Helper()
+	ctx := context.Background()
+	bus := eventbus.New()
+	chars := repo.NewMemoryCharacterRepo()
+	accs := repo.NewMemoryAccountRepo()
+
+	accA, _ := accs.Create(ctx, repo.Account{Username: "alice-acc", PasswordHash: "h"})
+	accB, _ := accs.Create(ctx, repo.Account{Username: "bob-acc", PasswordHash: "h"})
+
+	alice, err := chars.Create(ctx, repo.Character{
+		AccountID: accA.ID, Name: "Alice", CurrentRoomID: 1, BoundRoomID: 1,
+		XP: progression.XPForLevel(attackerLevel),
+		Core: creature.Core{HPCurrent: 50, HPMax: 50},
+	})
+	if err != nil {
+		t.Fatalf("seed alice: %v", err)
+	}
+	bob, err := chars.Create(ctx, repo.Character{
+		AccountID: accB.ID, Name: "Bob", CurrentRoomID: 1, BoundRoomID: 1,
+		XP: progression.XPForLevel(victimLevel), XPDebt: victimXPDebt,
+		Core: creature.Core{HPCurrent: 1, HPMax: 50},
+	})
+	if err != nil {
+		t.Fatalf("seed bob: %v", err)
+	}
+
+	mobs := repo.NewMemoryMobInstanceRepo()
+	templates := repo.NewMemoryMobTemplateRepo()
+	items := repo.NewMemoryItemRepo()
+	mgr := New(bus, chars, mobs, templates, items)
+
+	attacker := ActorRef{Kind: ActorKindCharacter, ID: alice.ID}
+	victim := ActorRef{Kind: ActorKindCharacter, ID: bob.ID}
+	if _, err := mgr.Start(ctx, 1, []ActorRef{attacker, victim}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Seed the fight's DamageTally directly. Tests that want the
+	// default (attacker = sole damage source) pass nil and we stamp
+	// a single-entry tally; tests that want richer shapes (self-
+	// damage, secondary attackers) pass an explicit map keyed by
+	// character ID.
+	mgr.mu.Lock()
+	f := mgr.fights[1]
+	if f.DamageTally == nil {
+		f.DamageTally = make(map[ActorRef]int32)
+	}
+	if tally == nil {
+		f.DamageTally[attacker] = 100
+	} else {
+		for id, dmg := range tally {
+			f.DamageTally[ActorRef{Kind: ActorKindCharacter, ID: id}] = dmg
+		}
+	}
+	mgr.mu.Unlock()
+
+	awards := &[]CombatXPAwarded{}
+	awardsMu := &sync.Mutex{}
+	eventbus.Subscribe[CombatXPAwarded](bus, func(_ context.Context, ev CombatXPAwarded) {
+		awardsMu.Lock()
+		*awards = append(*awards, ev)
+		awardsMu.Unlock()
+	})
+
+	return pvpDeathFixture{
+		chars:    chars,
+		mgr:      mgr,
+		attacker: attacker,
+		victim:   victim,
+		awards:   awards,
+		awardsMu: awardsMu,
+	}
+}
+
+func TestCharacterDeath_PvP_AwardsAttackerXP(t *testing.T) {
+	f := pvpDeathSetup(t, 12, 12, 0, nil)
+	f.mgr.handleCharacterDeath(context.Background(), f.attacker, f.victim)
+
+	want := int64(PvPXPPerVictimLevel * 12) // 50 * 12 = 600
+	got, _ := f.chars.GetByID(context.Background(), f.attacker.ID)
+	expectedXP := progression.XPForLevel(12) + want
+	if got.XP != expectedXP {
+		t.Errorf("attacker.XP = %d, want %d", got.XP, expectedXP)
+	}
+
+	f.awardsMu.Lock()
+	defer f.awardsMu.Unlock()
+	if len(*f.awards) != 1 {
+		t.Fatalf("CombatXPAwarded count = %d, want 1: %+v", len(*f.awards), *f.awards)
+	}
+	ev := (*f.awards)[0]
+	if ev.Amount != want || ev.DebtTaken != 0 {
+		t.Errorf("event = %+v, want Amount=%d DebtTaken=0", ev, want)
+	}
+	if ev.Awardee != f.attacker || ev.Killed != f.victim {
+		t.Errorf("event refs = %+v, want awardee=%+v killed=%+v", ev, f.attacker, f.victim)
+	}
+}
+
+func TestCharacterDeath_PvP_LevelDiffSkipsAward(t *testing.T) {
+	// Attacker level 20 vs victim level 10: diff = 10 > PvPLevelDiffCap.
+	f := pvpDeathSetup(t, 20, 10, 0, nil)
+	beforeXP := progression.XPForLevel(20)
+
+	f.mgr.handleCharacterDeath(context.Background(), f.attacker, f.victim)
+
+	got, _ := f.chars.GetByID(context.Background(), f.attacker.ID)
+	if got.XP != beforeXP {
+		t.Errorf("attacker.XP = %d, want %d (no award)", got.XP, beforeXP)
+	}
+	f.awardsMu.Lock()
+	defer f.awardsMu.Unlock()
+	if len(*f.awards) != 0 {
+		t.Errorf("CombatXPAwarded fired despite level diff: %+v", *f.awards)
+	}
+}
+
+func TestCharacterDeath_PvP_XPDebtDrains(t *testing.T) {
+	// Attacker has XPDebt=400; level-12 kill yields totalXP=600.
+	// 400 drains to debt, 200 credits to XP.
+	f := pvpDeathSetup(t, 12, 12, 0, nil)
+	ctx := context.Background()
+	// Set attacker's debt directly via the repo's RecordXPDebt.
+	if err := f.chars.RecordXPDebt(ctx, f.attacker.ID, 400); err != nil {
+		t.Fatalf("seed debt: %v", err)
+	}
+
+	f.mgr.handleCharacterDeath(ctx, f.attacker, f.victim)
+
+	got, _ := f.chars.GetByID(ctx, f.attacker.ID)
+	wantGain := int64(200)
+	wantXP := progression.XPForLevel(12) + wantGain
+	if got.XP != wantXP {
+		t.Errorf("attacker.XP = %d, want %d", got.XP, wantXP)
+	}
+	if got.XPDebt != 0 {
+		t.Errorf("attacker.XPDebt = %d, want 0 (fully drained)", got.XPDebt)
+	}
+
+	f.awardsMu.Lock()
+	defer f.awardsMu.Unlock()
+	if len(*f.awards) != 1 {
+		t.Fatalf("award count = %d, want 1", len(*f.awards))
+	}
+	ev := (*f.awards)[0]
+	if ev.Amount != wantGain || ev.DebtTaken != 400 {
+		t.Errorf("event = %+v, want Amount=200 DebtTaken=400", ev)
+	}
+}
+
+func TestCharacterDeath_PvP_NonCombatDeathSkipsAward(t *testing.T) {
+	f := pvpDeathSetup(t, 12, 12, 0, nil)
+
+	// HandleAffectDeath passes ActorRef{} as killer — non-combat death
+	// (DoT, environmental). Must not award XP regardless of tally.
+	f.mgr.HandleAffectDeath(context.Background(), f.victim.ID)
+
+	got, _ := f.chars.GetByID(context.Background(), f.attacker.ID)
+	if got.XP != progression.XPForLevel(12) {
+		t.Errorf("attacker.XP changed on non-combat death: got %d", got.XP)
+	}
+	f.awardsMu.Lock()
+	defer f.awardsMu.Unlock()
+	if len(*f.awards) != 0 {
+		t.Errorf("CombatXPAwarded fired on non-combat death: %+v", *f.awards)
+	}
+}
+
+func TestCharacterDeath_PvP_VictimNotInTally(t *testing.T) {
+	// Seed a tally where the victim self-damaged (10) and the
+	// attacker dealt the rest (50). Victim's contribution must be
+	// stripped before allocateXP, so attacker gets the full 600.
+	f := pvpDeathSetup(t, 12, 12, 0, nil)
+	ctx := context.Background()
+	f.mgr.mu.Lock()
+	f.mgr.fights[1].DamageTally = map[ActorRef]int32{
+		f.attacker: 50,
+		f.victim:   10,
+	}
+	f.mgr.mu.Unlock()
+
+	f.mgr.handleCharacterDeath(ctx, f.attacker, f.victim)
+
+	got, _ := f.chars.GetByID(ctx, f.attacker.ID)
+	want := progression.XPForLevel(12) + 600
+	if got.XP != want {
+		t.Errorf("attacker.XP = %d, want %d (full pool, victim share stripped)", got.XP, want)
+	}
+	// Victim's row must be unchanged aside from the existing death
+	// pipeline (HP heal, room move, debt). Specifically, no XP
+	// gain — they died, they don't credit themselves for their
+	// own demise.
+	victim, _ := f.chars.GetByID(ctx, f.victim.ID)
+	if victim.XP != progression.XPForLevel(12) {
+		t.Errorf("victim.XP changed: got %d", victim.XP)
+	}
+}
+

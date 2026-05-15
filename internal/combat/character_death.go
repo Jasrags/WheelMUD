@@ -105,16 +105,24 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 		}
 	}
 
-	// Mark dead in the fight + capture the active fight ref under
-	// the lock so a parallel resolveAction can't observe a half-
-	// cleared state. The fight that contained the victim is keyed
-	// off the death room.
+	// Mark dead in the fight + snapshot the per-attacker damage
+	// tally under the lock so a parallel resolveAction can't observe
+	// a half-cleared state. The tally drives the §19 PvP XP award
+	// below; mirrors the same critical-section shape as
+	// handleMobDeath:88-101.
 	m.mu.Lock()
+	var tallySnap map[ActorRef]int32
 	if f, ok := m.fights[deathRoomID]; ok {
 		if f.Dead == nil {
 			f.Dead = make(map[ActorRef]struct{})
 		}
 		f.Dead[victim] = struct{}{}
+		if len(f.DamageTally) > 0 {
+			tallySnap = make(map[ActorRef]int32, len(f.DamageTally))
+			for k, v := range f.DamageTally {
+				tallySnap[k] = v
+			}
+		}
 	}
 	m.mu.Unlock()
 
@@ -138,4 +146,33 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 			Character:  victim,
 		})
 	}
+
+	// Phase D §19 PvP XP award. Non-combat deaths (HandleAffectDeath
+	// passes ActorRef{} as killer) and empty-tally edges (no Fight
+	// covered this room) skip the award path entirely. Verb-layer
+	// gates (nopvp room, newbie cap, opt-in, same-group) have
+	// already refused illegitimate kills before they could land
+	// here, so the only anti-farm guard at this layer is the
+	// level-differential clamp inside pvpXPForKill.
+	if killer.Kind != ActorKindCharacter || len(tallySnap) == 0 {
+		return
+	}
+	attacker, err := m.chars.GetByID(ctx, killer.ID)
+	if err != nil {
+		slog.Warn("combat: pvp xp attacker lookup failed",
+			"attacker", killer.ID, "victim", victim.ID, "error", err)
+		return
+	}
+	totalXP := pvpXPForKill(
+		progression.LevelForXP(attacker.XP),
+		progression.LevelForXP(ch.XP),
+	)
+	if totalXP <= 0 {
+		return
+	}
+	// Strip the victim from the tally. A self-damage corner case
+	// (poison reflect, channeled-while-injured, etc.) must not
+	// credit XP back to the dying character.
+	delete(tallySnap, victim)
+	m.creditXPShares(ctx, deathRoomID, killer, victim, tallySnap, totalXP)
 }

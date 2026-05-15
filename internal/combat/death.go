@@ -1,8 +1,81 @@
 package combat
 
 import (
+	"context"
+	"log/slog"
+
 	"github.com/Jasrags/WheelMUD/internal/creature"
 )
+
+// creditXPShares runs the group-aware, debt-draining XP award loop
+// for every character contributor in the damage tally and publishes
+// one CombatXPAwarded per share. Shared between handleMobDeath
+// (wrapped by awardKillXP) and handleCharacterDeath (PvP kills).
+//
+// Phase D #22 slice 4: each character contributor's tally is expanded
+// across their in-room group teammates so kill XP shares with the
+// party. Mob and unknown-kind contributors pass through unchanged. A
+// nil resolver short-circuits to the solo path.
+//
+// Phase D §19: outstanding XP debt is drained off the top of each
+// gross share before the player is credited. `gain` is the net XP
+// added to the row; `paid` is the share that went to debt (surfaced
+// on the event for the audit / log line).
+//
+// TOCTOU: this is two non-atomic UPDATEs (RecordXP + RecordXPDebt)
+// computed off a GetByID snapshot. Safe under single-session-per-
+// account because no other path mutates these columns concurrently.
+// When multi-session lands, swap to a single CAS-style UPDATE keyed
+// off a version token (mirroring coin_version / 0032). Tracked in the
+// existing optimistic_lock_followups / progression_24_followups memos.
+func (m *Manager) creditXPShares(ctx context.Context, roomID int64, killer, victim ActorRef, tally map[ActorRef]int32, totalXP int64) {
+	if totalXP <= 0 {
+		return
+	}
+	m.mu.Lock()
+	resolver := m.groupShare
+	m.mu.Unlock()
+	tally = expandTallyByGroup(tally, roomID, resolver)
+	awards := allocateXP(tally, totalXP, killer)
+	for ref, amount := range awards {
+		if ref.Kind != ActorKindCharacter || amount <= 0 {
+			continue
+		}
+		ch, err := m.chars.GetByID(ctx, ref.ID)
+		if err != nil {
+			slog.Warn("combat: xp recipient lookup failed",
+				"char", ref.ID, "error", err)
+			continue
+		}
+		gain, newDebt := ApplyXPAward(amount, ch.XPDebt)
+		paid := ch.XPDebt - newDebt
+		if gain > 0 {
+			if err := m.chars.RecordXP(ctx, ref.ID, ch.XP+gain); err != nil {
+				slog.Warn("combat: xp write-back failed",
+					"char", ref.ID, "error", err)
+				continue
+			}
+		}
+		if paid > 0 {
+			if err := m.chars.RecordXPDebt(ctx, ref.ID, newDebt); err != nil {
+				slog.Warn("combat: xp debt write-back failed",
+					"char", ref.ID, "error", err)
+				// Continue: the gross gain (if any) already
+				// landed; the debt counter just stays high. The
+				// player gets the next chance to drain it.
+			}
+		}
+		if m.bus != nil {
+			m.bus.Publish(ctx, CombatXPAwarded{
+				RoomID:    roomID,
+				Awardee:   ref,
+				Amount:    gain,
+				DebtTaken: paid,
+				Killed:    victim,
+			})
+		}
+	}
+}
 
 // xpValueForTemplate returns the base XP awarded when a mob of the
 // given template dies. Phase D §19 polish: an explicit XPValue > 0
