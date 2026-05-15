@@ -32,6 +32,12 @@ import (
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
+// maxLearnRanksPerCall bounds the player-supplied `n` ranks argument
+// so the int32 cost multiplication can never overflow regardless of
+// platform `int` width. The per-skill cap (≤ 23 at level 20) is the
+// real ceiling; this is defense-in-depth.
+const maxLearnRanksPerCall = 1000
+
 // NewLearn builds the `learn` verb.
 func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 	audits repo.AdminAuditRepo,
@@ -89,7 +95,10 @@ func NewLearn(characters repo.CharacterRepo, cat *chargen.Catalog,
 			n := 1
 			if len(args) >= 2 {
 				v, err := strconv.Atoi(args[1])
-				if err != nil || v < 1 {
+				// Upper bound is well above any plausible cap (class
+				// cap at L20 = 23) and keeps `int32(n)*costPerRank`
+				// far from int32 overflow on every platform.
+				if err != nil || v < 1 || v > maxLearnRanksPerCall {
 					return s.WriteString("{{Type a positive number of ranks.}}::yellow\r\n")
 				}
 				n = v
@@ -136,23 +145,23 @@ func writeLearnMenu(s *telnet.Session, char repo.Character,
 		}
 		ranks := char.Skills[chargen.HashID(id)].Ranks
 		var tag string
-		var cap int
+		var rankCap int
 		switch {
 		case isClassOrBackground(id, classSet, bgSet):
-			cap = classCap
+			rankCap = classCap
 			if _, ok := bgSet[id]; ok {
 				tag = "[bg]"
 			} else {
 				tag = "[class]"
 			}
 		default:
-			cap = crossCap
+			rankCap = crossCap
 			tag = "[cross]"
 		}
 		if err := s.WriteString(fmt.Sprintf(
 			"  {{%2d)}}::gray {{%-22s}}::yellow|bold {{%-3s}}::gray  ranks={{%d}}::green|bold/%d %s\r\n",
 			i+1, display.Defang(name, ""), display.Defang(ability, ""),
-			ranks, cap, tag,
+			ranks, rankCap, tag,
 		)); err != nil {
 			return err
 		}
@@ -186,7 +195,7 @@ func writeLearnInfo(s *telnet.Session, token string, char repo.Character,
 		return err
 	}
 	isClass := isClassOrBackgroundSkill(char, cat, id)
-	cost, cap := skillCostAndCap(char, isClass)
+	cost, rankCap := skillCostAndCap(char, isClass)
 	bucket := "cross-class"
 	if isClass {
 		bucket = "class"
@@ -196,7 +205,7 @@ func writeLearnInfo(s *telnet.Session, token string, char repo.Character,
 		return err
 	}
 	if err := display.FieldRow(s, "Rank cap",
-		strconv.Itoa(cap), 14); err != nil {
+		strconv.Itoa(rankCap), 14); err != nil {
 		return err
 	}
 	if sk.Description != "" {
