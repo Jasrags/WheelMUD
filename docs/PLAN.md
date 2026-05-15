@@ -388,11 +388,20 @@ investment / new-weave learning intentionally **stay in old Phase D**
     `ActiveIdx` math observes a stable order during resolution; the
     fight auto-ends when `Order` empties. New
     `CharacterRepo.RecordXP` (sqlite + memory + shared test).
-    Deferred to slice 2: corpse decay tick + `items.decay_expires_at`
-    column, mob inventory transfer into corpse, player death &
-    bound-room respawn + XP-debt penalty, mob respawn via §9 zone
-    reset, looting verbs (`get from corpse` already works through
-    existing container plumbing — no new verb needed).
+    Looting bundle, durable corpse decay, player-death respawn +
+    XP-debt landed earlier (see ROADMAP for dates). **Bind verb
+    LANDED 2026-05-14**: migration 0056 adds `rooms.bindable`;
+    new player verb `bind` (no args, Auth=Player) records the
+    current room as `Character.BoundRoomID` via new
+    `CharacterRepo.RecordBoundRoom` (mirrors RecordRoom — no
+    optimistic lock). Refuses on non-bindable rooms; short-circuits
+    when already bound. `RoomFlags.Bindable` flows through repo /
+    YAML / loader / `redit` OLC / `zonemap` reporter
+    (loader-lockstep). Existing `combat.handleCharacterDeath`
+    respawn path picks up the new BoundRoomID without changes.
+    Still deferred: drop-on-death toggle; PvP XP awards on
+    character kill; two-UPDATE TOCTOU on RecordXP + RecordXPDebt
+    (safe under single-session-per-account).
 20. **Aggro / threat tables** (§11). Slice 1 LANDED 2026-05-07:
     `Fight.Threat map[ActorRef]map[ActorRef]int32` (defender →
     attacker → cumulative). Damage adds 1:1 from the same site that

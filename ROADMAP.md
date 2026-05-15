@@ -1070,11 +1070,22 @@ will need on top of those tables.
       `combat.spawnCorpse` stamps the deadline inline at Create
       time; `combat.Decayer.RearmFromRepo` replays the queue at
       boot (past-deadline rows are swept on the spot, future rows
-      are re-Schedule'd). Still pending: mob respawn via §9 zone
-      reset (already shipped — `internal/world/respawn.go::
-      ZoneResetter.respawnMobs`; this bullet is stale), `bind`
-      verb to retarget BoundRoomID, drop-on-death toggle if
-      play-tests demand it.
+      are re-Schedule'd). **`bind` verb landed 2026-05-14** —
+      migration 0056 adds `rooms.bindable`; new `bind` player
+      verb (Auth=Player, no args) records the current room as
+      Character.BoundRoomID via new `CharacterRepo.RecordBoundRoom`
+      (mirrors RecordRoom shape, no optimistic lock). Refuses on
+      non-bindable rooms with "You feel no connection to this
+      place"; short-circuits when already bound. `RoomFlags.Bindable`
+      wired through repo / YAML / loader / redit OLC / zonemap
+      flag reporter (loader-lockstep). The existing
+      `combat.handleCharacterDeath` respawn path picks up the new
+      value automatically — no death-side changes needed.
+      Still pending: drop-on-death toggle if play-tests demand it;
+      PvP XP awards on character kill; two-UPDATE TOCTOU on
+      RecordXP + RecordXPDebt (safe under single-session-per-account
+      today). Mob respawn via §9 zone reset already shipped
+      (`internal/world/respawn.go::ZoneResetter.respawnMobs`).
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in
