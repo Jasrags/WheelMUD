@@ -11,13 +11,20 @@ pure-Go driver) backs accounts, characters, rooms, exits, items, mobs, and
 chat channels. A YAML world loader (`internal/world/`) seeds the DB from
 `data/world/` on first boot.
 
-`ROADMAP.md` tracks what's done vs. pending and is the source of truth for
-"what's done." `docs/PLAN.md` is the source of truth for "what's next" — it
-sequences the roadmap into ordered phases (A: quick wins, B: equipment/
-economy, C: combat, D: progression, E: NPCs/quests, F: OLC, G/H/I: comms/
-network/ops, J: ops/CI/packaging — Phase J landed 2026-05-12). When ROADMAP
-and PLAN disagree about *status*, ROADMAP wins; about *order*, PLAN wins.
-Token-lean architecture maps live in `docs/CODEMAPS/`.
+## Source-of-truth map
+
+- **`ROADMAP.md`** — what's done vs. pending. Authoritative for *status*.
+- **`docs/PLAN.md`** — sequenced phases (A–J). Authoritative for *order*.
+  When the two disagree about status, ROADMAP wins; about order, PLAN wins.
+- **`docs/CODEMAPS/`** — token-lean architecture maps (`architecture.md`,
+  `commands.md`, `data.md`, `dependencies.md`, `telnet.md`). Read these
+  before diving into a package.
+- **`docs/CONVENTIONS.md`** — code-level recipes and invariants (write
+  paths, GMCP wiring, items 3-location, characters column lock-step,
+  loader lock-step, admin audit, progression spend pattern, migrations,
+  Lua sandbox, world loader rules). Consult before editing any of those
+  surfaces.
+- **`data/world/README.md`** — zone.yaml schema.
 
 ## Common commands
 
@@ -28,353 +35,113 @@ make run/live/server   # hot reload via cosmtrek/air
 go test -race ./...    # full test suite with race detector
 docker compose up      # build + run, exposes :2323
 make mudlet-package    # build dist/mudlet/wheelmud.{mpackage,profile}
-                       # — WHEELMUD_HOST/WHEELMUD_PORT override the
-                       #   stamped profile defaults
 ```
 
 Connect with: `telnet localhost 2323`.
 
-Configuration: pass `-config <path>` for YAML (see `config.example.yaml`) or
-rely on env vars only — both work; env overrides file values. Env surface:
-`LISTEN_ADDR` (default `:2323`), `METRICS_ADDR` (default `127.0.0.1:9090`;
-empty disables metrics+pprof+healthz), `DB_DSN` (default `wheelmud.db`,
-`:memory:` works), `BACKUP_DIR` (empty disables snapshots), `LOG_LEVEL`,
-`WORLD_DIR` (default `./data/world`), `AUDIT_COMMANDS_ENABLED` +
-`AUDIT_COMMANDS_EXCLUDE`. Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` /
-`SCRIPT_DIR` / `EFFECTS_DIR`) are env-only and switch each embedded-FS
-catalog to an on-disk override.
+## Configuration
 
-## Architecture
+Pass `-config <path>` for YAML (see `config.example.yaml`) or rely on env
+vars only — both work; env overrides file values. Env surface: `LISTEN_ADDR`
+(default `:2323`), `METRICS_ADDR` (default `127.0.0.1:9090`; empty disables
+metrics+pprof+healthz), `DB_DSN` (default `wheelmud.db`, `:memory:` works),
+`BACKUP_DIR` (empty disables snapshots), `LOG_LEVEL`, `WORLD_DIR` (default
+`./data/world`), `AUDIT_COMMANDS_ENABLED` + `AUDIT_COMMANDS_EXCLUDE`.
+Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR`)
+are env-only and switch each embedded-FS catalog to an on-disk override.
 
-- **`cmd/server/main.go`** — entrypoint. Parses flags, loads YAML+env via
-  `internal/config.Load`, opens the DB via `internal/db.Open` (runs embedded
-  migrations), constructs every repo, loads catalogs (news/chargen/quest),
-  runs `world.LoadAndSync`, builds the command registry on a `server`
-  struct holding long-lived deps, starts `tick.Scheduler` + `tick.Buckets`
-  and `persist.Manager`, conditionally starts the backup manager
-  (`internal/backup`) and metrics HTTP server (`internal/metrics`), then
-  accepts TCP. Each connection gets a `telnet.Session`; `telnet.RunSession`
-  drives it. After login, `news.WriteMOTDBlock` renders unseen MOTD/news.
-  New long-lived deps belong on the `server` struct. `buildVersion` /
-  `buildCommit` / `buildDate` are populated by goreleaser ldflags.
+## Architecture (one-liner map)
 
-- **`telnet/`** — protocol primitives + per-connection driver.
-  - `session.go`: `Session` struct (conn, terminal type, width/height,
-    line-edit buffer, history, password-mode flag, color level, write
-    mutex, mode stack, AuthLevel, AccountID, CharacterID/Name,
-    CurrentRoomID, alias table). `crossMu` guards cross-goroutine fields
-    (`lastTellFrom`, `lastInputAt`, `channelMuted`); use the
-    `Set/Get/Toggle/Snapshot` helpers. `WriteString` renders cfmt;
-    `WriteWrapped` reflows to `Session.Width`. All writes serialize on
-    `writeMu`.
-  - `server.go`: `RunSession` plus the byte parser and the per-session
-    dispatcher goroutine.
-  - `iac.go`, `color.go`, `wrap.go`, `command.go`, `mode.go`,
-    `completion.go`, `alias.go`, `tokenize.go`, `lineedit.go`,
-    `history.go`, `ascii.go`.
+Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
 
-- **`internal/cmd/`** — concrete commands wired in
-  `main.go::buildRegistry`. See the directory for the full verb list
-  (movement, comms/channels, inventory/equipment, shop/banker, combat,
-  party, progression, dialogue, quest, admin, etc.). Conventions:
-  - Commands take deps (repos, registry, sessions, bus) by parameter and
-    return a `*telnet.Command`.
-  - Required-args commands declare `MinArgs` + `Long`; dispatcher emits
-    Long-aware usage on too-few-args.
-  - Item/mob keyword resolution (incl. ordinal `2.sword`) goes through
-    `keyword.go::MatchItem` / `MatchMob`.
-  - Encumbrance bands: `encumbrance.go::LoadFor` (Str-keyed d20 table);
-    sums recursive container contents via
-    `ItemRepo.ListAllOwnedTransitive`.
-
+- **`cmd/server/main.go`** — entrypoint: config → DB+migrations → repos →
+  catalogs → `world.LoadAndSync` → command registry on a `server` struct
+  → `tick.Scheduler` + `tick.Buckets` + `persist.Manager` → optional
+  `backup` + `metrics` → TCP accept loop. New long-lived deps belong on
+  the `server` struct. `buildVersion`/`buildCommit`/`buildDate` come
+  from goreleaser ldflags.
+- **`telnet/`** — protocol primitives + per-connection driver. See
+  `docs/CODEMAPS/telnet.md` and `docs/CONVENTIONS.md` (write paths,
+  session field ownership, option negotiation, GMCP).
+- **`internal/cmd/`** — concrete commands wired in `main.go::buildRegistry`.
+  See `docs/CODEMAPS/commands.md` for the verb list.
 - **`internal/mode/`** — login, character_select, character_create, game,
-  postauth promotion. `promoteToGame` stamps `CharacterID`,
-  `CharacterName`, `CurrentRoomID`, calls `Session.SetChannelMuted`, then
-  ReplaceMode's into game.
-
+  postauth promotion (`promoteToGame` stamps Character* + AuthLevel +
+  channel-mute, then `ReplaceMode`s into game).
 - **`internal/repo/`** — typed repos with sqlite + memory implementations
-  and a shared test suite. Every repo writes through on mutation; the
-  `persist.Manager` Save bucket layers periodic + shutdown flushes for
-  fields not otherwise covered (e.g. `last_played_at`).
-
-- **`internal/db/migrations/`** — embedded forward-only migrations
-  (0001–0052). Read the SQL directly when you need the schema; this file
-  no longer narrates each migration. Key invariants codified by recent
-  migrations:
-  - `auth_level` lives on the character row, not the account (0019), and
-    MUST stay the trailing column in `charPlayerColumns` /
-    `charPlayerValues` / `charPlayerScanDest` because the SQLite
-    first-character bootstrap CASE expression in `CharacterRepo.Create`
-    consumes it as the trailing placeholder.
-  - Items live in exactly one of three locations: `room_id`,
-    `owner_character_id`, or `parent_item_id` (0017, 0028). Use
-    `ItemRepo.SetOwner` / `SetRoom` / `SetParent` or the `Transfer*`
-    family — they flip atomically and clear the other two.
-  - `characters.coin_version` (0032) is an optimistic-lock token bumped
-    by `RecordCoin`; mismatched writes return `ErrCoinConflict`.
-  - `admin_audit` (0029) + `character_audit` (0052) +
-    `account_logins` (0036) are append-only forensic logs.
-  - `triggers.consecutive_faults` / `disabled` (0046) auto-disable a
-    trigger after 5 faults; `world` loader resets via
-    `TriggerRepo.ResetAllFaults` at boot.
-
-- **`internal/scripts/`** — gopher-lua script catalog under
-  `internal/scripts/default/` (embedded, `SCRIPT_DIR` override). Boot
-  compiles every script; syntax errors fail boot loudly.
-
-- **`internal/lua/`** — gopher-lua sandbox + runner. `NewSandboxedState()`
-  strips dangerous globals (`os`, `io`, `debug`, `package`, `dofile`,
-  `loadfile`, `loadstring`, `load`). `Runner` pre-allocates an LState
-  pool (size 8) served via a buffered channel — NOT `sync.Pool`, which
-  can synthesize states at Stop. `Runner.Run` wraps the parent ctx with
-  `CallTimeout = 50ms` and propagates via `SetContext`. API surface:
-  `say`, `emote`, `log`, read-only `ctx`; `quest.accept/advance`;
-  `push_mode`; `apply_affect`, `give_item`; read-only `target` /
-  `room` (resolved at bind time from `b.Ctx.RoomID`) / `clock`. nil-
-  bound hooks register classified-error stubs so misuse trips the
-  trigger fault budget instead of a generic nil call. `Runner.Stop()`
-  closes every LState — must run BEFORE `bus.Stop()` in shutdown.
-
-- **`internal/quest/`** — quest engine: catalog (`Tree`, `Step`,
-  `Reward`), boot validator (cross-refs against world mob_template +
-  room ExternalIDs + script catalog), event-driven engine.
-  Subscribes to `combat.CombatDeath` (kill_n), `world.PlayerEntered`
-  (reach_room); talk_to advances via the dialogue `advance_quest`
-  effect; `script` steps wait for an external `quest.advance(id)`
-  Lua call. Per-character state lives on
-  `characters.quest_log_json` via `RecordQuestProgress`. Final-step
-  XP via `RecordXP`, coin via `RecordCoin` with one optimistic-lock
-  retry on `ErrCoinConflict`. All player-facing notifications go
-  through `Session.WriteAsync` (engine runs on the eventbus
-  goroutine). Dialogue effects (`accept_quest`, `advance_quest`,
-  `script`) are wired via `mode.DialogueHooks` from
-  `cmd/server/main.go` so `internal/cmd` and `internal/dialogue`
-  stay free of `internal/quest` imports.
-
+  and a shared test suite. Write-through on mutation; `persist.Manager`
+  Save bucket layers periodic + shutdown flushes.
+- **`internal/db/migrations/`** — embedded forward-only migrations.
+  See `docs/CONVENTIONS.md` for key invariants.
+- **`internal/lua/`, `internal/scripts/`** — gopher-lua sandbox + runner
+  and embedded script catalog. See `docs/CONVENTIONS.md` for sandbox
+  rules.
+- **`internal/quest/`** — event-driven quest engine. Subscribes to
+  `combat.CombatDeath` (kill_n), `world.PlayerEntered` (reach_room);
+  talk_to advances via dialogue `advance_quest`; `script` steps wait
+  on Lua `quest.advance(id)`. State on `characters.quest_log_json` via
+  `RecordQuestProgress`. Final-step XP via `RecordXP`, coin via
+  `RecordCoin` (one optimistic-lock retry on `ErrCoinConflict`). Dialogue
+  effects wired via `mode.DialogueHooks` from `main.go` so `internal/cmd`
+  and `internal/dialogue` stay free of `internal/quest` imports.
 - **`internal/progression/`** — pure-function d20 XP curve + level-up
-  math. `XPForLevel`, `LevelForXP`, `XPToNext` (MaxLevel=20).
-  `ComputeLevelUp(ch, cat, classKey) → LevelGains` recomputes
-  ClassLevels + HP/BAB/saves and per-pool deltas
-  (Feat/Skill/Ability/Weave) the cmd-layer hands to
-  `RecordLevelUp` via `LevelUpFields`. No DB, no session.
-
+  math (`MaxLevel=20`). `ComputeLevelUp → LevelGains` → cmd-layer hands
+  to `RecordLevelUp` via `LevelUpFields`. No DB, no session.
 - **`internal/channeling/`** — per-tick driver for channeler state.
-  `RefreshIfDue` refills `Slots[*].Cur` once 8h has elapsed;
-  `AccrueMadness` adds `MadnessPerPulse` iff `Embraced` + drawing
-  on `SourceSaidin`. Both no-op when `Stilled`. `SessionTicker` is
-  subscribed to `tick.Buckets.Regen` (30s).
-
-- **`internal/group/`** — in-memory party manager (`MaxGroupSize = 6`,
-  leader-leaves-disbands). Wired into combat via
-  `combat.GroupResolver` so `expandTallyByGroup` splits per-character
-  damage across in-room party members at XP-award time. No
-  persistence — server restart drops party state.
-
-- **`internal/world/`** — YAML zone loader that performs an additive
-  resync against the DB on every boot. On-disk tree is hierarchical
-  (continent → nation → region → settlement → building); see
-  `data/world/README.md` for the full zone.yaml schema, optional
-  `shop:` / `banker:` mob sub-blocks, and the room-id / currency-
-  string / typed-item-stats conventions. `LoadAndSync` parses +
-  validates YAML, then runs `resyncWorld` inside a single
-  transaction: per-table pre-load probe selects existing
-  `external_id`s, and each row that isn't yet in DB lands; existing
-  rows are left exactly as they are. Strictly additive — no updates,
-  no deletes. Boot log emits a `world: resync complete` line with
-  per-table new-row counts (`zones_new`, `rooms_new`, etc.) plus the
-  total YAML row counts so an operator can see exactly what landed.
-  `LoadedWorld.ItemSpecsByZone` is built from parsed YAML regardless
-  of insert outcome so the `ZoneResetter` always has the recipe
-  list. Bootstrap starter: when no row sits at `repo.StarterRoomID`
-  (id=1), the YAML's `starter: true` row is inserted there FIRST
-  (before any auto-increment rooms grab id=1). When the slot is
-  taken, the YAML starter lands as a regular auto-increment row —
-  first-loaded starter wins; operators who want to swap starters
-  must wipe id=1. Mob_templates are gated as a bundle: if the
-  external_id already exists, template + instance + shop / banker /
-  trainer / weave_teacher / dialogue / triggers are all skipped
-  (refreshing aux blocks would stomp operator edits or duplicate
-  UNIQUE rows). Also hosts the `Restocker` (refills sub-max
-  `shop_stock`, on `tick.Buckets.AreaReset`), the `ZoneResetter`
-  (mob respawn from anchored templates → door restoration via
-  `ExitRepo.RestoreAuthored` → item respawn via
-  `ItemRepo.FindByExternalID` + `Create`), and `Clock.HourOfDay`.
-
-- **`internal/chargen/`** — YAML chargen catalog (backgrounds,
-  classes, feats, skills, weaves) loaded once at boot from
-  `internal/chargen/default/*.yaml` (or `CHARGEN_DIR` override).
-  Cross-references validated at Load time; catalog typos fail boot.
-
+  `SessionTicker` subscribed to `tick.Buckets.Regen` (30s).
+- **`internal/group/`** — in-memory party manager (`MaxGroupSize = 6`).
+  Wired into combat via `combat.GroupResolver`. Not persisted.
+- **`internal/world/`** — YAML zone loader, `Restocker`, `ZoneResetter`,
+  `Clock`. See `docs/CONVENTIONS.md` for loader rules and
+  `data/world/README.md` for schema.
+- **`internal/chargen/`** — YAML catalog (backgrounds, classes, feats,
+  skills, weaves) under `internal/chargen/default/*.yaml` (or
+  `CHARGEN_DIR`). Cross-refs validated at Load.
 - **`internal/session/`** — process-level registry enforcing single-
-  session-per-account: `Bind` returns the displaced session;
-  `Unbind` is compare-and-delete. `FindByCharacterName` and
-  `Snapshot` power `tell`/`who`/channel broadcasts.
-
+  session-per-account. `Bind` displaces the prior session; `Unbind` is
+  compare-and-delete.
 - **`internal/eventbus/`, `internal/tick/`, `internal/persist/`,
-  `internal/safego/`** — typed pub/sub (`Publish`/`Subscribe[T]`),
-  scheduler + named buckets, periodic+shutdown autosave, and
-  `safego.Go("name", fn)` for panic-safe long-lived goroutines.
+  `internal/safego/`** — typed pub/sub, scheduler + named buckets,
+  periodic+shutdown autosave, `safego.Go("name", fn)` for panic-safe
+  long-lived goroutines.
+- **`internal/config/`** — YAML+env loader, precedence "struct defaults
+  → YAML → env". Empty path = env-only.
+- **`internal/metrics/`** — Prometheus + pprof + healthz on a fresh
+  registry. `SetReady` atomic drives healthz (200 once ready AND DB
+  ping passes within 500ms). Loopback default keeps pprof off the wire.
+  `mode.Game` takes a `CommandMetricFn` hook so `internal/mode` doesn't
+  import metrics.
+- **`internal/backup/`** — wall-clock `VACUUM INTO` + retention pruning
+  (refuses symlinks via `os.Lstat`). Decoupled from `tick.Buckets`.
+- **`internal/auth/`** — bcrypt password hashing (tunable cost).
+- **`internal/creature/`** — `Core` stat block shared by characters and
+  mob_templates, plus the `Channeling` weave model.
+- **`clients/mudlet/`** — drop-in package consuming V1 GMCP frames. See
+  `docs/CONVENTIONS.md` (GMCP section) for the field-name contract.
 
-- **`internal/config/`** — YAML+env loader; precedence "struct defaults
-  → YAML file → env". Empty path = env-only; missing/malformed file
-  returns a wrapped error.
+## Cross-cutting rules
 
-- **`internal/metrics/`** — Prometheus + pprof + healthz. Fresh
-  `prometheus.Registry`, `Handler()` mounts `/metrics`, `/healthz`,
-  `/debug/pprof/*`. Collectors: `wheelmud_commands_total{verb,result}`,
-  `wheelmud_sessions_active`, `wheelmud_db_open_conns`,
-  `wheelmud_build_info`, plus Go + Process. `SetReady` atomic drives
-  healthz (200 once ready AND DB ping passes within 500ms). Default
-  bind is loopback so pprof never leaks. `mode.Game` takes a
-  `CommandMetricFn` hook so `internal/mode` doesn't import metrics.
+Detailed recipes are in `docs/CONVENTIONS.md`. The bullets below are the
+ones easy to break without knowing they exist:
 
-- **`internal/backup/`** — wall-clock `VACUUM INTO` + retention pruning.
-  `Manager.Run(ctx)` takes an initial snapshot then loops on a
-  `time.Ticker` (decoupled from `tick.Buckets`). Pruning calls
-  `os.Lstat` before `os.Remove` (refuses symlinks). Snapshot errors
-  log warn and loop continues.
-
-- **`internal/auth/`** — bcrypt password hashing (tunable cost; see
-  `auth_followups.md` memory).
-
-- **`internal/creature/`** — `Core` stat block (abilities, HP, saves,
-  speed, conditions, position flags, DR/resists) shared by characters
-  and mob_templates, plus the `Channeling` weave model.
-
-- **`clients/mudlet/`** — drop-in Mudlet package consuming the V1
-  GMCP frames. Source under `src/`: `config.lua` (mpackage metadata),
-  `init.lua` (namespace + sysUninstallPackage hook), `mapper.lua`
-  (Room.Info → Mudlet mapper), `vitals.lua` (Char.Vitals → gauges),
-  `status.lua` (Char.Name + Char.Status → header label), `chat.lua`
-  (Comm.Channel.Text → per-channel mini-consoles),
-  `profile.xml.template` (Mudlet connection profile with
-  HOST/PORT placeholders). `make mudlet-package` zips the Lua
-  files into `dist/mudlet/wheelmud.mpackage` and substitutes the
-  placeholders into `dist/mudlet/wheelmud.profile`. Contract: the
-  field names the Lua scripts read are exactly those declared on
-  `internal/gmcp/packages.go`; renaming a Go field requires a
-  matching package update + `config.lua` version bump.
-
-### Things to watch when editing
-
-- The protocol parser lives in `telnet/server.go`.
-- `Session.Input` is owned by the read goroutine inside `RunSession`. Do
-  not mutate it from another goroutine.
-- **Telnet option negotiation responses** go through
-  `telnet/iac.go::handleOptionNegotiation` (WILL/WONT/DO/DONT) and
-  the `HandleSubnegotiation` switch (SB…SE). New options follow the
-  CHARSET / MSSP pattern: add the option constant + sub-codes,
-  append a `WILL <opt>` to `NegotiateTelnet`, and write the response
-  via `s.WriteRaw` from `handleOptionNegotiation`. Session-state
-  toggles set by subnegotiation (e.g. `Session.charset`) use the
-  `crossMu` accessor pair (`SetCharset` / `Charset`). MSSP variables
-  are produced by a `Session.MSSPProvider` closure wired in
-  `cmd/server/main.go::msspVars`; provider == nil silently no-ops.
-- **GMCP** (option 201) follows the same closure-injection pattern.
-  `Session.GMCPHandler` is set at session construction to
-  `internal/gmcp.Manager.Handle`; the manager dispatches Core.* and
-  installs per-session eventbus subscriptions on Core.Supports.Set.
-  Subscription handles live on `Session.gmcpSubs` (via
-  `AddGMCPSub` / `TakeGMCPSubs`) and MUST be cancelled in
-  `handleConnection`'s defer via `gmcp.Manager.UnwireSession(s)` —
-  otherwise eventbus handlers leak across reconnects. Outbound
-  frames go through `Session.WriteGMCP(pkg, body)`, which silently
-  no-ops when the client hasn't negotiated GMCP. GMCP bytes are
-  out-of-band telnet (not visible to the terminal display), so
-  WriteGMCP uses `WriteRaw` rather than `WriteAsync` — no prompt
-  repaint needed.
-- `Session.WriteRaw` is the only safe write path; it holds `writeMu`.
-  Layer helpers on top of it rather than calling `Conn.Write` directly.
-- **Cross-session output** (broadcasts to peers, channel fanout, mob
-  arrival/departure, phase ambients, anything writing to a session
-  that isn't the current dispatcher's `c.Session`) MUST use
-  `Session.WriteAsync`, not `WriteString`. WriteAsync wraps with a
-  CR+EL erase prefix and replays the cached prompt + line-edit buffer
-  so a mid-line broadcast doesn't clobber input. The dispatcher caches
-  prompts via `WritePrompt`; mode transitions clear via
-  `ClearLastPrompt` (handled by `PushMode`/`PopMode`). Synchronous
-  dispatcher output (command's own response to `c.Session`) uses
-  `WriteString` because the dispatcher repaints the prompt immediately
-  after `Mode.Handle` returns.
-- Read-goroutine keystroke handlers in `telnet/server.go` wrap
-  "decide echo + mutate Input + emit echo" in
-  `Session.EditAndWrite(fn)`. `fn` runs under `writeMu` and returns
-  the bytes to write. This serializes against `WriteAsync`,
-  `WritePrompt`, and `listAndRedraw`. `InPasswordMode` writes from
-  mode handlers go through `Session.SetPasswordMode(bool)` (also under
-  `writeMu`).
-- Cross-goroutine session fields (`lastTellFrom`, `lastInputAt`,
-  `channelMuted`) MUST go through the helpers — they take `crossMu`.
-  In-world fields (`CharacterID`, `CharacterName`, `CurrentRoomID`)
-  are dispatcher-owned; treat snapshots from
-  `session.Registry.Snapshot()` as values that can change underfoot.
-- `Mode.Handle(ctx, *Session, line)` is invoked synchronously by
-  `runDispatcher`. ctx is canceled on EOF / idle / flood; handlers
-  doing blocking I/O must observe it. A slow handler stalls input for
-  that session.
-- `Registry.Dispatch` enforces `Command.Auth` against
-  `Session.AuthLevel`. Privilege-denied lookups return the same
-  `Unknown command` text as a missing verb (no enumeration).
-- `Command.Lag` is the per-verb global cooldown stamped on
-  `Session.nextReady` via `s.StampLag(cmd.Lag)` after a successful
-  `cmd.Run`. The gate lives in `Registry.dispatchOne` (per-segment)
-  so chained `;` inputs gate independently. Stamp on success only.
-- `Registry.Dispatch` is segment-aware: top-level `;` outside quotes
-  splits via `telnet.SplitOnSemicolon` (mirrors `Tokenize`'s
-  quote/escape rules). Hard cap `maxSegmentsPerLine = 16`; alias
-  expansion bounded at `maxAliasDepth = 3`.
-- Logging uses `slog`; level set in `main.go` from `LOG_LEVEL`.
-- Spawn long-lived goroutines via `safego.Go("name", fn)`.
-- `shutdown` / `reboot` drive teardown by calling the same `stop`
-  cancel `signal.NotifyContext` returns; the watcher goroutine then
-  closes the listener and runs `srv.shutdown()` → `persist.FlushAll`.
-  `reboot` flips `srv.rebootOnExit`; `main()` ends with
-  `syscall.Exec` (POSIX-only). Countdown goroutine uses
-  `Session.WriteAsync`; interruptible via `RequestAbort`.
-- **Admin audit rule**: privileged verbs (`spawn`, `teleport`, `goto`,
-  `transfer`, `summon`, `wizinvis`, `shutdown`, `reboot`) record one
-  `admin_audit` row per successful invocation via
-  `internal/audit.Record(c.Ctx, audits, c.Session, verb, target,
-  args)`. **Refusal paths MUST NOT audit** — the row represents
-  "this side effect actually happened." Synchronous by design so
-  `shutdown` rows commit before drain begins.
-- **`characters` column lock-step**: new columns land in BOTH
-  `charPlayerColumns` AND `charPlayerValues` AND `charPlayerScanDest`
-  (`internal/repo/character_sql.go`); ordering is load-bearing.
-  `auth_level` MUST stay the very last entry (bootstrap CASE
-  consumes it as the trailing placeholder). JSON columns also need a
-  `characterJSON` field plus marshal/unmarshal lines in
-  `character_sqlite.go::marshalCharacterJSON` and
-  `(characterJSON).unmarshalInto`.
-- **Loader lock-step**: new columns on `rooms` / `items` / `exits`
-  land in the repo's `*SelectCols` + `Create` INSERT + scan path AND
-  in the loader's raw-SQL INSERT in `internal/world/loader.go`
-  (`roomInsertValues` / `insertItems` / `insertExits`). Loader writes
-  raw SQL inside one transaction rather than going through repo
-  `Create`, so the column lists are duplicated.
-- **Progression spend verb pattern** (`learn`, `feat`, `bump`,
-  `learn weave`): per-verb repo method `RecordX` takes the absolute
-  new pending value + per-pool upsert entry (mirrors `RecordCoin`/
-  `RecordXP`, not `RecordLevelUp`-widening). Cmd-layer computes cap
-  + budget guards before the call; refusals do NOT mutate or audit;
-  success writes one `audit.Record(verb=X, target=<id>, args=<n>)`.
-  Catalog string ids → int32 via `chargen.HashID(id)`.
-- AuthLevel lives on the character row, not the account. Session
-  stays at AuthGuest through login + account-create; stamped by
-  `mode/postauth.promoteToGame` from `Character.AuthLevel` once a
-  character is selected. `CharacterRepo.Create` atomically promotes
-  the very first character to AuthAdmin (fresh-deploy bootstrap).
-- **Items 3-location invariant**: exactly one of `room_id`,
-  `owner_character_id`, or `parent_item_id` is set. Use
-  `SetOwner` / `SetRoom` / `SetParent` or the `Transfer*` family —
-  they flip atomically and clear the other two. `Transfer*` guards
-  on prior location so concurrent `get`/`give`/`put` surfaces as
-  `ErrItemMoved` instead of silent overwrite. `Character.Inventory`
-  (`inventory_json`) is display ordering only — SQL
-  `owner_character_id` is the source of truth;
-  `inventory.go::orderInventory` self-heals. Items inside containers
-  are NOT in `inventory_json`; encumbrance reads them via
-  `ListAllOwnedTransitive` (BFS through `parent_item_id`).
+- **Writes**: `WriteRaw` is the only safe write path. Cross-session
+  output uses `WriteAsync`; the dispatcher's own reply to `c.Session`
+  uses `WriteString`. See `docs/CONVENTIONS.md` (Write paths).
+- **Goroutines**: spawn long-lived ones via `safego.Go("name", fn)`.
+- **Mode handlers** run synchronously on the dispatcher and must
+  observe `ctx` — a slow handler stalls input for that session.
+- **Auth + Lag + segments**: `Registry.Dispatch` enforces `Command.Auth`
+  (privilege-denied returns the same `Unknown command` text — no
+  enumeration), gates per-segment on `Command.Lag` via `StampLag`, and
+  splits top-level `;` via `SplitOnSemicolon` (cap 16 segments, alias
+  depth 3).
+- **Admin audit**: privileged verbs record one `admin_audit` row per
+  *successful* invocation. Refusal paths MUST NOT audit.
+- **Items**: 3-location invariant — use `SetOwner`/`SetRoom`/`SetParent`
+  or `Transfer*`. Concurrent moves surface as `ErrItemMoved`.
+- **Schema lock-step**: new `characters` columns need three matching
+  list entries; new `rooms`/`items`/`exits` columns need both repo
+  and loader (raw SQL) updates. Full recipe in `docs/CONVENTIONS.md`.
 
 ## Tests
 
@@ -403,6 +170,6 @@ waits for `/healthz=200`, and exercises telnet handshake + IAC. Run:
 `github.com/Jasrags/WheelMUD`. Direct deps: `github.com/i582/cfmt`
 (styling), `golang.org/x/crypto` (bcrypt), `gopkg.in/yaml.v3` (world +
 config loader), `modernc.org/sqlite` (pure-Go SQLite),
-`github.com/yuin/gopher-lua` (sandboxed Lua runtime for triggers /
-dialogue scripts), `github.com/prometheus/client_golang` (metrics
-endpoint). See `docs/CODEMAPS/dependencies.md` for the full picture.
+`github.com/yuin/gopher-lua` (sandboxed Lua), `github.com/prometheus/
+client_golang` (metrics). See `docs/CODEMAPS/dependencies.md` for the
+full picture.
