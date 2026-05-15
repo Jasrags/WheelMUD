@@ -353,6 +353,32 @@ func runCharacterRepoTests(t *testing.T, name string, newRepo func(t *testing.T)
 		}
 	})
 
+	t.Run(name+"/record_bound_room_roundtrip", func(t *testing.T) {
+		ctx := context.Background()
+		cr, ar := newRepo(t)
+		acc, _ := ar.Create(ctx, Account{Username: "owner", PasswordHash: "h"})
+		c, _ := cr.Create(ctx, Character{AccountID: acc.ID, Name: "Pippin"})
+		// Create's BoundRoomID normalization stamps StarterRoomID (1)
+		// when zero; assert the starting state so the next write is a
+		// real change.
+		if c.BoundRoomID != StarterRoomID {
+			t.Fatalf("initial BoundRoomID = %d, want %d", c.BoundRoomID, StarterRoomID)
+		}
+		if err := cr.RecordBoundRoom(ctx, c.ID, 77); err != nil {
+			t.Fatalf("RecordBoundRoom: %v", err)
+		}
+		found, err := cr.GetByID(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if found.BoundRoomID != 77 {
+			t.Fatalf("BoundRoomID = %d, want 77", found.BoundRoomID)
+		}
+		if err := cr.RecordBoundRoom(ctx, 99999, 1); !errors.Is(err, ErrCharacterNotFound) {
+			t.Fatalf("missing character: got %v, want ErrCharacterNotFound", err)
+		}
+	})
+
 	t.Run(name+"/full_core_and_player_roundtrip", func(t *testing.T) {
 		ctx := context.Background()
 		cr, ar := newRepo(t)

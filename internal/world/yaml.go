@@ -158,6 +158,8 @@ type RoomFlags struct {
 	Peaceful   bool `yaml:"peaceful"`
 	// NoMap hides the room from the §10 BFS minimap. See repo.RoomFlags.NoMap.
 	NoMap bool `yaml:"nomap"`
+	// Bindable gates the §D #19 `bind` verb. See repo.RoomFlags.Bindable.
+	Bindable bool `yaml:"bindable"`
 }
 
 // Coords is an optional position used by §10 map/track. Authoring is

@@ -155,6 +155,20 @@ func (r *SQLiteCharacterRepo) RecordRoom(ctx context.Context, id, roomID int64) 
 	return nil
 }
 
+func (r *SQLiteCharacterRepo) RecordBoundRoom(ctx context.Context, id, roomID int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE characters SET bound_room_id = ? WHERE id = ?`,
+		roomID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("record bound room: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrCharacterNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteCharacterRepo) RecordCore(ctx context.Context, id int64, hp, subdual int32, cond creature.Condition, pos creature.PositionFlags) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE characters SET hp_current = ?, subdual = ?, conditions = ?, position_flags = ?

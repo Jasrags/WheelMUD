@@ -122,6 +122,18 @@ func (r *MemoryCharacterRepo) RecordRoom(_ context.Context, id, roomID int64) er
 	return ErrCharacterNotFound
 }
 
+func (r *MemoryCharacterRepo) RecordBoundRoom(_ context.Context, id, roomID int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.byLower {
+		if c.ID == id {
+			c.BoundRoomID = roomID
+			return nil
+		}
+	}
+	return ErrCharacterNotFound
+}
+
 func (r *MemoryCharacterRepo) RecordChannelSettings(_ context.Context, id int64, settings map[string]bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

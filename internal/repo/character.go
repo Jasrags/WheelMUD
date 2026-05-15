@@ -199,6 +199,13 @@ type CharacterRepo interface {
 	// commands call this on every successful move so a reconnect drops
 	// the character back where they were.
 	RecordRoom(ctx context.Context, id, roomID int64) error
+	// RecordBoundRoom persists the character's respawn anchor. The
+	// `bind` verb (§D #19) calls this when the player stands in a
+	// room with RoomFlags.Bindable set. The death/respawn pipeline
+	// in combat.handleCharacterDeath reads Character.BoundRoomID via
+	// the existing RecordRoom path — no other reader. Returns
+	// ErrCharacterNotFound when no row matches id.
+	RecordBoundRoom(ctx context.Context, id, roomID int64) error
 	// RecordCore persists the live mutable stat-block fields (HP,
 	// subdual, conditions, position-flags, affects). Combat / regen
 	// / weave-resolution paths call this; immutable fields like

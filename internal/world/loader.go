@@ -522,7 +522,7 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 	// with repo.Create.
 	coordsAuto := repo.CoordsAutoInt(r.Coords != nil)
 	cols := `external_id, name, short_desc, long_desc,
-		indoors, nopvp, noteleport, dark, silent, peaceful, nomap,
+		indoors, nopvp, noteleport, dark, silent, peaceful, nomap, bindable,
 		sector, light_level, coord_x, coord_y, coord_z, coords_auto,
 		extra_descs_json, zone_id`
 	vals := []any{
@@ -530,7 +530,7 @@ func roomInsertValues(r Room, zoneID int64) (string, []any) {
 		repo.BoolToInt(r.Flags.Indoors), repo.BoolToInt(r.Flags.NoPVP),
 		repo.BoolToInt(r.Flags.NoTeleport), repo.BoolToInt(r.Flags.Dark),
 		repo.BoolToInt(r.Flags.Silent), repo.BoolToInt(r.Flags.Peaceful),
-		repo.BoolToInt(r.Flags.NoMap),
+		repo.BoolToInt(r.Flags.NoMap), repo.BoolToInt(r.Flags.Bindable),
 		sector, light, x, y, z, coordsAuto, extraJSON,
 		zoneID,
 	}

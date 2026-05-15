@@ -47,6 +47,13 @@ type RoomFlags struct {
 	// it as `[?]` and the BFS does not recurse through it, so secret
 	// hideouts and admin zones stay topologically opaque.
 	NoMap bool
+	// Bindable gates the §D #19 `bind` verb. When true, a player
+	// standing in this room can retarget their Character.BoundRoomID
+	// to it, so death respawns drop here instead of the world
+	// starter. Defaults false so existing zones stay unbindable
+	// until a builder opts in via `bindable: true` in YAML or the
+	// redit OLC toggle.
+	Bindable bool
 }
 
 // Room is the canonical "place" in the world. Description text is rendered

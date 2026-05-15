@@ -137,7 +137,7 @@ func (m *REdit) writeHelp(s *telnet.Session) error {
 		"  {{light}}::yellow <0-100>          set the light level\r\n" +
 		"  {{done}}::yellow                   commit changes and exit\r\n" +
 		"  {{cancel}}::yellow                 abandon changes and exit\r\n" +
-		"\r\nFlags: indoors, nopvp, noteleport, dark, silent, peaceful, nomap\r\n" +
+		"\r\nFlags: indoors, nopvp, noteleport, dark, silent, peaceful, nomap, bindable\r\n" +
 		"Sectors: city, forest, field, hills, mountain, desert, water,\r\n" +
 		"         underwater, air, underground, blight, waste, stedding, swamp\r\n"
 	return s.WriteString(body)
@@ -211,6 +211,7 @@ func (m *REdit) flagPointers() map[string]*bool {
 		"silent":     &m.draft.Flags.Silent,
 		"peaceful":   &m.draft.Flags.Peaceful,
 		"nomap":      &m.draft.Flags.NoMap,
+		"bindable":   &m.draft.Flags.Bindable,
 	}
 }
 
@@ -346,6 +347,9 @@ func flagSummary(f repo.RoomFlags) string {
 	}
 	if f.NoMap {
 		on = append(on, "nomap")
+	}
+	if f.Bindable {
+		on = append(on, "bindable")
 	}
 	if len(on) == 0 {
 		return "(none)"

@@ -526,6 +526,7 @@ func zoneMapFlaggedRooms(allZoneIDs []int64, byID map[int64]repo.Room) string {
 		{"nopvp", func(f repo.RoomFlags) bool { return f.NoPVP }},
 		{"noteleport", func(f repo.RoomFlags) bool { return f.NoTeleport }},
 		{"nomap", func(f repo.RoomFlags) bool { return f.NoMap }},
+		{"bindable", func(f repo.RoomFlags) bool { return f.Bindable }},
 		{"indoors", func(f repo.RoomFlags) bool { return f.Indoors }},
 	}
 	var lines strings.Builder
