@@ -54,6 +54,13 @@ type Manager struct {
 	groupShare GroupResolver        // optional; nil = solo split (each kill credits the dealer only)
 	cat        *chargen.Catalog     // optional; nil disables feat-driven cadence modifiers (Phase L slice 65)
 
+	// dropOnDeath gates the §19 closer: when true, a dying player's
+	// top-level inventory, equipped items, and carried coin spill into
+	// a durable player-corpse and the 10% XP-debt delta is waived.
+	// Threaded from config.Combat.DropOnDeath via SetDropOnDeath at
+	// boot. Default false.
+	dropOnDeath bool
+
 	rngMu sync.Mutex
 	rng   *rand.Rand // injectable for tests
 	now   func() time.Time
@@ -97,6 +104,17 @@ func (m *Manager) SetCatalog(cat *chargen.Catalog) {
 func (m *Manager) SetDecayer(d *Decayer) {
 	m.mu.Lock()
 	m.decayer = d
+	m.mu.Unlock()
+}
+
+// SetDropOnDeath toggles the §19 drop-on-death pipeline. When enabled
+// (server config), a dying player's top-level inventory, equipped
+// items, and carried coin land in a player-corpse in the death room
+// and the 10% XP-debt delta is waived. cmd/server/main.go reads
+// config.Combat.DropOnDeath and calls this at boot.
+func (m *Manager) SetDropOnDeath(enabled bool) {
+	m.mu.Lock()
+	m.dropOnDeath = enabled
 	m.mu.Unlock()
 }
 

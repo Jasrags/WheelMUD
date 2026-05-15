@@ -66,6 +66,16 @@ audit:
     - look
     - prompt
 
+combat:
+  # Drop-on-death toggle (Phase D §19 closer). When true, a dying
+  # player's top-level inventory, equipped items, and carried coin
+  # land in a durable player-corpse in the death room; the 10% XP-debt
+  # delta is waived (gear/coin loss replaces XP debt as the death
+  # cost). Bank coin is preserved. Default false — V1 keeps everything
+  # and applies the XP debt.
+  # Env: DROP_ON_DEATH (accepts 1/0/true/false)
+  drop_on_death: false
+
 mssp:
   # Public-facing strings advertised in MSSP responses to MUD crawlers
   # (ROADMAP §1 / Phase I #45). All optional; omitted fields show empty

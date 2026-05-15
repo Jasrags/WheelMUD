@@ -15,6 +15,7 @@ func clearKnownEnv(t *testing.T) {
 		"LISTEN_ADDR", "METRICS_ADDR", "DB_DSN", "BACKUP_DIR",
 		"WORLD_DIR", "LOG_LEVEL",
 		"AUDIT_COMMANDS_ENABLED", "AUDIT_COMMANDS_EXCLUDE",
+		"DROP_ON_DEATH",
 	} {
 		t.Setenv(k, "")
 	}
@@ -169,6 +170,51 @@ func TestLoad_AuditEnabledMalformedEnvIgnored(t *testing.T) {
 	}
 	if cfg.Audit.CommandsEnabled {
 		t.Errorf("CommandsEnabled = true, want false (malformed bool ignored)")
+	}
+}
+
+func TestLoad_CombatDropOnDeath_YAML(t *testing.T) {
+	clearKnownEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("combat:\n  drop_on_death: true\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Combat.DropOnDeath {
+		t.Errorf("Combat.DropOnDeath = false, want true (from YAML)")
+	}
+}
+
+func TestLoad_CombatDropOnDeath_EnvOverridesFile(t *testing.T) {
+	clearKnownEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("combat:\n  drop_on_death: false\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	t.Setenv("DROP_ON_DEATH", "true")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Combat.DropOnDeath {
+		t.Errorf("Combat.DropOnDeath = false, want true (env wins over YAML)")
+	}
+}
+
+func TestLoad_CombatDropOnDeath_MalformedEnvIgnored(t *testing.T) {
+	clearKnownEnv(t)
+	t.Setenv("DROP_ON_DEATH", "maybeyes")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Combat.DropOnDeath {
+		t.Errorf("Combat.DropOnDeath = true, want false (malformed bool ignored)")
 	}
 }
 

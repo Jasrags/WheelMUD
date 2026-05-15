@@ -455,6 +455,11 @@ func main() {
 	// time-seeded; tests override.
 	combatMgr.SetFleeMover(cmd.NewFleeMover(rooms, exits, items, mobs, characters, sessions, bus, clock, nil))
 
+	// Phase D §19 closer: drop-on-death toggle. When enabled, a dying
+	// player's inventory, equipment, and carried coin spill into a
+	// player-corpse and the 10% XP-debt is waived. Default false.
+	combatMgr.SetDropOnDeath(cfg.Combat.DropOnDeath)
+
 	// Phase D #18 combat-render subscribers. Each one snapshots names
 	// via best-effort repo lookups so a despawned participant still
 	// produces readable output. The "skip-N-sessions" broadcasts use

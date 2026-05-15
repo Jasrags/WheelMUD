@@ -23,10 +23,13 @@ package combat
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/progression"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 )
 
 // respawnConditionMask is the bitmask cleared on respawn. Death-
@@ -69,9 +72,25 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 		boundRoomID = deathRoomID
 	}
 
+	// §19 closer — drop-on-death pipeline. When the server flag is
+	// enabled and the items repo is wired (production has it; some
+	// tests don't), dump carried coin + top-level inventory + equipped
+	// items into a player-corpse in the death room before the room
+	// move. When the drop actually fires, the 10% XP-debt delta is
+	// waived: gear/coin loss replaces XP debt as the death cost.
+	var corpseID int64
+	var dropped bool
+	if m.dropOnDeath && m.items != nil {
+		corpseID, dropped = m.dropCharacterLoot(ctx, ch)
+	}
+
 	// Compute the new debt (delta added on top of any existing).
+	// Skipped when the drop fired — gear/coin loss is the cost.
 	curLevel := progression.LevelForXP(ch.XP)
-	debtDelta := DeathDebt(ch.XP, curLevel)
+	var debtDelta int64
+	if !dropped {
+		debtDelta = DeathDebt(ch.XP, curLevel)
+	}
 	newDebt := ch.XPDebt + debtDelta
 
 	// Persist debt first — it's the most player-visible side effect
@@ -139,6 +158,7 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 			Killer:      killer,
 			BoundRoomID: boundRoomID,
 			XPDebtAdded: debtDelta,
+			CorpseID:    corpseID,
 		})
 		m.bus.Publish(ctx, CharacterRespawned{
 			PrevRoomID: deathRoomID,
@@ -175,4 +195,178 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 	// credit XP back to the dying character.
 	delete(tallySnap, victim)
 	m.creditXPShares(ctx, deathRoomID, killer, victim, tallySnap, totalXP)
+}
+
+// dropCharacterLoot runs the §19 drop-on-death pipeline for ch: spawn a
+// player-corpse in the death room, transfer top-level inventory +
+// equipped items into the corpse, drop a coin pile for carried coin,
+// then clear the character row's coin (bank preserved) and equipment.
+// Returns the corpse id (0 if the spawn fizzled) and a "dropped" flag
+// the caller uses to waive XP debt. Best-effort throughout — a repo
+// hiccup logs and continues so the player still respawns.
+//
+// Bank coin is intentionally preserved (the safe-deposit escape hatch).
+// Nested container items follow their container automatically because
+// TransferOwnerToContainer moves only the top-level item; children
+// keep their parent_item_id.
+func (m *Manager) dropCharacterLoot(ctx context.Context, ch repo.Character) (int64, bool) {
+	if m.items == nil || m.chars == nil || ch.CurrentRoomID == 0 {
+		return 0, false
+	}
+
+	corpseID := m.spawnPlayerCorpse(ctx, ch)
+	if corpseID == 0 {
+		// Best-effort: if the corpse spawn fails, fall back to the
+		// keep-inventory path rather than leaving loot orphaned.
+		return 0, false
+	}
+
+	// Inventory: top-level only. Items inside containers move with
+	// their container when we transfer the container itself.
+	m.transferCharacterInventory(ctx, ch.ID, corpseID)
+
+	// Equipment: clear the slot map after each equipped item id is
+	// moved into the corpse. Slot bookkeeping is JSON metadata;
+	// `owner_character_id` is the source of truth, so a single
+	// RecordEquipment with the zero value is enough alongside the
+	// per-item transfers.
+	m.transferCharacterEquipment(ctx, ch.ID, ch.Equipment, corpseID)
+
+	// Carried coin → trade-good pile inside the corpse. Bank coin is
+	// preserved. RecordCoin uses CoinVersion optimistic-lock; one
+	// retry on ErrCoinConflict mirrors the quest path.
+	m.dropCarriedCoin(ctx, ch, corpseID)
+
+	return corpseID, true
+}
+
+// spawnPlayerCorpse mirrors spawnCorpse's structure for a character.
+// Uses the same corpseDecayDuration so player and mob bodies behave
+// identically in the Decayer queue.
+func (m *Manager) spawnPlayerCorpse(ctx context.Context, ch repo.Character) int64 {
+	name := ch.Name
+	if name == "" {
+		name = "an unknown soul"
+	}
+	deadline := m.now().Add(corpseDecayDuration)
+	corpse := repo.Item{
+		ExternalID: fmt.Sprintf("pcorpse-%d-%d", ch.ID, m.now().UnixNano()),
+		Name:       "corpse of " + name,
+		ShortDesc:  "The corpse of " + name + " lies here.",
+		RoomID:     ch.CurrentRoomID,
+		Type:       repo.ItemTypeContainer,
+		Stats: &repo.ContainerStats{
+			CapacityLbs:  500,
+			CapacityCuFt: 50,
+		},
+		DecayExpiresAt: &deadline,
+	}
+	created, err := m.items.Create(ctx, corpse)
+	if err != nil {
+		slog.Warn("combat: player corpse spawn failed",
+			"char", ch.ID, "room", ch.CurrentRoomID, "error", err)
+		return 0
+	}
+	if m.decayer != nil {
+		m.decayer.Schedule(created.ID, created.RoomID, deadline)
+	}
+	return created.ID
+}
+
+// transferCharacterInventory walks ch's top-level inventory (filtering
+// out nested items, which follow their parent container automatically)
+// and TransferOwnerToContainer-moves each one into the corpse. Best-
+// effort: an ErrItemMoved (concurrent get/give) on a single item logs
+// and continues.
+func (m *Manager) transferCharacterInventory(ctx context.Context, charID, corpseID int64) {
+	owned, err := m.items.ListAllOwnedTransitive(ctx, charID)
+	if err != nil {
+		slog.Warn("combat: drop-on-death inventory list failed",
+			"char", charID, "error", err)
+		return
+	}
+	for _, it := range owned {
+		if it.ParentItemID != 0 {
+			// Nested inside a container; will follow its parent.
+			continue
+		}
+		if err := m.items.TransferOwnerToContainer(ctx, it.ID, charID, corpseID); err != nil {
+			slog.Warn("combat: drop-on-death inventory transfer failed",
+				"char", charID, "item", it.ID, "corpse", corpseID, "error", err)
+		}
+	}
+}
+
+// transferCharacterEquipment moves each equipped item id into the
+// corpse and clears the character's slot map. Equipped items are
+// owned by the character (the slot map is metadata), so the same
+// TransferOwnerToContainer call as inventory applies.
+//
+// Note: a previously-equipped item may have already been transferred
+// by transferCharacterInventory (it's owned by the character). In
+// that case TransferOwnerToContainer returns ErrItemMoved because the
+// guard sees parent_item_id already set; we log + ignore. The slot
+// clear via RecordEquipment is what actually drops the metadata.
+func (m *Manager) transferCharacterEquipment(ctx context.Context, charID int64, eq creature.Equipment, corpseID int64) {
+	for _, slotID := range equippedItemIDs(eq) {
+		if slotID == 0 {
+			continue
+		}
+		if err := m.items.TransferOwnerToContainer(ctx, slotID, charID, corpseID); err != nil {
+			// ErrItemMoved is expected when the inventory pass already
+			// transferred this id — slot map duplicates the ownership.
+			// Anything else is a real failure worth logging.
+			if !errors.Is(err, repo.ErrItemMoved) {
+				slog.Warn("combat: drop-on-death equipment transfer failed",
+					"char", charID, "item", slotID, "corpse", corpseID, "error", err)
+			}
+		}
+	}
+	if err := m.chars.RecordEquipment(ctx, charID, creature.Equipment{}); err != nil {
+		slog.Warn("combat: drop-on-death equipment clear failed",
+			"char", charID, "error", err)
+	}
+}
+
+// equippedItemIDs flattens the Equipment struct into the union of
+// scalar slots + array slots, skipping zero ids.
+func equippedItemIDs(eq creature.Equipment) []int64 {
+	ids := []int64{
+		eq.Armor, eq.Shield, eq.PrimaryWield, eq.OffHand,
+		eq.Outfit, eq.Cloak, eq.Backpack, eq.HeldInHand, eq.Mount,
+	}
+	ids = append(ids, eq.BeltPouches...)
+	ids = append(ids, eq.WornMisc...)
+	return ids
+}
+
+// dropCarriedCoin spawns a TradeGood pile inside the corpse for the
+// character's carried coin (bank preserved) and zeroes the row. One
+// retry on ErrCoinConflict — mirrors the quest reward path documented
+// in CLAUDE.md.
+func (m *Manager) dropCarriedCoin(ctx context.Context, ch repo.Character, corpseID int64) {
+	if ch.Coin <= 0 {
+		return
+	}
+	m.spawnCoinPile(ctx, corpseID, ch.Coin)
+	// Zero carried coin, preserve bank. Optimistic-lock retry once.
+	if err := m.chars.RecordCoin(ctx, ch.ID, 0, ch.BankBalance, ch.CoinVersion); err != nil {
+		if !errors.Is(err, repo.ErrCoinConflict) {
+			slog.Warn("combat: drop-on-death coin clear failed",
+				"char", ch.ID, "error", err)
+			return
+		}
+		// Conflict — re-read and retry once. A concurrent transfer
+		// changed the version; we still want carried coin zeroed.
+		fresh, err := m.chars.GetByID(ctx, ch.ID)
+		if err != nil {
+			slog.Warn("combat: drop-on-death coin reread failed",
+				"char", ch.ID, "error", err)
+			return
+		}
+		if err := m.chars.RecordCoin(ctx, ch.ID, 0, fresh.BankBalance, fresh.CoinVersion); err != nil {
+			slog.Warn("combat: drop-on-death coin clear retry failed",
+				"char", ch.ID, "error", err)
+		}
+	}
 }

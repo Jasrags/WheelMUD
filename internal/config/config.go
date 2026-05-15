@@ -28,6 +28,7 @@ type Config struct {
 	Log    LogConfig    `yaml:"log"`
 	Audit  AuditConfig  `yaml:"audit"`
 	MSSP   MSSPConfig   `yaml:"mssp"`
+	Combat CombatConfig `yaml:"combat"`
 }
 
 type ServerConfig struct {
@@ -81,6 +82,17 @@ type MSSPConfig struct {
 	Location string `yaml:"location"` // e.g. "USA"
 	Website  string `yaml:"website"`  // e.g. "https://example.com"
 	Status   string `yaml:"status"`   // "Alpha" / "Beta" / "Live"
+}
+
+// CombatConfig holds combat-side toggles. Phase D §19 closer.
+type CombatConfig struct {
+	// DropOnDeath dumps a dying player's top-level inventory, equipped
+	// items, and carried coin (bank coin preserved) into a durable
+	// player-corpse in the death room before the respawn move. When
+	// true, the 10% XP-debt delta is waived — gear/coin loss replaces
+	// XP debt as the death cost. Default false (V1 keeps everything,
+	// applies the XP debt).
+	DropOnDeath bool `yaml:"drop_on_death"`
 }
 
 type AuditConfig struct {
@@ -151,6 +163,13 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
+	}
+	if v := os.Getenv("DROP_ON_DEATH"); v != "" {
+		// strconv.ParseBool accepts 1/0/true/false/etc; malformed
+		// values are ignored so a typo can't crash startup.
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Combat.DropOnDeath = b
+		}
 	}
 	if v := os.Getenv("AUDIT_COMMANDS_ENABLED"); v != "" {
 		// Accept the same forms strconv.ParseBool does

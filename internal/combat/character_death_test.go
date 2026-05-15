@@ -3,10 +3,12 @@ package combat
 import (
 	"context"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/Jasrags/WheelMUD/internal/creature"
+	"github.com/Jasrags/WheelMUD/internal/currency"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/progression"
 	"github.com/Jasrags/WheelMUD/internal/repo"
@@ -568,3 +570,253 @@ func TestCharacterDeath_PvP_VictimNotInTally(t *testing.T) {
 	}
 }
 
+// dropOnDeathFixture sets up a character with carried coin + bank
+// coin + an equipped wielded item + a top-level container holding two
+// nested items, then constructs a Manager wired to a memory item repo.
+// Tests pick the toggle state via the returned (mgr, ...) handle.
+type dropOnDeathFixture struct {
+	mgr   *Manager
+	chars *repo.MemoryCharacterRepo
+	items *repo.MemoryItemRepo
+	bus   *eventbus.Bus
+
+	deathRoom int64
+	boundRoom int64
+
+	charID    int64
+	swordID   int64
+	packID    int64
+	nested1ID int64
+	nested2ID int64
+
+	carriedCoin currency.Amount
+	bankCoin    currency.Amount
+}
+
+func setupDropOnDeath(t *testing.T) dropOnDeathFixture {
+	t.Helper()
+	ctx := context.Background()
+	bus := eventbus.New()
+	chars := repo.NewMemoryCharacterRepo()
+	items := repo.NewMemoryItemRepo()
+
+	accs := repo.NewMemoryAccountRepo()
+	acc, _ := accs.Create(ctx, repo.Account{Username: "alice-acct", PasswordHash: "h"})
+	ch, err := chars.Create(ctx, repo.Character{
+		AccountID:     acc.ID,
+		Name:          "Alice",
+		CurrentRoomID: 101,
+		BoundRoomID:   200,
+		// Sit mid-level so DeathDebt produces a non-zero delta and the
+		// disabled-toggle test can observe debt accrual.
+		XP:            progression.XPForLevel(5) + 1000,
+		Coin:          50,
+		BankBalance:   100,
+		Core: creature.Core{
+			HPCurrent: 0, HPMax: 40,
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed char: %v", err)
+	}
+
+	mkItem := func(extID, name string, ownerCharID, parentItemID int64) int64 {
+		it, err := items.Create(ctx, repo.Item{
+			ExternalID:   extID,
+			Name:         name,
+			Type:         repo.ItemTypeTrash,
+			OwnerCharacterID:  ownerCharID,
+			ParentItemID: parentItemID,
+		})
+		if err != nil {
+			t.Fatalf("seed item %s: %v", extID, err)
+		}
+		return it.ID
+	}
+
+	// Container has different stats-type requirement; build it
+	// explicitly so the type matcher in Create is happy.
+	pack, err := items.Create(ctx, repo.Item{
+		ExternalID:  "alice-pack",
+		Name:        "a leather backpack",
+		Type:        repo.ItemTypeContainer,
+		OwnerCharacterID: ch.ID,
+		Stats:       &repo.ContainerStats{CapacityLbs: 30, CapacityCuFt: 5},
+	})
+	if err != nil {
+		t.Fatalf("seed pack: %v", err)
+	}
+
+	swordID := mkItem("alice-sword", "a steel sword", ch.ID, 0)
+	nested1 := mkItem("alice-rag", "a rag", 0, pack.ID)
+	nested2 := mkItem("alice-flint", "a flint", 0, pack.ID)
+
+	// Equip the sword in the primary wield slot (slot map metadata).
+	if err := chars.RecordEquipment(ctx, ch.ID, creature.Equipment{
+		PrimaryWield: swordID,
+	}); err != nil {
+		t.Fatalf("equip sword: %v", err)
+	}
+
+	mgr := New(bus, chars, nil, nil, items)
+
+	return dropOnDeathFixture{
+		mgr: mgr, chars: chars, items: items, bus: bus,
+		deathRoom: 101, boundRoom: 200,
+		charID:      ch.ID,
+		swordID:     swordID,
+		packID:      pack.ID,
+		nested1ID:   nested1, nested2ID: nested2,
+		carriedCoin: 50, bankCoin: 100,
+	}
+}
+
+func TestCharacterDeath_DropOnDeath_Disabled_Default(t *testing.T) {
+	ctx := context.Background()
+	f := setupDropOnDeath(t)
+
+	pre, _ := f.chars.GetByID(ctx, f.charID)
+	startDebt := pre.XPDebt
+
+	f.mgr.handleCharacterDeath(ctx,
+		ActorRef{},
+		ActorRef{Kind: ActorKindCharacter, ID: f.charID},
+	)
+
+	post, _ := f.chars.GetByID(ctx, f.charID)
+	if post.Coin != f.carriedCoin {
+		t.Errorf("Coin = %d, want %d (drop disabled)", post.Coin, f.carriedCoin)
+	}
+	if post.BankBalance != f.bankCoin {
+		t.Errorf("BankBalance = %d, want %d", post.BankBalance, f.bankCoin)
+	}
+	if post.Equipment.PrimaryWield != f.swordID {
+		t.Errorf("Equipment cleared: PrimaryWield = %d", post.Equipment.PrimaryWield)
+	}
+	if post.XPDebt <= startDebt {
+		t.Errorf("XPDebt = %d, want > %d (10%% delta should apply)", post.XPDebt, startDebt)
+	}
+	// No corpse in death room.
+	roomItems, _ := f.items.ListInRoom(ctx, f.deathRoom)
+	for _, it := range roomItems {
+		if it.Type == repo.ItemTypeContainer && strings.HasPrefix(it.ExternalID, "pcorpse-") {
+			t.Errorf("player corpse spawned with drop-on-death disabled: %+v", it)
+		}
+	}
+}
+
+func TestCharacterDeath_DropOnDeath_Enabled_DumpsLootAndWaivesDebt(t *testing.T) {
+	ctx := context.Background()
+	f := setupDropOnDeath(t)
+	f.mgr.SetDropOnDeath(true)
+
+	pre, _ := f.chars.GetByID(ctx, f.charID)
+	startDebt := pre.XPDebt
+
+	f.mgr.handleCharacterDeath(ctx,
+		ActorRef{},
+		ActorRef{Kind: ActorKindCharacter, ID: f.charID},
+	)
+
+	// Character: carried coin zeroed, bank preserved, equipment cleared.
+	post, _ := f.chars.GetByID(ctx, f.charID)
+	if post.Coin != 0 {
+		t.Errorf("Coin = %d, want 0 (drop enabled)", post.Coin)
+	}
+	if post.BankBalance != f.bankCoin {
+		t.Errorf("BankBalance = %d, want %d (bank preserved)", post.BankBalance, f.bankCoin)
+	}
+	if post.Equipment.PrimaryWield != 0 ||
+		len(post.Equipment.BeltPouches) != 0 ||
+		len(post.Equipment.WornMisc) != 0 {
+		t.Errorf("Equipment not cleared: %+v", post.Equipment)
+	}
+	if post.XPDebt != startDebt {
+		t.Errorf("XPDebt = %d, want %d (drop should waive delta)", post.XPDebt, startDebt)
+	}
+
+	// Find the corpse.
+	roomItems, _ := f.items.ListInRoom(ctx, f.deathRoom)
+	var corpse *repo.Item
+	for i := range roomItems {
+		it := &roomItems[i]
+		if it.Type == repo.ItemTypeContainer && strings.HasPrefix(it.ExternalID, "pcorpse-") {
+			corpse = it
+			break
+		}
+	}
+	if corpse == nil {
+		t.Fatal("player corpse not spawned")
+	}
+	if corpse.DecayExpiresAt == nil {
+		t.Errorf("corpse missing DecayExpiresAt")
+	}
+	if !strings.Contains(corpse.Name, "Alice") {
+		t.Errorf("corpse name = %q, want it to contain Alice", corpse.Name)
+	}
+
+	// Corpse should contain: sword, pack, coin pile. Nested items
+	// stay inside pack (not direct children of corpse).
+	contents, err := f.items.ListInContainer(ctx, corpse.ID)
+	if err != nil {
+		t.Fatalf("ListInContainer corpse: %v", err)
+	}
+	gotSword, gotPack, gotCoin := false, false, false
+	for _, it := range contents {
+		switch it.ID {
+		case f.swordID:
+			gotSword = true
+		case f.packID:
+			gotPack = true
+		}
+		if it.Type == repo.ItemTypeTradeGood && (it.Flags&repo.FlagTradeGood) != 0 {
+			if it.Value != f.carriedCoin {
+				t.Errorf("coin pile value = %d, want %d", it.Value, f.carriedCoin)
+			}
+			gotCoin = true
+		}
+	}
+	if !gotSword {
+		t.Errorf("sword not in corpse: %+v", contents)
+	}
+	if !gotPack {
+		t.Errorf("pack not in corpse: %+v", contents)
+	}
+	if !gotCoin {
+		t.Errorf("coin pile not in corpse: %+v", contents)
+	}
+
+	// Nested items should still be inside the pack (which is now
+	// inside the corpse). They are reachable via ListInContainer(pack).
+	nested, _ := f.items.ListInContainer(ctx, f.packID)
+	gotRag, gotFlint := false, false
+	for _, it := range nested {
+		if it.ID == f.nested1ID {
+			gotRag = true
+		}
+		if it.ID == f.nested2ID {
+			gotFlint = true
+		}
+	}
+	if !gotRag || !gotFlint {
+		t.Errorf("nested items lost: rag=%v flint=%v", gotRag, gotFlint)
+	}
+}
+
+func TestCharacterDeath_DropOnDeath_AffectDeathPath(t *testing.T) {
+	// HandleAffectDeath flows through handleCharacterDeath with empty
+	// killer; drop-on-death should still fire.
+	ctx := context.Background()
+	f := setupDropOnDeath(t)
+	f.mgr.SetDropOnDeath(true)
+
+	f.mgr.HandleAffectDeath(ctx, f.charID)
+
+	post, _ := f.chars.GetByID(ctx, f.charID)
+	if post.Coin != 0 {
+		t.Errorf("Coin = %d, want 0 (drop fired for affect-death)", post.Coin)
+	}
+	if post.Equipment.PrimaryWield != 0 {
+		t.Errorf("Equipment not cleared on affect-death drop: %+v", post.Equipment)
+	}
+}

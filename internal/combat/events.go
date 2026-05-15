@@ -171,6 +171,11 @@ type CharacterDied struct {
 	Killer      ActorRef
 	BoundRoomID int64
 	XPDebtAdded int64
+	// CorpseID is the item id of the player-corpse spawned when the
+	// server is running with drop-on-death enabled (§19 closer). Zero
+	// when the death used the default keep-inventory path. Cmd-layer
+	// subscribers may render a different broadcast when non-zero.
+	CorpseID int64
 }
 
 // CharacterRespawned fires when a dead player has been moved to

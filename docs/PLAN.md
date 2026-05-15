@@ -410,10 +410,24 @@ investment / new-weave learning intentionally **stay in old Phase D**
     where attacker outlevels victim by more than the cap return
     0 (anti-farm). Non-combat deaths (empty killer from
     `HandleAffectDeath`) and empty-tally edges short-circuit.
-    Still deferred: drop-on-death toggle; two-UPDATE TOCTOU on
-    RecordXP + RecordXPDebt (safe under single-session-per-account).
-    **§19 is now functionally complete** — all remaining items
-    are optional polish or multi-session prerequisites.
+    **Drop-on-death toggle LANDED 2026-05-15** — Phase D §19 closer.
+    `CombatConfig{DropOnDeath bool}` (env `DROP_ON_DEATH`, YAML
+    `combat.drop_on_death`) threaded via `Manager.SetDropOnDeath`.
+    When enabled, `handleCharacterDeath` runs `dropCharacterLoot`
+    before respawn: durable player-corpse in the death room
+    (`pcorpse-<id>-<nano>`, `corpseDecayDuration`), top-level
+    inventory + equipped items moved via `TransferOwnerToContainer`
+    (nested items follow their container), carried coin spawns a
+    `TradeGood` pile inside the corpse, `Character.Coin` zeroed
+    (bank preserved, optimistic-lock retry on `ErrCoinConflict`),
+    Equipment cleared. The 10% XP-debt delta is waived when the
+    drop fires — gear/coin loss replaces XP debt as the cost.
+    `CharacterDied.CorpseID` plumbs the corpse id through the bus
+    for future broadcast variants. Affect-death path shares the
+    gate. Still deferred: two-UPDATE TOCTOU on RecordXP +
+    RecordXPDebt (safe under single-session-per-account); per-zone
+    room-flag override is a future hardcore-zone follow-up.
+    **§19 is now closed** in ROADMAP.
 20. **Aggro / threat tables** (§11). Slice 1 LANDED 2026-05-07:
     `Fight.Threat map[ActorRef]map[ActorRef]int32` (defender →
     attacker → cumulative). Damage adds 1:1 from the same site that

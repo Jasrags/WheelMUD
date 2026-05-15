@@ -1016,7 +1016,7 @@ will need on top of those tables.
       (no mob AI yet), healing-adds-threat (no heal verb / weave
       wiring), taunt verb (flat bonus), `feign death` (zero one
       source).
-- [~] Death, corpses, looting, XP award — slice 1 landed
+- [x] Death, corpses, looting, XP award — slice 1 landed
       2026-05-07 (Phase D #19, mob death only). HP ≤ 0 on a mob:
       spawn a `corpse of <name>` `ItemTypeContainer` in the room
       (currently empty — inventory transfer pending), despawn the
@@ -1096,10 +1096,29 @@ will need on top of those tables.
       before. Non-combat deaths (HandleAffectDeath, empty
       killer) and empty-tally edges short-circuit; victim is
       stripped from the tally before allocation so a self-damage
-      reflect can't credit XP back. Still pending: drop-on-death
-      toggle if play-tests demand it; two-UPDATE TOCTOU on
-      RecordXP + RecordXPDebt (safe under single-session-per-account
-      today). Mob respawn via §9 zone reset already shipped
+      reflect can't credit XP back. **Drop-on-death toggle landed
+      2026-05-15** — Phase D §19 closer. New `CombatConfig{DropOnDeath
+      bool}` block on the runtime config (env `DROP_ON_DEATH`, YAML
+      `combat.drop_on_death`), threaded through
+      `combat.Manager.SetDropOnDeath`. When enabled and the items repo
+      is wired, `handleCharacterDeath` runs `dropCharacterLoot`
+      before the heal/respawn writes: spawn a durable player-corpse
+      (`pcorpse-<id>-<nano>` external id; same `corpseDecayDuration`
+      and `Decayer.Schedule` as mob corpses), `TransferOwnerToContainer`
+      every top-level inventory item (nested container contents follow
+      their parent automatically), repeat for equipped item ids,
+      clear `Equipment` via `RecordEquipment(zero)`, spawn a
+      `TradeGood` coin pile inside the corpse for carried coin
+      (bank preserved), zero `Character.Coin` via `RecordCoin` with
+      one optimistic-lock retry on `ErrCoinConflict`. When the drop
+      fires, the 10% XP-debt delta is waived — gear/coin loss replaces
+      XP debt as the death cost. `CharacterDied.CorpseID` carries the
+      new corpse id through the event bus for future broadcast
+      variants. Affect-death path (`HandleAffectDeath`) shares the
+      gate. Still pending: two-UPDATE TOCTOU on RecordXP +
+      RecordXPDebt (safe under single-session-per-account today);
+      per-zone room-flag override and harsher broadcast variants are
+      deferred. Mob respawn via §9 zone reset already shipped
       (`internal/world/respawn.go::ZoneResetter.respawnMobs`).
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
