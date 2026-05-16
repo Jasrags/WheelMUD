@@ -777,13 +777,13 @@ func TestCharacterDeath_DropOnDeath_Enabled_DumpsLootAndWaivesDebt(t *testing.T)
 		}
 	}
 	if !gotSword {
-		t.Errorf("sword not in corpse: %+v", contents)
+		t.Fatalf("sword not in corpse: %+v", contents)
 	}
 	if !gotPack {
-		t.Errorf("pack not in corpse: %+v", contents)
+		t.Fatalf("pack not in corpse: %+v", contents)
 	}
 	if !gotCoin {
-		t.Errorf("coin pile not in corpse: %+v", contents)
+		t.Fatalf("coin pile not in corpse: %+v", contents)
 	}
 
 	// Nested items should still be inside the pack (which is now

@@ -77,10 +77,15 @@ func (m *Manager) handleCharacterDeath(ctx context.Context, killer, victim Actor
 	// tests don't), dump carried coin + top-level inventory + equipped
 	// items into a player-corpse in the death room before the room
 	// move. When the drop actually fires, the 10% XP-debt delta is
-	// waived: gear/coin loss replaces XP debt as the death cost.
+	// waived: gear/coin loss replaces XP debt as the death cost. The
+	// flag read is fenced under m.mu so SetDropOnDeath's write is
+	// observed without relying on the bool's set-once-at-boot pattern.
+	m.mu.RLock()
+	dropEnabled := m.dropOnDeath
+	m.mu.RUnlock()
 	var corpseID int64
 	var dropped bool
-	if m.dropOnDeath && m.items != nil {
+	if dropEnabled && m.items != nil {
 		corpseID, dropped = m.dropCharacterLoot(ctx, ch)
 	}
 
@@ -248,9 +253,13 @@ func (m *Manager) spawnPlayerCorpse(ctx context.Context, ch repo.Character) int6
 	if name == "" {
 		name = "an unknown soul"
 	}
-	deadline := m.now().Add(corpseDecayDuration)
+	// Capture m.now() once so deadline and ExternalID share the same
+	// timestamp — matches the corpseExternalID pattern in mob_death.go
+	// and keeps tests with an injected fixed clock deterministic.
+	now := m.now()
+	deadline := now.Add(corpseDecayDuration)
 	corpse := repo.Item{
-		ExternalID: fmt.Sprintf("pcorpse-%d-%d", ch.ID, m.now().UnixNano()),
+		ExternalID: fmt.Sprintf("pcorpse-%d-%d", ch.ID, now.UnixNano()),
 		Name:       "corpse of " + name,
 		ShortDesc:  "The corpse of " + name + " lies here.",
 		RoomID:     ch.CurrentRoomID,
@@ -340,33 +349,37 @@ func equippedItemIDs(eq creature.Equipment) []int64 {
 	return ids
 }
 
-// dropCarriedCoin spawns a TradeGood pile inside the corpse for the
-// character's carried coin (bank preserved) and zeroes the row. One
-// retry on ErrCoinConflict — mirrors the quest reward path documented
-// in CLAUDE.md.
+// dropCarriedCoin zeroes the character's carried coin (bank preserved)
+// and, only on a successful write, spawns a matching TradeGood pile
+// inside the corpse. Ordering matters: spawning the pile first and
+// then failing to zero the row would duplicate value (player keeps the
+// coin AND the pile exists). One retry on ErrCoinConflict — mirrors
+// the quest reward path documented in CLAUDE.md.
 func (m *Manager) dropCarriedCoin(ctx context.Context, ch repo.Character, corpseID int64) {
 	if ch.Coin <= 0 {
 		return
 	}
-	m.spawnCoinPile(ctx, corpseID, ch.Coin)
-	// Zero carried coin, preserve bank. Optimistic-lock retry once.
-	if err := m.chars.RecordCoin(ctx, ch.ID, 0, ch.BankBalance, ch.CoinVersion); err != nil {
-		if !errors.Is(err, repo.ErrCoinConflict) {
-			slog.Warn("combat: drop-on-death coin clear failed",
-				"char", ch.ID, "error", err)
-			return
-		}
-		// Conflict — re-read and retry once. A concurrent transfer
-		// changed the version; we still want carried coin zeroed.
-		fresh, err := m.chars.GetByID(ctx, ch.ID)
-		if err != nil {
+	pileAmount := ch.Coin
+	err := m.chars.RecordCoin(ctx, ch.ID, 0, ch.BankBalance, ch.CoinVersion)
+	if errors.Is(err, repo.ErrCoinConflict) {
+		// A concurrent transfer changed the version; re-read so the
+		// pile reflects the actual coin we're about to remove.
+		fresh, ferr := m.chars.GetByID(ctx, ch.ID)
+		if ferr != nil {
 			slog.Warn("combat: drop-on-death coin reread failed",
-				"char", ch.ID, "error", err)
+				"char", ch.ID, "error", ferr)
 			return
 		}
-		if err := m.chars.RecordCoin(ctx, ch.ID, 0, fresh.BankBalance, fresh.CoinVersion); err != nil {
-			slog.Warn("combat: drop-on-death coin clear retry failed",
-				"char", ch.ID, "error", err)
+		pileAmount = fresh.Coin
+		if pileAmount <= 0 {
+			return
 		}
+		err = m.chars.RecordCoin(ctx, ch.ID, 0, fresh.BankBalance, fresh.CoinVersion)
 	}
+	if err != nil {
+		slog.Warn("combat: drop-on-death coin clear failed",
+			"char", ch.ID, "error", err)
+		return
+	}
+	m.spawnCoinPile(ctx, corpseID, pileAmount)
 }
