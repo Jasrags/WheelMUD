@@ -921,12 +921,14 @@ will need on top of those tables.
       shipped (`internal/cmd/track.go`, AuthAdmin) — keyword-resolves
       across all spawned mobs, reports current room + last-step
       direction + elapsed time. Pending: §12 skill-check gate on
-      staleness window so players (not just admins) can `track`,
-      and per-template `wander_radius` once `mob_instances` carries
-      a stable spawn-room id. **Default flipped 2026-05-06**:
+      staleness window so players (not just admins) can `track`.
+      **Default flipped 2026-05-06**:
       `creature.DefaultWanderChance` is now `0.0` — random wandering
       is opt-in per template (set `wander_chance` on the YAML mob
-      entry).
+      entry). **Phase F §32a landed 2026-05-12**: authored
+      strict-path (`mob_templates.path`, migration 0053) and BFS
+      pathfinding (`mob_templates.wander_radius`, migration 0054)
+      both ride the same wander tick — see PLAN.md #32a.
 
 - [ ] Scheduled mob routes — declarative path-following so mobs like
       a lamplighter making evening rounds, a guard checking the

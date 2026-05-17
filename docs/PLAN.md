@@ -885,25 +885,42 @@ Content multiplier. Without this the world is static.
       wipe-list extended with `wait`, `inventory`.
     - Slice 6: OLC `tedit` (depends on Phase G).
 
-32a. **Authored mob paths + pathfinding** (§15 / §10). Today
-    `mob_templates.wander_chance` drives unweighted random
-    movement into any open exit. Two upgrades:
-    - **Strict path** — optional `path: [room_ext, room_ext, ...]`
-      block on the mob YAML (closed loop or ping-pong). Mob
-      advances one step per wander tick along the authored
-      sequence, ignoring `wander_chance`. Cheap; one new column
-      on `mob_templates` + a small index into the path on
-      `mob_instances`.
-    - **Pathfinding wander** — when a mob picks a destination
-      (e.g. authored `home_zone` plus an authored `wander_radius`,
-      or a trigger-set goal room), use BFS over the existing room
-      graph (same data feeding the §10 minimap) to step toward it
-      one room per tick. Patrols, "return-home" mobs, and quest
-      escorts all collapse onto this. Builds on `mob_trails` so
-      backtracking and stuck-detection are observable.
-    No new event-bus surface needed; both ride the existing
-    wander tick. Order: strict path first (smaller scope, unblocks
-    most authored content), pathfinding second.
+32a. ~~**Authored mob paths + pathfinding** (§15 / §10).~~ **LANDED
+    2026-05-12** across two slices.
+    - **Slice 1 — strict path** (commit `5a5eb01`). Migration
+      `0053_mob_templates_path.sql` adds `mob_templates.path TEXT`
+      holding a JSON array of room external_ids. YAML schema gains
+      an optional `path: [room_ext, ...]` block on `Mob`
+      (`internal/world/yaml.go`); loader validates length ≥ 2,
+      no dupes, all rooms exist, every adjacent edge walkable via
+      `validateMobPath`, then resolves external_ids → internal
+      room IDs into `MobTemplate.PathRoomIDs` in
+      `internal/world/loader.go::insertMobs`. Runtime branch
+      `WanderHandler.considerStrictPath`
+      (`internal/mob/wander.go:316`) advances one step per wander
+      tick along a closed loop (modulo wraparound), ignoring
+      `wander_chance`. Per-template `wanderProfile` cache
+      (`internal/mob/wander.go:202`) avoids re-fetching templates
+      per pulse. Tests in `internal/mob/wander_test.go`
+      (`TestWander_StrictPath_*`) cover closed-loop traversal,
+      chance-zero bypass, off-path no-op, and blocked-door no-step.
+      QA fixture: `test.qa.patrol_guard` in
+      `data/world/test/qa_zone/mobs.yaml` walks hub ↔ combat_wander.
+    - **Slice 2 — BFS pathfinding** (commit `ce1168a`). Migration
+      `0054_mob_templates_wander_radius.sql` adds
+      `mob_templates.wander_radius INTEGER NOT NULL DEFAULT 0`.
+      Branch `considerBFSWander` (`internal/mob/wander.go:403`)
+      picks a goal room within `wander_radius` hops via BFS over
+      the existing room graph and steps one room per tick toward
+      it; builds on `mob_trails` so backtracking is observable.
+      QA fixture: `test.qa.scout` (`wander_radius: 2`). Review
+      fixes in commit `dddc270`.
+    Deferred (recorded in `mob_paths_followups.md`, unblock when
+    content demand surfaces): **ping-pong path mode** (only
+    closed-loop wraparound shipped) and **persistent `path_index`
+    on `mob_instances`** (current handler recomputes position by
+    linear scan per pulse — fine for small N, acceptable trade
+    versus a new column).
 
 ---
 
