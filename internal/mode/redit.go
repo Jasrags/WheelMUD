@@ -442,6 +442,10 @@ func (m *REdit) showExtra(s *telnet.Session, kw string) error {
 			"{{No extra %q on this room.}}::yellow\r\n", defangCfmt(kw),
 		))
 	}
+	// Body stays undefanged — extras are authored content, so builders
+	// can use cfmt markup in the prose intentionally (same policy as
+	// LongDesc rendering in writeShow). The keyword is operator input
+	// and stays defanged.
 	return s.WriteString(fmt.Sprintf("{{Extra %q:}}::yellow\r\n%s\r\n",
 		defangCfmt(kw), body))
 }
@@ -653,8 +657,13 @@ func (m *REdit) persistExit(ctx context.Context, s *telnet.Session, ex repo.Exit
 				"exit", ex.ID, "field", field, "error", err)
 		}
 	}
+	// `field` for `to=<room_external_id>` carries a builder-authored
+	// string that we don't want closing the surrounding `{{..}}::green`
+	// context if it ever contained `}}::red ...`. Defang at the render
+	// site rather than at each call site so future fields are safe by
+	// default.
 	return s.WriteString(fmt.Sprintf("{{Exit %s.%s saved.}}::green\r\n",
-		repo.DirLong(ex.Direction), field))
+		repo.DirLong(ex.Direction), defangCfmt(field)))
 }
 
 func exitFlagSummary(f repo.ExitFlags) string {
