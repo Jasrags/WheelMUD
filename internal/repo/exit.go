@@ -110,6 +110,14 @@ type ExitRepo interface {
 	// AuthoredClosed / AuthoredLocked are authoring choices and are
 	// not touched here. Returns ErrExitNotFound when no row matches.
 	UpdateFlags(ctx context.Context, exitID int64, closed, locked bool) error
+	// Update overwrites the authoring fields of an exit by ID:
+	// to_room_id, description, key_external_id, lock_difficulty, and
+	// the authoring-time flag bits (Pickable, Hidden, NoPass).
+	// Identity (id, from_room_id, direction), runtime door state
+	// (Closed, Locked), and authored_* snapshots are preserved.
+	// Phase G #34 redit slice 2. Returns ErrExitNotFound when no row
+	// matches.
+	Update(ctx context.Context, e Exit) error
 	// RestoreAuthored resets the runtime Closed / Locked columns of
 	// every exit whose from_room_id is in fromRoomIDs back to their
 	// authored_closed / authored_locked values. Used by ZoneResetter

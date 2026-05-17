@@ -173,6 +173,107 @@ func runExitRepoTests(t *testing.T, name string, newFix func(t *testing.T) exitR
 		}
 	})
 
+	t.Run(name+"/update_round_trip", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		// Make a third room for the retarget step.
+		rc, err := fix.rooms.Create(ctx, Room{ExternalID: "c", Name: "C"})
+		if err != nil {
+			t.Fatalf("create C: %v", err)
+		}
+		created, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Description:    "an old footpath",
+			KeyExternalID:  "key.iron",
+			LockDifficulty: 10,
+			Flags:          ExitFlags{Pickable: false, Hidden: false, NoPass: false},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		updated := created
+		updated.ToRoomID = rc.ID
+		updated.Description = "a worn cobbled lane"
+		updated.KeyExternalID = "key.brass"
+		updated.LockDifficulty = 25
+		updated.Flags.Pickable = true
+		updated.Flags.Hidden = true
+		updated.Flags.NoPass = true
+		if err := fix.exits.Update(ctx, updated); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if got.ToRoomID != rc.ID {
+			t.Errorf("to_room_id = %d, want %d", got.ToRoomID, rc.ID)
+		}
+		if got.Description != "a worn cobbled lane" {
+			t.Errorf("description = %q", got.Description)
+		}
+		if got.KeyExternalID != "key.brass" {
+			t.Errorf("key = %q", got.KeyExternalID)
+		}
+		if got.LockDifficulty != 25 {
+			t.Errorf("lock_difficulty = %d", got.LockDifficulty)
+		}
+		if !got.Flags.Pickable || !got.Flags.Hidden || !got.Flags.NoPass {
+			t.Errorf("authoring flags not persisted: %+v", got.Flags)
+		}
+	})
+
+	t.Run(name+"/update_preserves_runtime_and_authored", func(t *testing.T) {
+		fix := newFix(t)
+		a, b := makeRooms(t, fix)
+		ctx := context.Background()
+		created, err := fix.exits.Create(ctx, Exit{
+			FromRoomID: a, ToRoomID: b, Direction: DirNorth,
+			Flags: ExitFlags{
+				Closed: true, Locked: true,
+				AuthoredClosed: true, AuthoredLocked: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Update the authoring subset; runtime + authored_* must stick.
+		updated := created
+		updated.Description = "rewritten"
+		updated.Flags.Pickable = true
+		// Caller could accidentally pass zero values for runtime /
+		// authored bits here — Update must NOT propagate them.
+		updated.Flags.Closed = false
+		updated.Flags.Locked = false
+		updated.Flags.AuthoredClosed = false
+		updated.Flags.AuthoredLocked = false
+		if err := fix.exits.Update(ctx, updated); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		got, err := fix.exits.FindByDirection(ctx, a, DirNorth)
+		if err != nil {
+			t.Fatalf("FindByDirection: %v", err)
+		}
+		if !got.Flags.Closed || !got.Flags.Locked {
+			t.Errorf("runtime door state lost: %+v", got.Flags)
+		}
+		if !got.Flags.AuthoredClosed || !got.Flags.AuthoredLocked {
+			t.Errorf("authored snapshots lost: %+v", got.Flags)
+		}
+		if got.Description != "rewritten" || !got.Flags.Pickable {
+			t.Errorf("authoring fields not written: %+v", got)
+		}
+	})
+
+	t.Run(name+"/update_missing_id", func(t *testing.T) {
+		fix := newFix(t)
+		err := fix.exits.Update(context.Background(), Exit{ID: 99999, ToRoomID: 1, Direction: DirNorth})
+		if !errors.Is(err, ErrExitNotFound) {
+			t.Fatalf("err = %v, want ErrExitNotFound", err)
+		}
+	})
+
 	t.Run(name+"/find_by_direction_missing", func(t *testing.T) {
 		fix := newFix(t)
 		_, err := fix.exits.FindByDirection(context.Background(), 99999, DirNorth)

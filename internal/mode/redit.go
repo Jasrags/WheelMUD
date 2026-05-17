@@ -2,6 +2,7 @@ package mode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -24,42 +25,81 @@ import (
 // This matches the "permissions are checked at the entry point"
 // convention used by `goto` / `summon` / `spawn`.
 //
-// Subcommands (V1):
+// Subcommands:
 //
-//	show               render the current draft
-//	name <new>         set the room name (one line)
-//	short <new>        set the short description (one line)
-//	desc <new>         set the long description (one line; multi-line
-//	                   deferred to a later slice — for now a single
-//	                   line replaces the full body)
-//	flag <name> [on|off]  toggle a flag, or set it explicitly
-//	sector <name>      set the sector (validated against Sector enum)
-//	light <n>          set LightLevel (0 = pitch black, 100 = full)
-//	done               commit the draft (UPDATE rooms) + pop the mode
-//	cancel             pop without committing (any unsaved edits lost)
-//	help               print the subcommand list
+//	show                         render the current draft
+//	name <new>                   set the room name (one line)
+//	short <new>                  set the short description (one line)
+//	desc <new>                   set the long description (one line)
+//	desc                         enter multi-line buffer mode for the
+//	                             long description; finish with `.` on
+//	                             its own line, or `@abort` to discard
+//	flag <name> [on|off]         toggle / set a flag
+//	sector <name>                set the sector (validated)
+//	light <n>                    set LightLevel (0 = pitch black,
+//	                             100 = full)
+//	extra                        list extra-description keywords
+//	extra <kw>                   show one extra description
+//	extra <kw> <text>            set / replace (one line)
+//	extra <kw> .                 multi-line set (terminated by `.`)
+//	extra <kw> delete            remove
+//	exit <dir>                   show an exit's authoring fields
+//	exit <dir> desc <text>       set the exit description
+//	exit <dir> key <id|none>     set / clear the key external id
+//	exit <dir> difficulty <n>    set lock difficulty (0-100)
+//	exit <dir> flag <f> [on|off] toggle pickable / hidden / nopass
+//	exit <dir> to <room_ext>     change destination room
+//	done                         commit the draft + pop the mode
+//	cancel                       pop without committing
+//	help                         print the subcommand list
 //
-// Exit-editing (`exit <dir> ...`) and ExtraDescs editing (`extra
-// <keyword> ...`) are deferred to a follow-up slice — both need their
-// own write surfaces on ExitRepo and a different multi-line buffer.
+// Exit edits write through ExitRepo.Update immediately on each
+// subcommand (not buffered into the draft) because the room draft
+// model only carries Room fields; per-subcommand exit writes also
+// match how runtime door verbs already mutate exits. Each successful
+// exit edit emits its own admin_audit row (verb `redit_exit`).
 type REdit struct {
-	rooms  repo.RoomRepo
-	audits repo.AdminAuditRepo
+	rooms     repo.RoomRepo
+	exits     repo.ExitRepo
+	audits    repo.AdminAuditRepo
+	lookupExt func(ctx context.Context, externalID string) (repo.Room, error)
 
 	original repo.Room // snapshot on entry; used to compute the audit diff
 	draft    repo.Room // buffered edits; written on `done`
 	dirty    bool      // any subcommand that mutated the draft sets this
+
+	// Multi-line buffering state. When bufActive is true, Handle
+	// short-circuits the verb switch and appends each input line to
+	// bufLines until a "." line flushes or "@abort" discards.
+	// bufKind is either "desc" (target Room.LongDesc) or
+	// "extra:<keyword>" (target ExtraDescs[keyword]).
+	bufActive bool
+	bufKind   string
+	bufLines  []string
 }
 
-// NewREdit constructs a redit mode bound to the supplied room ID. The
+// RoomLookupFn resolves a room by ExternalID for the `exit <dir> to
+// <room_ext>` retarget subcommand. Returns repo.ErrRoomNotFound when
+// no row matches.
+type RoomLookupFn func(ctx context.Context, externalID string) (repo.Room, error)
+
+// NewREdit constructs a redit mode bound to the supplied room. The
 // caller (the `redit` verb) is responsible for the permission check —
 // REdit does not consult builder_zones itself.
-func NewREdit(rooms repo.RoomRepo, audits repo.AdminAuditRepo, room repo.Room) *REdit {
+func NewREdit(
+	rooms repo.RoomRepo,
+	exits repo.ExitRepo,
+	audits repo.AdminAuditRepo,
+	lookup RoomLookupFn,
+	room repo.Room,
+) *REdit {
 	return &REdit{
-		rooms:    rooms,
-		audits:   audits,
-		original: room,
-		draft:    room,
+		rooms:     rooms,
+		exits:     exits,
+		audits:    audits,
+		lookupExt: lookup,
+		original:  room,
+		draft:     room,
 	}
 }
 
@@ -90,8 +130,25 @@ func (m *REdit) Prompt(_ context.Context, _ *telnet.Session) string {
 }
 
 // Handle dispatches a single subcommand line. Empty input re-renders
-// the prompt without action.
+// the prompt without action. When a multi-line buffer is active,
+// input bypasses the verb switch and feeds the buffer instead.
 func (m *REdit) Handle(ctx context.Context, s *telnet.Session, line string) error {
+	if m.bufActive {
+		// Buffering mode: preserve leading/trailing whitespace on
+		// content lines so prose indentation round-trips, but trim
+		// the terminator/abort sentinels so a trailing space doesn't
+		// trap the operator. The raw line is used verbatim for
+		// content; only the trimmed form drives the sentinel check.
+		trimmed := strings.TrimSpace(line)
+		switch trimmed {
+		case ".":
+			return m.flushBuffer(s)
+		case "@abort":
+			return m.abortBuffer(s)
+		}
+		m.bufLines = append(m.bufLines, line)
+		return nil
+	}
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
@@ -116,6 +173,10 @@ func (m *REdit) Handle(ctx context.Context, s *telnet.Session, line string) erro
 		return m.setSector(s, rest)
 	case "light":
 		return m.setLight(s, rest)
+	case "extra":
+		return m.setExtra(s, rest)
+	case "exit":
+		return m.handleExit(ctx, s, rest)
 	case "done", "commit", "save":
 		return m.commit(ctx, s)
 	case "cancel", "abort", "quit":
@@ -128,16 +189,29 @@ func (m *REdit) Handle(ctx context.Context, s *telnet.Session, line string) erro
 
 func (m *REdit) writeHelp(s *telnet.Session) error {
 	const body = "Editor commands:\r\n" +
-		"  {{show}}::yellow                   render the current draft\r\n" +
-		"  {{name}}::yellow <new>             set the room name\r\n" +
-		"  {{short}}::yellow <new>            set the short description\r\n" +
-		"  {{desc}}::yellow <new>             set the long description (one line)\r\n" +
-		"  {{flag}}::yellow <name> [on|off]   toggle / set a flag\r\n" +
-		"  {{sector}}::yellow <name>          set the sector\r\n" +
-		"  {{light}}::yellow <0-100>          set the light level\r\n" +
-		"  {{done}}::yellow                   commit changes and exit\r\n" +
-		"  {{cancel}}::yellow                 abandon changes and exit\r\n" +
-		"\r\nFlags: indoors, nopvp, noteleport, dark, silent, peaceful, nomap, bindable\r\n" +
+		"  {{show}}::yellow                       render the current draft\r\n" +
+		"  {{name}}::yellow <new>                 set the room name\r\n" +
+		"  {{short}}::yellow <new>                set the short description\r\n" +
+		"  {{desc}}::yellow <new>                 set long description (one line)\r\n" +
+		"  {{desc}}::yellow                       multi-line; end with '.' or '@abort'\r\n" +
+		"  {{flag}}::yellow <name> [on|off]       toggle / set a room flag\r\n" +
+		"  {{sector}}::yellow <name>              set the sector\r\n" +
+		"  {{light}}::yellow <0-100>              set the light level\r\n" +
+		"  {{extra}}::yellow                      list extra-desc keywords\r\n" +
+		"  {{extra}}::yellow <kw>                 show one extra description\r\n" +
+		"  {{extra}}::yellow <kw> <text>          set / replace (one line)\r\n" +
+		"  {{extra}}::yellow <kw> .               multi-line set (end with '.')\r\n" +
+		"  {{extra}}::yellow <kw> delete          remove\r\n" +
+		"  {{exit}}::yellow <dir>                 show an exit's authoring fields\r\n" +
+		"  {{exit}}::yellow <dir> desc <text>     set exit description\r\n" +
+		"  {{exit}}::yellow <dir> key <id|none>   set / clear key external id\r\n" +
+		"  {{exit}}::yellow <dir> difficulty <n>  set lock difficulty (0-100)\r\n" +
+		"  {{exit}}::yellow <dir> flag <f> [on|off]  toggle pickable/hidden/nopass\r\n" +
+		"  {{exit}}::yellow <dir> to <room_ext>   change destination room\r\n" +
+		"  {{done}}::yellow                       commit changes and exit\r\n" +
+		"  {{cancel}}::yellow                     abandon changes and exit\r\n" +
+		"\r\nRoom flags: indoors, nopvp, noteleport, dark, silent, peaceful, nomap, bindable\r\n" +
+		"Exit flags: pickable, hidden, nopass\r\n" +
 		"Sectors: city, forest, field, hills, mountain, desert, water,\r\n" +
 		"         underwater, air, underground, blight, waste, stedding, swamp\r\n"
 	return s.WriteString(body)
@@ -191,11 +265,70 @@ func (m *REdit) setShort(s *telnet.Session, v string) error {
 
 func (m *REdit) setDesc(s *telnet.Session, v string) error {
 	if v == "" {
-		return s.WriteString("{{Usage: desc <new long description>}}::yellow\r\n")
+		m.bufActive = true
+		m.bufKind = "desc"
+		m.bufLines = m.bufLines[:0]
+		return s.WriteString(
+			"{{Enter long description. Finish with a single '.' on its own line. " +
+				"Type '@abort' on its own line to cancel.}}::yellow\r\n",
+		)
 	}
 	m.draft.LongDesc = v
 	m.dirty = true
 	return s.WriteString("{{Long description set.}}::green\r\n")
+}
+
+// flushBuffer commits the multi-line accumulator into whichever field
+// bufKind targeted, clears buffering state, and confirms to the
+// operator. Empty buffers still flush — a builder who types `desc`
+// then `.` is explicitly clearing the field.
+func (m *REdit) flushBuffer(s *telnet.Session) error {
+	body := strings.Join(m.bufLines, "\n")
+	kind := m.bufKind
+	m.bufActive = false
+	m.bufKind = ""
+	m.bufLines = m.bufLines[:0]
+	switch {
+	case kind == "desc":
+		m.draft.LongDesc = body
+		m.dirty = true
+		return s.WriteString(fmt.Sprintf(
+			"{{Long description set (%d line%s).}}::green\r\n",
+			lineCount(body), plural(lineCount(body)),
+		))
+	case strings.HasPrefix(kind, "extra:"):
+		key := strings.TrimPrefix(kind, "extra:")
+		if m.draft.ExtraDescs == nil {
+			m.draft.ExtraDescs = map[string]string{}
+		}
+		m.draft.ExtraDescs[key] = body
+		m.dirty = true
+		return s.WriteString(fmt.Sprintf(
+			"{{Extra %q set (%d line%s).}}::green\r\n",
+			defangCfmt(key), lineCount(body), plural(lineCount(body)),
+		))
+	default:
+		// Unknown kind shouldn't happen — log defensively and reset.
+		slog.Warn("redit: flushBuffer with unknown kind", "kind", kind)
+		return s.WriteString("{{Buffer discarded (internal state error).}}::red\r\n")
+	}
+}
+
+// abortBuffer drops the accumulator without touching the draft.
+func (m *REdit) abortBuffer(s *telnet.Session) error {
+	m.bufActive = false
+	m.bufKind = ""
+	m.bufLines = m.bufLines[:0]
+	return s.WriteString("{{Edit aborted. Draft unchanged.}}::yellow\r\n")
+}
+
+// lineCount returns 0 for empty bodies and the count of LF-separated
+// lines otherwise. Used only for the operator-facing confirmation.
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 // flagPointers maps the user-facing flag name to a pointer into the
@@ -244,6 +377,308 @@ func (m *REdit) setFlag(s *telnet.Session, rest string) error {
 	*ptr = target
 	m.dirty = true
 	return s.WriteString(fmt.Sprintf("{{Flag %s = %s.}}::green\r\n", name, boolLabel(target)))
+}
+
+// setExtra dispatches the `extra ...` family. Keywords are
+// case-insensitive on input; ExtraDescs keys are normalized to
+// lowercase to match the convention documented at
+// repo/room.go (ExtraDescs comment).
+func (m *REdit) setExtra(s *telnet.Session, rest string) error {
+	if rest == "" {
+		return m.listExtras(s)
+	}
+	kw, tail, _ := strings.Cut(rest, " ")
+	kw = strings.ToLower(strings.TrimSpace(kw))
+	tail = strings.TrimSpace(tail)
+	if kw == "" {
+		return s.WriteString("{{Usage: extra <keyword> [text|delete|.]}}::yellow\r\n")
+	}
+	switch {
+	case tail == "":
+		return m.showExtra(s, kw)
+	case strings.EqualFold(tail, "delete") || strings.EqualFold(tail, "remove"):
+		return m.deleteExtra(s, kw)
+	case tail == ".":
+		m.bufActive = true
+		m.bufKind = "extra:" + kw
+		m.bufLines = m.bufLines[:0]
+		return s.WriteString(fmt.Sprintf(
+			"{{Enter extra description for %q. Finish with '.' on its own line; '@abort' to cancel.}}::yellow\r\n",
+			defangCfmt(kw),
+		))
+	default:
+		if m.draft.ExtraDescs == nil {
+			m.draft.ExtraDescs = map[string]string{}
+		}
+		m.draft.ExtraDescs[kw] = tail
+		m.dirty = true
+		return s.WriteString(fmt.Sprintf(
+			"{{Extra %q set.}}::green\r\n", defangCfmt(kw),
+		))
+	}
+}
+
+func (m *REdit) listExtras(s *telnet.Session) error {
+	if len(m.draft.ExtraDescs) == 0 {
+		return s.WriteString("{{No extra descriptions on this room.}}::yellow\r\n")
+	}
+	keys := make([]string, 0, len(m.draft.ExtraDescs))
+	for k := range m.draft.ExtraDescs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("{{Extra descriptions:}}::yellow\r\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "  %s\r\n", defangCfmt(k))
+	}
+	return s.WriteString(b.String())
+}
+
+func (m *REdit) showExtra(s *telnet.Session, kw string) error {
+	body, ok := m.draft.ExtraDescs[kw]
+	if !ok {
+		return s.WriteString(fmt.Sprintf(
+			"{{No extra %q on this room.}}::yellow\r\n", defangCfmt(kw),
+		))
+	}
+	return s.WriteString(fmt.Sprintf("{{Extra %q:}}::yellow\r\n%s\r\n",
+		defangCfmt(kw), body))
+}
+
+func (m *REdit) deleteExtra(s *telnet.Session, kw string) error {
+	if _, ok := m.draft.ExtraDescs[kw]; !ok {
+		return s.WriteString(fmt.Sprintf(
+			"{{No extra %q on this room.}}::yellow\r\n", defangCfmt(kw),
+		))
+	}
+	delete(m.draft.ExtraDescs, kw)
+	m.dirty = true
+	return s.WriteString(fmt.Sprintf("{{Extra %q deleted.}}::green\r\n", defangCfmt(kw)))
+}
+
+// reditDirectionAliases maps every accepted spelling to a canonical
+// short code. Kept local to the mode package — `internal/cmd/door.go`
+// carries its own copy for the runtime door verbs; the duplication is
+// preferable to a third package taking on the dependency.
+var reditDirectionAliases = map[string]string{
+	"n": repo.DirNorth, "north": repo.DirNorth,
+	"s": repo.DirSouth, "south": repo.DirSouth,
+	"e": repo.DirEast, "east": repo.DirEast,
+	"w": repo.DirWest, "west": repo.DirWest,
+	"u": repo.DirUp, "up": repo.DirUp,
+	"d": repo.DirDown, "down": repo.DirDown,
+	"ne": repo.DirNortheast, "northeast": repo.DirNortheast,
+	"nw": repo.DirNorthwest, "northwest": repo.DirNorthwest,
+	"se": repo.DirSoutheast, "southeast": repo.DirSoutheast,
+	"sw": repo.DirSouthwest, "southwest": repo.DirSouthwest,
+}
+
+func resolveReditDir(s string) (string, bool) {
+	d, ok := reditDirectionAliases[strings.ToLower(strings.TrimSpace(s))]
+	return d, ok
+}
+
+// handleExit dispatches the `exit <dir> [<subverb> [args]]` family.
+// Exit edits write through ExitRepo.Update immediately (no draft
+// buffer); each successful edit emits its own audit row.
+func (m *REdit) handleExit(ctx context.Context, s *telnet.Session, rest string) error {
+	if rest == "" {
+		return s.WriteString("{{Usage: exit <dir> [show|desc|key|difficulty|flag|to] ...}}::yellow\r\n")
+	}
+	dirTok, tail, _ := strings.Cut(rest, " ")
+	tail = strings.TrimSpace(tail)
+	dir, ok := resolveReditDir(dirTok)
+	if !ok {
+		return s.WriteString("{{Unknown direction:}}::red " + defangCfmt(dirTok) + "\r\n")
+	}
+	ex, err := m.exits.FindByDirection(ctx, m.draft.ID, dir)
+	if err != nil {
+		if errors.Is(err, repo.ErrExitNotFound) {
+			return s.WriteString(fmt.Sprintf(
+				"{{No exit %s from this room.}}::yellow\r\n", repo.DirLong(dir),
+			))
+		}
+		slog.Warn("redit: exit lookup failed", "room", m.draft.ID, "dir", dir, "error", err)
+		return s.WriteString("{{Exit lookup failed.}}::red\r\n")
+	}
+	if tail == "" {
+		return m.showExit(s, ex)
+	}
+	sub, args, _ := strings.Cut(tail, " ")
+	args = strings.TrimSpace(args)
+	switch strings.ToLower(sub) {
+	case "show":
+		return m.showExit(s, ex)
+	case "desc", "description":
+		return m.exitSetDesc(ctx, s, ex, args)
+	case "key":
+		return m.exitSetKey(ctx, s, ex, args)
+	case "difficulty", "lockdiff", "diff":
+		return m.exitSetDifficulty(ctx, s, ex, args)
+	case "flag":
+		return m.exitSetFlag(ctx, s, ex, args)
+	case "to":
+		return m.exitSetTo(ctx, s, ex, args)
+	default:
+		return s.WriteString("{{Unknown exit subverb:}}::red " + defangCfmt(sub) +
+			"\r\n  Try: show, desc, key, difficulty, flag, to\r\n")
+	}
+}
+
+func (m *REdit) showExit(s *telnet.Session, ex repo.Exit) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "{{Exit %s (#%d):}}::cyan|bold\r\n",
+		repo.DirLong(ex.Direction), ex.ID)
+	fmt.Fprintf(&b, "  {{to:}}::yellow         room #%d\r\n", ex.ToRoomID)
+	fmt.Fprintf(&b, "  {{desc:}}::yellow       %s\r\n", emptyOr(defangCfmt(ex.Description)))
+	fmt.Fprintf(&b, "  {{key:}}::yellow        %s\r\n", emptyOr(defangCfmt(ex.KeyExternalID)))
+	fmt.Fprintf(&b, "  {{difficulty:}}::yellow %d\r\n", ex.LockDifficulty)
+	fmt.Fprintf(&b, "  {{flags:}}::yellow      %s\r\n", exitFlagSummary(ex.Flags))
+	fmt.Fprintf(&b, "  {{runtime:}}::gray      closed=%s locked=%s\r\n",
+		boolLabel(ex.Flags.Closed), boolLabel(ex.Flags.Locked))
+	return s.WriteString(b.String())
+}
+
+func (m *REdit) exitSetDesc(ctx context.Context, s *telnet.Session, ex repo.Exit, v string) error {
+	if v == "" {
+		return s.WriteString("{{Usage: exit <dir> desc <text>}}::yellow\r\n")
+	}
+	ex.Description = v
+	return m.persistExit(ctx, s, ex, "desc")
+}
+
+func (m *REdit) exitSetKey(ctx context.Context, s *telnet.Session, ex repo.Exit, v string) error {
+	if v == "" {
+		return s.WriteString("{{Usage: exit <dir> key <item_external_id|none>}}::yellow\r\n")
+	}
+	if strings.EqualFold(v, "none") || strings.EqualFold(v, "clear") {
+		ex.KeyExternalID = ""
+	} else {
+		ex.KeyExternalID = v
+	}
+	return m.persistExit(ctx, s, ex, "key")
+}
+
+func (m *REdit) exitSetDifficulty(ctx context.Context, s *telnet.Session, ex repo.Exit, v string) error {
+	if v == "" {
+		return s.WriteString("{{Usage: exit <dir> difficulty <0-100>}}::yellow\r\n")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > 100 {
+		return s.WriteString("{{Expected an integer in [0, 100].}}::yellow\r\n")
+	}
+	ex.LockDifficulty = n
+	return m.persistExit(ctx, s, ex, "difficulty")
+}
+
+func (m *REdit) exitSetFlag(ctx context.Context, s *telnet.Session, ex repo.Exit, v string) error {
+	if v == "" {
+		return s.WriteString("{{Usage: exit <dir> flag <pickable|hidden|nopass> [on|off]}}::yellow\r\n")
+	}
+	name, valStr, _ := strings.Cut(v, " ")
+	name = strings.ToLower(strings.TrimSpace(name))
+	valStr = strings.TrimSpace(valStr)
+	var ptr *bool
+	switch name {
+	case "pickable":
+		ptr = &ex.Flags.Pickable
+	case "hidden":
+		ptr = &ex.Flags.Hidden
+	case "nopass":
+		ptr = &ex.Flags.NoPass
+	default:
+		return s.WriteString("{{Unknown exit flag:}}::red " + defangCfmt(name) +
+			"\r\n  Editable: pickable, hidden, nopass\r\n")
+	}
+	var target bool
+	switch strings.ToLower(valStr) {
+	case "":
+		target = !*ptr
+	case "on", "true", "1", "yes":
+		target = true
+	case "off", "false", "0", "no":
+		target = false
+	default:
+		return s.WriteString("{{Expected on/off or no value to toggle.}}::yellow\r\n")
+	}
+	if *ptr == target {
+		return s.WriteString(fmt.Sprintf("{{Flag %s already %s.}}::yellow\r\n",
+			name, boolLabel(target)))
+	}
+	*ptr = target
+	return m.persistExit(ctx, s, ex, "flag="+name)
+}
+
+func (m *REdit) exitSetTo(ctx context.Context, s *telnet.Session, ex repo.Exit, v string) error {
+	if v == "" {
+		return s.WriteString("{{Usage: exit <dir> to <room_external_id>}}::yellow\r\n")
+	}
+	if m.lookupExt == nil {
+		return s.WriteString("{{Room lookup unavailable.}}::red\r\n")
+	}
+	target, err := m.lookupExt(ctx, v)
+	if err != nil {
+		if errors.Is(err, repo.ErrRoomNotFound) {
+			return s.WriteString("{{No room with external id:}}::red " +
+				defangCfmt(v) + "\r\n")
+		}
+		slog.Warn("redit: room lookup failed", "external", v, "error", err)
+		return s.WriteString("{{Room lookup failed.}}::red\r\n")
+	}
+	ex.ToRoomID = target.ID
+	return m.persistExit(ctx, s, ex, "to="+target.ExternalID)
+}
+
+// persistExit writes the staged exit through ExitRepo.Update and
+// emits a single audit row for the field touched. Audit target
+// encodes "<room_ext>:<dir>:<field>" so a grep across audit rows is
+// useful.
+func (m *REdit) persistExit(ctx context.Context, s *telnet.Session, ex repo.Exit, field string) error {
+	if err := m.exits.Update(ctx, ex); err != nil {
+		slog.Warn("redit: exit update failed",
+			"room", m.draft.ID, "exit", ex.ID, "error", err)
+		return s.WriteString("{{Failed to save exit.}}::red\r\n")
+	}
+	if m.audits != nil {
+		target := fmt.Sprintf("%s:%s:%s", m.draft.ExternalID, ex.Direction, field)
+		if err := m.audits.Record(ctx, repo.AdminAuditEntry{
+			ActorCharacterID: s.CharacterID,
+			ActorName:        s.CharacterName,
+			ActorType:        repo.ActorTypeCharacter,
+			Verb:             "redit_exit",
+			Target:           target,
+		}); err != nil {
+			slog.Warn("redit: exit audit write failed",
+				"exit", ex.ID, "field", field, "error", err)
+		}
+	}
+	return s.WriteString(fmt.Sprintf("{{Exit %s.%s saved.}}::green\r\n",
+		repo.DirLong(ex.Direction), field))
+}
+
+func exitFlagSummary(f repo.ExitFlags) string {
+	var on []string
+	if f.Pickable {
+		on = append(on, "pickable")
+	}
+	if f.Hidden {
+		on = append(on, "hidden")
+	}
+	if f.NoPass {
+		on = append(on, "nopass")
+	}
+	if len(on) == 0 {
+		return "(none)"
+	}
+	return strings.Join(on, ", ")
+}
+
+func emptyOr(s string) string {
+	if s == "" {
+		return "(empty)"
+	}
+	return s
 }
 
 func (m *REdit) setSector(s *telnet.Session, v string) error {

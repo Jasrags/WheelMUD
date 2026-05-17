@@ -1980,7 +1980,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		return nil, err
 	}
 	pushREdit := func(s *telnet.Session, room repo.Room) error {
-		return s.PushMode(mode.NewREdit(rooms, audits, room))
+		return s.PushMode(mode.NewREdit(rooms, exits, audits, rooms.FindByExternalID, room))
 	}
 	if err := r.Register(cmd.NewREdit(rooms, pushREdit)); err != nil {
 		return nil, err

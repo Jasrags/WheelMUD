@@ -71,6 +71,30 @@ func (r *MemoryExitRepo) UpdateFlags(_ context.Context, exitID int64, closed, lo
 	return ErrExitNotFound
 }
 
+// Update overwrites the authoring subset of an exit row in place,
+// preserving identity (id, from_room_id, direction), runtime door
+// state (Closed, Locked), and authored_* snapshots. Phase G #34
+// redit slice 2.
+func (r *MemoryExitRepo) Update(_ context.Context, in Exit) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.exits {
+		e := &r.exits[i]
+		if e.ID != in.ID {
+			continue
+		}
+		e.ToRoomID = in.ToRoomID
+		e.Description = in.Description
+		e.KeyExternalID = in.KeyExternalID
+		e.LockDifficulty = in.LockDifficulty
+		e.Flags.Pickable = in.Flags.Pickable
+		e.Flags.Hidden = in.Flags.Hidden
+		e.Flags.NoPass = in.Flags.NoPass
+		return nil
+	}
+	return ErrExitNotFound
+}
+
 func (r *MemoryExitRepo) FindByDirection(_ context.Context, fromRoomID int64, direction string) (Exit, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

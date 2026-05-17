@@ -87,6 +87,44 @@ func (r *SQLiteExitRepo) UpdateFlags(ctx context.Context, exitID int64, closed, 
 	return nil
 }
 
+// Update overwrites the authoring subset of an exit row: to_room_id,
+// description, key_external_id, lock_difficulty, and the authoring
+// flag bits (pickable, hidden, nopass). Runtime door state
+// (closed, locked) and the authored_* snapshots are preserved.
+// Phase G #34 redit slice 2.
+func (r *SQLiteExitRepo) Update(ctx context.Context, in Exit) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE exits SET
+			to_room_id = ?,
+			description = ?,
+			key_external_id = ?,
+			lock_difficulty = ?,
+			pickable = ?,
+			hidden = ?,
+			nopass = ?
+		 WHERE id = ?`,
+		in.ToRoomID,
+		in.Description,
+		in.KeyExternalID,
+		in.LockDifficulty,
+		boolToInt(in.Flags.Pickable),
+		boolToInt(in.Flags.Hidden),
+		boolToInt(in.Flags.NoPass),
+		in.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("update exit: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update exit rows: %w", err)
+	}
+	if n == 0 {
+		return ErrExitNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteExitRepo) FindByDirection(ctx context.Context, fromRoomID int64, direction string) (Exit, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT `+exitSelectCols+` FROM exits WHERE from_room_id = ? AND direction = ?`,

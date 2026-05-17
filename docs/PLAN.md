@@ -956,9 +956,38 @@ restart.
       and exposes `show / name / short / desc / flag <n> [on|off] /
       sector / light / done / cancel / help`. `done` commits and
       audits the field-name list; `cancel` discards.
-    - Slice 2 (deferred): multi-line `desc` (mode-internal buffer
-      terminated by `.` on its own line), `exit <dir> ...`
-      subcommand (needs `ExitRepo.Update`), `extra <keyword> ...`.
+    - Slice 2: LANDED 2026-05-17. Three pieces in one commit.
+      **Multi-line `desc`**: `desc` with no argument now enters a
+      mode-internal buffering state (`bufActive` + `bufLines`);
+      every subsequent input line accumulates until `.` on its own
+      line flushes via `strings.Join(lines, "\n")` into
+      `Room.LongDesc` and marks the draft dirty. `@abort` discards.
+      Single-line `desc <text>` still works. **`extra <keyword>
+      ...`**: list (`extra`) / show (`extra <kw>`) / set
+      (`extra <kw> <text>`) / multi-line (`extra <kw> .`) / delete
+      (`extra <kw> delete`). Keywords lowercased on input to match
+      the convention documented on `Room.ExtraDescs` (and what
+      `marshalExtraDescs` already enforces on write). Extras commit
+      through the existing `done` → `RoomRepo.Update` path with no
+      schema changes — the `extra_descs_json` column has shipped
+      since migration 0013. **`exit <dir> ...`**: foundation work
+      added `ExitRepo.Update` (memory + sqlite + shared
+      `runExitRepoTests`) that overwrites the authoring subset
+      (to_room_id, description, key_external_id, lock_difficulty,
+      pickable, hidden, nopass) while preserving identity, runtime
+      door state (closed, locked), and the `authored_*` snapshots.
+      Subverbs: `show` / `desc` / `key <id|none>` / `difficulty
+      <0-100>` / `flag <pickable|hidden|nopass> [on|off]` / `to
+      <room_external_id>`. Exit edits write through `ExitRepo.Update`
+      immediately (not buffered into the draft like room fields)
+      and each successful edit emits one `admin_audit` row with verb
+      `redit_exit` and target `<room_ext>:<dir>:<field>`. `NewREdit`
+      signature grew to `(rooms, exits, audits, RoomLookupFn, room)`;
+      the lookup closure is wired in `cmd/server/main.go` from
+      `RoomRepo.FindByExternalID`. Tests: 14 new cases in
+      `internal/mode/redit_test.go` cover single+multi-line desc,
+      extras set/show/delete/lowercased/multi-line, and every exit
+      subverb including bounds and refusal paths.
     - Slice 3 (deferred): `oedit` (item templates), `medit` (mob
       templates), `zedit` (zones). Each is its own repo `Update` +
       mode pair — they fan out from the redit pattern.
