@@ -79,15 +79,15 @@ func runSocialsList(cat *emote.Catalog, s *telnet.Session) error {
 // so a hostile entry can't close the surrounding magenta tag or
 // inject a competing style. ID padding is byte-based; social IDs
 // match [a-z][a-z0-9_]* so byte length == rune length.
+//
+// Padding MUST live inside the `{{...}}::magenta` cfmt wrapper —
+// putting it after `::magenta` causes the terminal reset sequence
+// to land mid-cell, which breaks column alignment in clients that
+// honour SGR boundaries per glyph (most do).
 func writeSocialRows(b *strings.Builder, list []emote.Social, width int) {
 	for _, sc := range list {
 		help := display.Defang(sc.Help, "")
-		pad := width - len(sc.ID)
-		if pad < 0 {
-			pad = 0
-		}
-		fmt.Fprintf(b, "  {{%s}}::magenta%s  %s\r\n",
-			sc.ID, strings.Repeat(" ", pad), help)
+		fmt.Fprintf(b, "  {{%-*s}}::magenta  %s\r\n", width, sc.ID, help)
 	}
 }
 

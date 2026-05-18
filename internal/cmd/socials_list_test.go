@@ -116,9 +116,14 @@ func TestSocialsList_AlphabeticalWithinGroup(t *testing.T) {
 
 	runCmd(t, NewSocialsList(cat), alice, "")
 
+	// Anchor each row at the magenta-wrapped verb glyph rather than a
+	// raw substring, so a future social whose name embeds "aim" or
+	// "zap" (e.g. "claim", "zapper") can't fool the assertion.
 	got := aOut.String()
-	aimAt := strings.Index(got, "aim")
-	zapAt := strings.Index(got, "zap")
+	aimMarker := "\x1b[35maim"
+	zapMarker := "\x1b[35mzap"
+	aimAt := strings.Index(got, aimMarker)
+	zapAt := strings.Index(got, zapMarker)
 	if aimAt < 0 || zapAt < 0 {
 		t.Fatalf("missing one of the rows: aim=%d zap=%d in %q", aimAt, zapAt, got)
 	}
