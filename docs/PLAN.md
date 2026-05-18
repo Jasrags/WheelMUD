@@ -988,9 +988,16 @@ restart.
       `internal/mode/redit_test.go` cover single+multi-line desc,
       extras set/show/delete/lowercased/multi-line, and every exit
       subverb including bounds and refusal paths.
-    - Slice 3 (deferred): `oedit` (item templates), `medit` (mob
-      templates), `zedit` (zones). Each is its own repo `Update` +
-      mode pair — they fan out from the redit pattern.
+    - Slice 3 (deferred-pending-Flow, §M.7 decision 2026-05-18):
+      `oedit` (item templates), `medit` (mob templates), `zedit`
+      (zones). Originally scoped as three more mode-pair editors
+      fanning out from the `redit` pattern. **Now waiting on
+      Phase N #N19 (Flow engine)** — once Flow lands, these
+      three editors become YAML/Lua flow definitions and the
+      ~600 LOC of hand-rolled mode code is avoided. Until then
+      Phase G is "redit shipped; oedit/medit/zedit pending Flow."
+      Do NOT build slice 3 against the redit pattern — that work
+      would be throwaway when Flow arrives.
 35. **Versioned area saves + diff/preview** (§16). Snapshot before
     commit; admin `revert` rolls back.
 36. **Hot-reload of areas without restart** (§7). The §7
@@ -1500,21 +1507,27 @@ M.6. **Hot-reload for socials + help.** Admin-only.
       `Registry.Replace` or equivalent — the current API only
       supports `Register`.
 
-M.7. **Decide §G #34 slice 3 (oedit / medit / zedit) —
-    close-or-defer.** Not a code slice; a planning call.
-    - Option A: if Phase N #N19 (Flow engine) lands, oedit/
-      medit become flows and slice 3 stays deferred indefinitely.
-    - Option B: if not, slice 3 is a logical Phase-G closer
-      (1–2 slices) before moving on.
-    - Action: pick one, update ROADMAP §34 status, leave PLAN
-      §G in a coherent state.
+M.7. ~~**Decide §G #34 slice 3 (oedit / medit / zedit) —
+    close-or-defer.**~~ Decided 2026-05-18: **Option A**.
+    §G #34 slice 3 stays deferred pending Phase N #N19 (Flow
+    engine). Rationale: a generic multi-step Flow framework
+    absorbs oedit/medit/zedit as YAML/Lua flow definitions and
+    also unlocks chargen / quest dialogue / sustenance UX from
+    the same engine — building slice 3 by hand against the
+    `redit` pattern would be ~600 LOC of throwaway work if Flow
+    lands. ROADMAP §16 and §17 OLC entries updated to reflect
+    the deferred-pending-Flow status. Phase G is now in a
+    coherent "redit shipped, oedit/medit/zedit waiting on N.19"
+    state instead of half-open.
 
 After M: operators can author content (socials, help) and
 moderate behaviour (anti-abuse, visibility) without code
 changes. Mud-listing sites discover the server. The §G OLC track
 is in a known state instead of half-open.
 
-Closed 2026-05-18 (M.0–M.3); M.4+ open.
+Closed 2026-05-18: M.0–M.7 all landed or formally deferred.
+Phase M is now closed; promote N.19 (Flow engine) when ready to
+unblock the §G slice 3 backlog.
 
 ---
 

@@ -2043,9 +2043,24 @@ will need on top of those tables.
       fields>`. `cancel` discards the draft without auditing. No
       in-memory room cache exists today, so "re-sync" is implicit:
       the next `look` reads the updated row through the repo.
-      Deferred to slice 2+: multi-line `desc` editor, `exit <dir>`
-      subcommand (needs `ExitRepo.Update`), `extra <keyword>` for
-      ExtraDescs, `oedit` / `medit` / `zedit` (each their own slice).
+      **Slice 2 landed 2026-05-17:** multi-line `desc` editor
+      (buffering until `.` line), `extra <keyword>` subcommand for
+      ExtraDescs (list/show/set/multi-line/delete with lowercased
+      keys), `exit <dir>` subcommand backed by a new
+      `ExitRepo.Update` + `redit_exit` audit row per successful
+      field edit (see `internal/mode/redit_test.go` for the 14
+      coverage cases).
+      **Slice 3 (`oedit` / `medit` / `zedit`) deferred-pending-Flow
+      per §M.7 decision 2026-05-18.** Originally scoped as three
+      more mode-pair editors fanning out from `redit`. Now waiting
+      on Phase N #N19 (a generic multi-step Flow engine that would
+      absorb oedit/medit/zedit as YAML/Lua flow definitions and
+      also unblock chargen, sustenance UX, quest dialogue trees,
+      and account creation from the same engine). Building slice 3
+      hand-rolled against the redit pattern was estimated at ~600
+      LOC of throwaway work if Flow lands; the §M.7 call commits
+      to the Flow path. Until Flow arrives Phase G is "redit
+      shipped; oedit/medit/zedit pending N.19."
 - [~] Permission gating (admin / builder roles) — `AuthLevel` enum
       `Player < Builder < Admin < Implementor`. OLC commands gated
       at `Builder`; admin-only verbs at `Admin`. Builders may be
