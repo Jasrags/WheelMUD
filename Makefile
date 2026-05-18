@@ -11,7 +11,10 @@ export WORLD_DIR
 
 .PHONY: build/server
 build/server:
-	go build -o=/tmp/bin/server cmd/server/main.go
+	# Build the whole cmd/server package — main.go alone misses its
+	# sibling files (registry.go, mssp.go, adapters.go, ...) introduced
+	# by the §M.0 main.go split.
+	go build -o=/tmp/bin/server ./cmd/server
 
 .PHONY: run/server
 run/server: build/server
