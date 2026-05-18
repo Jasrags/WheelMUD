@@ -52,6 +52,9 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewEmote(sessions)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewSocialsList(emoteCatalog)); err != nil {
+		return nil, err
+	}
 	for _, ch := range channels {
 		if err := r.Register(cmd.NewChannel(ch, sessions, characters, bus)); err != nil {
 			return nil, err
