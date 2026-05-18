@@ -8,6 +8,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -104,7 +105,7 @@ func MatchPlayer(target string, sessions *session.Registry, self *telnet.Session
 		if peer.CurrentRoomID != self.CurrentRoomID {
 			continue
 		}
-		if peer.IsHidden() && self.AuthLevel < telnet.AuthAdmin {
+		if !visibility.CanSee(self, peer) {
 			continue
 		}
 		if peer.CharacterName == "" {

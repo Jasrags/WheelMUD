@@ -22,6 +22,52 @@ these; update this file when a pattern changes.
   and returns the bytes to write — serializes against `WriteAsync`,
   `WritePrompt`, and `listAndRedraw`. Password-mode toggles go through
   `Session.SetPasswordMode(bool)` (also under `writeMu`).
+- **Flood gate (§M.2):** `Session.WriteRaw` consults a per-session
+  token bucket BEFORE the kernel write. Configured at session
+  construction via `Session.SetFloodGate(rate, burst)` and wired in
+  `cmd/server/main.go` acceptLoop from `cfg.Server.FloodBytesPerSec` /
+  `FloodBurstBytes` (defaults 64 KiB/s sustained, 128 KiB burst).
+  Policy is **drop-silent**: when the bucket refuses, `WriteRaw`
+  returns nil and logs the dropped byte count at Debug. The session
+  stays open and the next allowed write resumes cleanly. This is the
+  only place output can be dropped — every other write helper layers
+  on `WriteRaw`.
+
+## Dispatcher anti-abuse (§M.2 BadInputTracker)
+
+- The dispatcher in `telnet/command.go::Dispatch` records every
+  unknown-verb and AuthLevel-denied attempt through
+  `Registry.tracker.Record(s)` BEFORE writing the identical "Unknown
+  command\r\n" response. Both code paths do the same work in the same
+  order so a probe can't time-distinguish "verb doesn't exist" from
+  "verb exists but I'm not privileged".
+- A session that exceeds the burst (default 20 hits per 30s) gets
+  silent drops on subsequent unknowns until the window resets — the
+  connection stays open but the probe loop produces no observable
+  output. `Forget(s)` runs in `handleConnection`'s defer to clean up
+  on disconnect.
+- Construct via `telnet.NewBadInputTracker(window, maxInBurst)` and
+  install with `registry.SetBadInputTracker(t)`. A nil tracker is a
+  valid no-op — Record returns true.
+
+## Visibility (wizinvis)
+
+- The canonical "can viewer see target?" check is
+  `internal/visibility.CanSee(viewer, target)`. Do NOT reimplement
+  `peer.IsHidden() && viewer.AuthLevel < telnet.AuthAdmin` — that
+  pattern drifted across half a dozen callsites before being
+  centralized.
+- For broadcasts, `internal/visibility.VisiblePeers(viewer, peers)`
+  returns a filtered slice. The shared room-broadcast helper
+  `cmd.broadcastRoom`/`broadcastRoomExcept2` filters automatically
+  when its `except` (or `a`) argument is the actor — pass actor
+  there, peers who can't see actor are skipped.
+- Speaker side: hidden admin's say/shout/yell is silent to non-admin
+  peers (slot the check after the room/zone gate but before
+  `peer.WriteAsync`).
+- Viewer side: hidden admin sees other hidden admins (admins
+  transitively see each other through wizinvis); non-admins see only
+  non-hidden peers.
 
 ## Session field ownership
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -90,6 +91,11 @@ func zoneBroadcast(c *telnet.Context, sessions *session.Registry, rooms repo.Roo
 			continue
 		}
 		if peerRoom.ZoneID != speakerRoom.ZoneID {
+			continue
+		}
+		// wizinvis: a hidden admin's shout/yell is silent to
+		// non-admin peers. The speaker still sees their own self-line.
+		if !visibility.CanSee(peer, c.Session) {
 			continue
 		}
 		if err := peer.WriteAsync(otherMsg); err != nil {

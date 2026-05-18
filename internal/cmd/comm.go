@@ -8,6 +8,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/internal/world"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -67,6 +68,11 @@ func NewSay(sessions *session.Registry, rooms repo.RoomRepo, bus *eventbus.Bus) 
 				if peerRoom != c.Session.CurrentRoomID {
 					continue
 				}
+				// wizinvis: a hidden admin's say is silent to non-admin
+				// peers in the room. The speaker still sees their own line.
+				if !visibility.CanSee(peer, c.Session) {
+					continue
+				}
 				if err := peer.WriteAsync(otherMsg); err != nil {
 					slog.Debug("comm: peer write failed", "to", peerName, "error", err)
 				}
@@ -119,7 +125,7 @@ func NewTell(sessions *session.Registry, bus *eventbus.Bus) *telnet.Command {
 			// wizinvis: a hidden admin appears offline to non-admins
 			// even when probed by name. Same wording as a true miss
 			// so the probe can't distinguish "offline" from "hiding".
-			if peer != c.Session && peer.IsHidden() && c.Session.AuthLevel < telnet.AuthAdmin {
+			if !visibility.CanSee(c.Session, peer) {
 				return c.Session.WriteString("{{There is no one by that name.}}::yellow\r\n")
 			}
 			if peer == c.Session {
@@ -229,7 +235,7 @@ func onlineNameCandidates(self *telnet.Session, sessions *session.Registry, part
 		}
 		// wizinvis: hide invisible peers from non-admin completers
 		// (admins still see each other for ops convenience).
-		if peer.IsHidden() && self.AuthLevel < telnet.AuthAdmin {
+		if !visibility.CanSee(self, peer) {
 			continue
 		}
 		name := peer.CharacterName

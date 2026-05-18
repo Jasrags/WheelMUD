@@ -92,6 +92,7 @@ type server struct {
 	gmcp        *gmcp.Manager
 	metrics     *metrics.Metrics
 	metricsHTTP *http.Server
+	badInput    *telnet.BadInputTracker
 	newInitial  func() telnet.Mode
 
 	// cfg is the resolved YAML+env config; the MSSP block is read on
@@ -631,6 +632,15 @@ func main() {
 		slog.Info("help: generated topics merged", "added", added, "skipped", skipped)
 	}
 
+	// §M.2: silently throttle clients spamming unknown / unauthorized
+	// verbs and uniform-time both rejection paths so a probe can't
+	// distinguish "verb doesn't exist" from "verb exists but I'm not
+	// privileged". 20 hits per 30s window — comfortable for typos,
+	// suffocating for an enumeration loop.
+	badInput := telnet.NewBadInputTracker(30*time.Second, 20)
+	registry.SetBadInputTracker(badInput)
+	srv.badInput = badInput
+
 	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)
 	if cfg.Audit.CommandsEnabled {
 		gameMode.SetAudit(buildCommandAuditFn(commandAudits, cfg.Audit.CommandsExclude))
@@ -730,6 +740,11 @@ func (srv *server) acceptLoop(ln net.Listener) {
 			c.Close()
 			continue
 		}
+		// §M.2: per-session outbound rate gate. Zero or negative
+		// disables; the default 64 KiB/s sustained / 128 KiB burst
+		// caps a runaway script-amplified output without affecting
+		// normal play. Configured in cfg.Server.FloodBytesPerSec.
+		s.SetFloodGate(srv.cfg.Server.FloodBytesPerSec, srv.cfg.Server.FloodBurstBytes)
 		// Wire the MSSP responder onto the session before RunSession
 		// starts negotiation; the read goroutine consults this on every
 		// inbound DO MSSP. Read-only after this point, so no lock.
@@ -915,6 +930,9 @@ func (srv *server) handleConnection(s *telnet.Session) {
 		if s.AccountID != 0 {
 			srv.sessions.Unbind(s.AccountID, s)
 		}
+		// §M.2: drop the session's bad-input counter so the tracker
+		// doesn't accumulate entries for disconnected clients.
+		srv.badInput.Forget(s)
 		// Phase D #22: drop any party membership / pending invite
 		// the disconnecting character was party to. Leader-leaves
 		// disbands; a member departure shrinks. No-op for guests.

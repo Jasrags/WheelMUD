@@ -11,6 +11,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -67,7 +68,7 @@ func collectWhoRows(ctx context.Context, viewer *telnet.Session, snap map[int64]
 	for _, peer := range snap {
 		// wizinvis: hide invisible peers from non-admin viewers.
 		// The caller's own session is always visible to itself.
-		if peer != viewer && peer.IsHidden() && !viewerIsAdmin {
+		if !visibility.CanSee(viewer, peer) {
 			continue
 		}
 		charID, name, _ := peer.InWorld()

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -228,6 +229,14 @@ type Session struct {
 	// then races against the echo bytes (which would double-display
 	// the just-typed character).
 	writeMu sync.Mutex
+
+	// flood, when non-nil, gates outbound bytes through a token
+	// bucket so a runaway script can't consume the kernel's send
+	// buffer. Drop-silent policy (§M.2): WriteRaw drops the chunk and
+	// returns nil — no error surfaces, the session stays open.
+	// Configured at NewSession time via SetFloodGate; left nil keeps
+	// behavior unchanged.
+	flood *floodGate
 
 	// lastPrompt caches the most recently emitted prompt bytes (cfmt
 	// already resolved). WriteAsync replays them after async output so
@@ -803,13 +812,30 @@ func (s *Session) WritePagedWrapped(text string) error {
 }
 
 // WriteRaw writes the bytes verbatim, with no template rendering.
+//
+// §M.2: when a flood gate is installed, bytes that would exceed the
+// per-session bytes-per-second budget are silently dropped at the
+// gate and the call returns nil. This bounds the damage from a
+// runaway script-generated burst without disconnecting the client.
+// Logged at Debug so an operator can audit the cap.
 func (s *Session) WriteRaw(b []byte) error {
+	if !s.flood.Allow(len(b)) {
+		slog.Debug("flood: write dropped", "remote", s.RemoteAddress, "bytes", len(b))
+		return nil
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if _, err := s.Conn.Write(b); err != nil {
 		return fmt.Errorf("session write: %w", err)
 	}
 	return nil
+}
+
+// SetFloodGate installs a per-session outbound rate limiter. Pass nil
+// to disable. Configured by main() at session construction; not safe
+// to call concurrently with WriteRaw on the same session.
+func (s *Session) SetFloodGate(rate, burst int) {
+	s.flood = NewFloodGate(rate, burst)
 }
 
 // WritePrompt is the dispatcher's prompt-write path: it caches the

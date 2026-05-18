@@ -10,6 +10,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
+	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
 
@@ -112,6 +113,12 @@ func playerHasKey(ctx context.Context, s *telnet.Session, exit repo.Exit, items 
 // broadcastRoom sends msg to every other session in roomID. Failures
 // are logged at debug — one peer's broken pipe must not stop the
 // announcement from reaching the rest of the room.
+//
+// Visibility: when `except` is non-nil, it is treated as the actor /
+// speaker for wizinvis filtering — peers who can't see `except` are
+// skipped. This matches the dominant calling convention where verbs
+// pass their own session as `except` to suppress the "echo to self"
+// line. Door far-side broadcasts pass nil and broadcast to everyone.
 func broadcastRoom(sessions *session.Registry, roomID int64, except *telnet.Session, msg string) {
 	broadcastRoomExcept2(sessions, roomID, except, nil, msg)
 }
@@ -121,6 +128,11 @@ func broadcastRoom(sessions *session.Registry, roomID int64, except *telnet.Sess
 // recipient (e.g. the defender of an attack gets a second-person
 // "X readies an attack against you!" line) and wants the third-person
 // room narration to skip both the actor and that recipient.
+//
+// `a` doubles as the speaker for visibility filtering (see
+// broadcastRoom). Every caller passes the actor session first; the
+// targeted-recipient (b) is the second exclude. Callers that want
+// pure no-actor broadcasting (e.g. door far-side) pass nil for `a`.
 func broadcastRoomExcept2(sessions *session.Registry, roomID int64, a, b *telnet.Session, msg string) {
 	if sessions == nil || roomID == 0 {
 		return
@@ -128,6 +140,11 @@ func broadcastRoomExcept2(sessions *session.Registry, roomID int64, a, b *telnet
 	for _, peer := range sessions.Snapshot() {
 		_, peerName, peerRoom := peer.InWorld()
 		if peer == a || peer == b || peerRoom != roomID {
+			continue
+		}
+		if a != nil && !visibility.CanSee(peer, a) {
+			// Speaker (a) is wizinvis to this peer — skip the third-
+			// person line. The peer who CAN see (admin) still gets it.
 			continue
 		}
 		if err := peer.WriteAsync(msg); err != nil {

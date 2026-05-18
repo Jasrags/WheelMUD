@@ -61,7 +61,21 @@ type Registry struct {
 	mu      sync.RWMutex
 	sorted  []*Command          // sorted by Name; supports binary-search prefix scans
 	aliases map[string]*Command // alias -> command (explicit only)
+
+	// tracker, when non-nil, counts unknown / refused command
+	// attempts per session and silently throttles further responses
+	// once a session exceeds its burst budget. Optional — a nil
+	// tracker leaves dispatcher behavior unchanged. Wired via
+	// SetBadInputTracker once at boot; the tracker's own mutex
+	// serializes Record/Forget.
+	tracker *BadInputTracker
 }
+
+// SetBadInputTracker installs (or clears, when nil) the rate-limiter
+// for unknown / refused commands. Boot-time only; the tracker field
+// is not protected by Registry.mu and concurrent reassignment is not
+// supported.
+func (r *Registry) SetBadInputTracker(t *BadInputTracker) { r.tracker = t }
 
 var (
 	ErrUnknownCommand   = errors.New("telnet: unknown command")
@@ -310,12 +324,27 @@ func (r *Registry) dispatchOne(ctx context.Context, s *Session, line string, dep
 	verb, rest := splitVerb(line)
 	cmd, err := r.Lookup(verb)
 	if err != nil {
+		// Both refusal paths (unknown verb here, and AuthLevel-deny
+		// below) call BadInputTracker.Record before writing the
+		// identical "Unknown command" response. This closes the
+		// privilege-enumeration timing channel: a probe can no
+		// longer distinguish "verb doesn't exist" from "verb exists
+		// but I don't have rights" by measuring response time.
+		if !r.tracker.Record(s) {
+			// Silently drop the response once the burst budget is
+			// exhausted. The session stays open; the next attempt
+			// after the window expires is allowed again.
+			return nil
+		}
 		return writeLookupError(s, err)
 	}
 	if s.AuthLevel < cmd.Auth {
 		// Don't disclose that the verb exists — render the same response
 		// as ErrUnknownCommand so the prompt can't be used to enumerate
 		// privileged commands.
+		if !r.tracker.Record(s) {
+			return nil
+		}
 		return s.WriteRaw([]byte("Unknown command\r\n"))
 	}
 	args, err := Tokenize(rest)

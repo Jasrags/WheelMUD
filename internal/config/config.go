@@ -39,6 +39,15 @@ type ServerConfig struct {
 	// (Phase J slice J5). Empty disables the metrics server. Default
 	// "127.0.0.1:9090" — loopback only.
 	MetricsAddr string `yaml:"metrics_addr"`
+
+	// FloodBytesPerSec caps outbound bytes per session via a token
+	// bucket on Session.WriteRaw (§M.2). Zero or negative disables.
+	// Default 65536 (64 KiB/s) — enough headroom for normal play and
+	// boot-time room renders, tight enough to suffocate a runaway
+	// script. FloodBurstBytes is the burst capacity; default 131072
+	// (128 KiB).
+	FloodBytesPerSec int `yaml:"flood_bytes_per_sec"`
+	FloodBurstBytes  int `yaml:"flood_burst_bytes"`
 }
 
 type DBConfig struct {
@@ -111,8 +120,10 @@ type AuditConfig struct {
 func Defaults() Config {
 	return Config{
 		Server: ServerConfig{
-			ListenAddr:  ":2323",
-			MetricsAddr: "127.0.0.1:9090",
+			ListenAddr:       ":2323",
+			MetricsAddr:      "127.0.0.1:9090",
+			FloodBytesPerSec: 64 << 10,  // 64 KiB/s sustained
+			FloodBurstBytes:  128 << 10, // 128 KiB burst
 		},
 		DB: DBConfig{
 			DSN:                 "wheelmud.db",
