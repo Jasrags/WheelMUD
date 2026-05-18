@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/emote"
+	"github.com/Jasrags/WheelMUD/internal/repo"
 	"github.com/Jasrags/WheelMUD/internal/session"
 	"github.com/Jasrags/WheelMUD/internal/visibility"
 	"github.com/Jasrags/WheelMUD/telnet"
@@ -27,7 +30,7 @@ import (
 //
 // Returns nil for a nil/empty catalog so callers don't have to
 // special-case the empty-fs case during boot.
-func NewSocials(cat *emote.Catalog, sessions *session.Registry) []*telnet.Command {
+func NewSocials(cat *emote.Catalog, sessions *session.Registry, mobs repo.MobInstanceRepo) []*telnet.Command {
 	if cat == nil {
 		return nil
 	}
@@ -37,12 +40,12 @@ func NewSocials(cat *emote.Catalog, sessions *session.Registry) []*telnet.Comman
 	}
 	out := make([]*telnet.Command, 0, len(socials))
 	for _, s := range socials {
-		out = append(out, buildSocialCommand(s, sessions))
+		out = append(out, buildSocialCommand(s, sessions, mobs))
 	}
 	return out
 }
 
-func buildSocialCommand(s emote.Social, sessions *session.Registry) *telnet.Command {
+func buildSocialCommand(s emote.Social, sessions *session.Registry, mobs repo.MobInstanceRepo) *telnet.Command {
 	c := &telnet.Command{
 		Name:    s.ID,
 		Aliases: append([]string(nil), s.Aliases...),
@@ -50,7 +53,7 @@ func buildSocialCommand(s emote.Social, sessions *session.Registry) *telnet.Comm
 		Auth:    telnet.AuthPlayer,
 		MinArgs: 0,
 		Run: func(c *telnet.Context) error {
-			return runSocial(s, sessions, c)
+			return runSocial(s, sessions, mobs, c)
 		},
 	}
 	if s.Targetable() {
@@ -59,13 +62,13 @@ func buildSocialCommand(s emote.Social, sessions *session.Registry) *telnet.Comm
 			if slot != 0 {
 				return nil
 			}
-			return roomNameCandidates(self, sessions, partial)
+			return socialTargetCandidates(self, sessions, mobs, partial)
 		}
 	}
 	return c
 }
 
-func runSocial(s emote.Social, sessions *session.Registry, c *telnet.Context) error {
+func runSocial(s emote.Social, sessions *session.Registry, mobs repo.MobInstanceRepo, c *telnet.Context) error {
 	actor := c.Session.CharacterName
 	if actor == "" {
 		actor = "Someone"
@@ -77,7 +80,7 @@ func runSocial(s emote.Social, sessions *session.Registry, c *telnet.Context) er
 		if !s.Targetable() {
 			return c.Session.WriteString("{{You can't " + s.ID + " at someone.}}::yellow\r\n")
 		}
-		return runTargetedSocial(s, sessions, c, actor, targetArg)
+		return runTargetedSocial(s, sessions, mobs, c, actor, targetArg)
 	}
 
 	if c.Session.CurrentRoomID == 0 {
@@ -89,32 +92,38 @@ func runSocial(s emote.Social, sessions *session.Registry, c *telnet.Context) er
 	return c.Session.WriteString(s.RenderSelf(actor))
 }
 
-func runTargetedSocial(s emote.Social, sessions *session.Registry, c *telnet.Context, actor, targetArg string) error {
-	if sessions == nil {
-		return c.Session.WriteString("{{No one by that name is here.}}::yellow\r\n")
+func runTargetedSocial(s emote.Social, sessions *session.Registry, mobs repo.MobInstanceRepo, c *telnet.Context, actor, targetArg string) error {
+	// Mob match first, mirroring `attack`'s precedence so a player
+	// named after a mob in the same room doesn't shadow the obvious
+	// target. Mobs are looked up by name token / ordinal via the
+	// shared MatchMob helper (room-scoped).
+	if mobs != nil && c.Session.CurrentRoomID != 0 {
+		ctx, cancel := context.WithTimeout(c.Ctx, 2*time.Second)
+		roomMobs, err := mobs.ListInRoom(ctx, c.Session.CurrentRoomID)
+		cancel()
+		if err != nil {
+			slog.Debug("social: list mobs failed", "room", c.Session.CurrentRoomID, "error", err)
+		} else if mob, ok := MatchMob(targetArg, roomMobs); ok {
+			target := defangSocialName(mob.Core.Name)
+			selfMsg := s.RenderTargetSelf(actor, target)
+			otherMsg := s.RenderTargetOther(actor, target)
+			broadcastSocial(sessions, c.Session, otherMsg)
+			return c.Session.WriteString(selfMsg)
+		}
 	}
-	peer := sessions.FindByCharacterName(targetArg)
-	if peer == nil {
-		return c.Session.WriteString("{{No one by that name is here.}}::yellow\r\n")
-	}
-	if peer == c.Session {
-		// Targeting yourself with a targetable social falls back to
-		// the untargeted forms — most MUDs treat `smile self` as
-		// equivalent to `smile`, and the alternative ("You smile at
-		// yourself.") is rarely what the player meant.
+	// Self-target falls back to the untargeted broadcast. MatchPlayer
+	// filters the actor out, so check here before delegating.
+	if c.Session.CharacterName != "" && nameMatches(c.Session.CharacterName, strings.ToLower(strings.TrimSpace(targetArg))) {
 		broadcastSocial(sessions, c.Session, s.RenderOther(actor))
 		return c.Session.WriteString(s.RenderSelf(actor))
 	}
-	_, peerName, peerRoom := peer.InWorld()
-	if peerRoom != c.Session.CurrentRoomID {
-		return c.Session.WriteString("{{They aren't here.}}::yellow\r\n")
-	}
-	// wizinvis: a non-admin can't target a hidden admin — pretend
-	// they don't exist (same anti-enumeration policy as `tell`).
-	if !visibility.CanSee(c.Session, peer) {
+	// MatchPlayer is room-scoped and wizinvis-filtered, mirroring the
+	// `attack` resolver.
+	peer, _ := MatchPlayer(targetArg, sessions, c.Session)
+	if peer == nil {
 		return c.Session.WriteString("{{No one by that name is here.}}::yellow\r\n")
 	}
-	target := defangSocialName(peerName)
+	target := defangSocialName(peer.CharacterName)
 	selfMsg := s.RenderTargetSelf(actor, target)
 	viewMsg := s.RenderTargetView(actor, target)
 	otherMsg := s.RenderTargetOther(actor, target)
@@ -164,35 +173,44 @@ func broadcastSocial(sessions *session.Registry, actor *telnet.Session, msg stri
 	}
 }
 
-// roomNameCandidates returns one Candidate per visible online peer
-// sharing the caller's room. Used as the targeted-social Completer.
-func roomNameCandidates(self *telnet.Session, sessions *session.Registry, partial string) []telnet.Candidate {
-	if sessions == nil || self == nil {
+// socialTargetCandidates returns one Candidate per valid target for a
+// targeted social: every mob in the caller's room plus every visible
+// online peer. Order is mobs first, then players — same precedence
+// runTargetedSocial uses when resolving.
+func socialTargetCandidates(self *telnet.Session, sessions *session.Registry, mobs repo.MobInstanceRepo, partial string) []telnet.Candidate {
+	if self == nil || self.CurrentRoomID == 0 {
 		return nil
 	}
-	lower := strings.ToLower(partial)
 	out := make([]telnet.Candidate, 0, 8)
-	for _, peer := range sessions.Snapshot() {
-		if peer == self {
-			continue
+	if mobs != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		list, err := mobs.ListInRoom(ctx, self.CurrentRoomID)
+		cancel()
+		if err == nil {
+			out = append(out, mobKeywordCandidates(list, partial)...)
 		}
-		_, name, room := peer.InWorld()
-		if room != self.CurrentRoomID {
-			continue
+	}
+	if sessions != nil {
+		lower := strings.ToLower(partial)
+		for _, peer := range sessions.Snapshot() {
+			if peer == self {
+				continue
+			}
+			_, name, room := peer.InWorld()
+			if room != self.CurrentRoomID || name == "" {
+				continue
+			}
+			if peer.AuthLevel > self.AuthLevel {
+				continue
+			}
+			if !visibility.CanSee(self, peer) {
+				continue
+			}
+			if !strings.HasPrefix(strings.ToLower(name), lower) {
+				continue
+			}
+			out = append(out, telnet.Candidate{Text: name, Help: "in room"})
 		}
-		if name == "" {
-			continue
-		}
-		if peer.AuthLevel > self.AuthLevel {
-			continue
-		}
-		if !visibility.CanSee(self, peer) {
-			continue
-		}
-		if !strings.HasPrefix(strings.ToLower(name), lower) {
-			continue
-		}
-		out = append(out, telnet.Candidate{Text: name, Help: "in room"})
 	}
 	return out
 }

@@ -88,9 +88,13 @@ these; update this file when a pattern changes.
   can't render.
 - Wizinvis filtering applies (same `visibility.CanSee` rule as say).
   A hidden admin's social is invisible to non-admin peers; the actor
-  still sees their own self-line. `Sessions.FindByCharacterName`
-  results are also wizinvis-filtered so non-admins can't target a
-  hidden admin (anti-enumeration).
+  still sees their own self-line.
+- Target resolution mirrors `attack`: mobs first via `MatchMob`, then
+  players via `MatchPlayer`. Both are room-scoped, so an out-of-room
+  player is reported with the same anti-enumeration wording as a
+  totally unknown name. Mobs have no session, so a mob target gets
+  the actor's `target_self` plus the room's `target_other` broadcast
+  — there is no view line to deliver.
 - The room `silent` flag is text-gag only: speech-bearing verbs
   (say/shout/yell/channels) get smothered, but socials and `emote`
   carry through. Pantomime is still pantomime in a quiet room.

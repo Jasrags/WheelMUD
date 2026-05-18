@@ -44,7 +44,7 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	); err != nil {
 		return nil, err
 	}
-	for _, s := range cmd.NewSocials(emoteCatalog, sessions) {
+	for _, s := range cmd.NewSocials(emoteCatalog, sessions, mobs) {
 		if err := r.Register(s); err != nil {
 			return nil, fmt.Errorf("register social %q: %w", s.Name, err)
 		}
