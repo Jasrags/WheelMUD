@@ -2053,14 +2053,19 @@ will need on top of those tables.
       **Slice 3 (`oedit` / `medit` / `zedit`) deferred-pending-Flow
       per §M.7 decision 2026-05-18.** Originally scoped as three
       more mode-pair editors fanning out from `redit`. Now waiting
-      on Phase N #N19 (a generic multi-step Flow engine that would
-      absorb oedit/medit/zedit as YAML/Lua flow definitions and
-      also unblock chargen, sustenance UX, quest dialogue trees,
-      and account creation from the same engine). Building slice 3
-      hand-rolled against the redit pattern was estimated at ~600
-      LOC of throwaway work if Flow lands; the §M.7 call commits
-      to the Flow path. Until Flow arrives Phase G is "redit
-      shipped; oedit/medit/zedit pending N.19."
+      on **Phase O (Flow engine)**, promoted from Phase N #N19
+      on 2026-05-18. Phase O is a 10-slice phase (O.0–O.9) that
+      builds a generic multi-step Flow engine absorbing
+      oedit/medit/zedit (O.4/O.5/O.6) as well as chargen (O.7),
+      account creation (O.8), and future content surfaces
+      (sustenance, weather, dialogue trees). Architecture
+      decisions locked: Go-only action/validator registry,
+      SQLite-persisted state from O.0, horizontal slicing
+      (engine first via test-only `wizdemo`). Building slice 3
+      hand-rolled against the redit pattern was estimated at
+      ~600 LOC of throwaway work; the §M.7 call committed to
+      the Flow path. Until Phase O lands Phase G is "redit
+      shipped; oedit/medit/zedit pending O.4–O.6."
 - [~] Permission gating (admin / builder roles) — `AuthLevel` enum
       `Player < Builder < Admin < Implementor`. OLC commands gated
       at `Builder`; admin-only verbs at `Admin`. Builders may be

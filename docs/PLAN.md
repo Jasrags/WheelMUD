@@ -1517,8 +1517,8 @@ M.7. ~~**Decide §G #34 slice 3 (oedit / medit / zedit) —
     `redit` pattern would be ~600 LOC of throwaway work if Flow
     lands. ROADMAP §16 and §17 OLC entries updated to reflect
     the deferred-pending-Flow status. Phase G is now in a
-    coherent "redit shipped, oedit/medit/zedit waiting on N.19"
-    state instead of half-open.
+    coherent "redit shipped, oedit/medit/zedit waiting on
+    Phase O" state instead of half-open.
 
 After M: operators can author content (socials, help) and
 moderate behaviour (anti-abuse, visibility) without code
@@ -1526,8 +1526,134 @@ changes. Mud-listing sites discover the server. The §G OLC track
 is in a known state instead of half-open.
 
 Closed 2026-05-18: M.0–M.7 all landed or formally deferred.
-Phase M is now closed; promote N.19 (Flow engine) when ready to
-unblock the §G slice 3 backlog.
+Phase M is now closed; Phase O (Flow engine, promoted from N.19)
+is the upstream unblock for the §G slice 3 backlog.
+
+---
+
+## Phase O — Flow engine (player-creator framework)
+
+Promoted from Phase N #N19 on 2026-05-18 per the §M.7 decision.
+Phase O builds a generic multi-step interactive Flow engine
+that subsumes:
+
+- §G #34 slice 3 (`oedit` / `medit` / `zedit`) — currently
+  deferred-pending-Flow.
+- Chargen — today 1,415 LOC of hand-rolled mode code in
+  `internal/cmd/character_create.go`.
+- Account creation — similar shape, hand-rolled.
+- Future content surfaces: sustenance UX, quest dialogue trees,
+  weather wizards, anything that wants a prompt-validate-branch
+  loop without a recompile-per-step.
+
+Direction lock-in (chosen 2026-05-18; reverse with a follow-up
+decision, not silently):
+
+- **Go-only action / validator registry.** Steps reference Go
+  callbacks by string key. YAML is data-only; new validators
+  need a recompile. Type-safe, fast, no Lua sandbox surface to
+  widen for this phase. If Lua-backed validators ever land,
+  they're an additive Phase O.x slice — the registry contract
+  doesn't have to change.
+- **Persisted from O.0.** Flow state lives in SQLite
+  `flow_state` keyed by `(account_id, flow_id)`. Resume on
+  reconnect from day one. Matches the Tapestry UX where a
+  player mid-chargen can log back in and continue. Per-flow
+  `Resumable bool` lets ephemeral wizards (e.g. an admin's
+  `oedit` session) opt out.
+- **Horizontal slicing first.** O.0 ships the engine with a
+  test-only `wizdemo` consumer so the API can stabilise before
+  any production consumer locks it in. Real consumers
+  (`oedit` / chargen / account-create) come strictly after
+  O.3 (extended step kinds) and benefit from O.2's persistence.
+
+The slices below are independently shippable but have linear
+dependencies: O.0 → O.1 → O.2 are foundational; O.3 adds the
+step taxonomy needed for any real consumer; O.4–O.6 close §G;
+O.7–O.8 retire the hand-rolled flows; O.9 finishes the §M.6
+hot-reload integration.
+
+O.0. **Engine core.** `internal/flow/` package with `Flow`,
+    `Step`, `State`, `Runner`. Step kinds: `text`, `choice`,
+    `confirm`. Go action+validator registry (`flow.RegisterAction`
+    / `flow.RegisterValidator`). In-memory state. Test-only
+    harness (no live dispatcher integration yet).
+    - ~600–800 LOC.
+    - Blocked on: nothing.
+
+O.1. **Mode integration + YAML loader.** `mode.Flow` pushes
+    onto the existing mode stack; the dispatcher routes input
+    through the active step. Meta-commands `back` / `cancel` /
+    `help` apply uniformly. YAML loader under `internal/flow/`
+    with `FLOW_DIR` override (mirrors HELP_DIR / EMOTE_DIR /
+    CHARGEN_DIR). Live `wizdemo` test verb so the dispatcher
+    integration is exercised on a real session.
+    - ~500 LOC.
+    - Blocked on: O.0.
+
+O.2. **Persistence.** New `flow_state` table + migration; save
+    on every step transition; resume on reconnect lookup by
+    `(account_id, flow_id)`. Per-flow `Resumable` flag; abort-
+    on-disconnect when false. Per-session capacity cap so a
+    stuck wizard can't pile up rows.
+    - ~400 LOC + migration.
+    - Blocked on: O.0, O.1.
+
+O.3. **Extended step kinds.** `number`, `multi-select`,
+    `point_buy`, `conditional` (branching on prior step output),
+    no-prompt `action` step (run a side effect, advance). Each
+    new kind is a separate Step implementation pluggable into
+    the runner.
+    - ~300 LOC.
+    - Blocked on: O.0.
+
+O.4. **First production consumer: `oedit`.** Closes §G #34 slice
+    3 part 1. Item-template editor as a flow YAML.
+    `ItemRepo.Update` (memory + sqlite + shared test) added if
+    not already present. Audited via `oedit` verb + per-field
+    `admin_audit` rows.
+    - ~200 LOC Go + YAML.
+    - Blocked on: O.3.
+
+O.5. **`zedit`.** Zone editor (smaller surface than `medit`).
+    Closes §G #34 slice 3 part 2.
+    - ~150 LOC + YAML.
+    - Blocked on: O.4 (pattern proven).
+
+O.6. **`medit`.** Mob-template editor. §G #34 slice 3 fully
+    closed.
+    - ~200 LOC + YAML.
+    - Blocked on: O.5.
+
+O.7. **Chargen migration.** Rewrite `character_create.go` as
+    a flow YAML + the necessary Go actions/validators. Heavy
+    regression-test coverage because chargen is on the boot
+    path for every new account. Old hand-rolled mode stays in
+    a feature flag for one release to allow rollback.
+    - ~600 LOC + heavy test.
+    - Blocked on: O.3 (point_buy step), O.2 (persistence —
+      chargen always Resumable).
+
+O.8. **Account-create migration.** Smaller shape than chargen.
+    YAML + Go actions.
+    - ~150 LOC + YAML.
+    - Blocked on: O.7.
+
+O.9. **Hot-reload: `reload flows` admin verb.** §M.6
+    integration. Flow YAML can be hot-reloaded the same way
+    socials and help can. New entries register; removed entries
+    abort any in-flight resumable sessions cleanly.
+    - ~100 LOC.
+    - Blocked on: O.2.
+
+After O: oedit/medit/zedit ship without §G #34 slice 3 ever
+being hand-rolled. Chargen and account-create are content, not
+code. Future content systems (sustenance, weather, dialogue)
+have a flow engine to compose against instead of inventing
+their own state machine each time.
+
+Phase total: ~3,000–3,500 LOC over 9–12 weeks depending on the
+chargen migration test cycle.
 
 ---
 
@@ -1652,15 +1778,10 @@ N.18. **Theme registry — per-player colour themes.** Beyond
     `colors` (which toggles 16/256/truecolor): named themes a
     player picks (`theme dark-luxury`, `theme high-contrast`).
 
-N.19. **Flows / wizard / player-creator engine.** Tapestry's
-    Flow*.cs is a generic multi-step interactive flow with
-    persisted state between steps. Our chargen is hand-rolled
-    (1,415 LOC). If we adopt Flow:
-      - chargen becomes a Flow definition (YAML or Lua).
-      - oedit/medit/zedit (§G #34 slice 3) become Flows for
-        free — closes Phase M.7's "Option A" branch.
-      - Sustenance/quest dialogue trees could share the engine.
-    Highest-leverage refactor candidate on the list.
+N.19. ~~**Flows / wizard / player-creator engine.**~~ **Promoted
+    to Phase O (Flow engine) on 2026-05-18.** See the Phase O
+    block below for the full slice list and architecture
+    decisions. Kept here for the Tapestry-parity diff only.
 
 ### Platform items (likely separate effort)
 
