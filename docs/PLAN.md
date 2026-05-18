@@ -1395,6 +1395,273 @@ have mechanically supported playstyles.
 
 ---
 
+## Phase M — Anti-abuse, UX polish & content surfaces
+
+Phase M is the cross-cutting "make the live game feel intentional"
+track. None of the slices are mechanically required to play, but
+each one closes a class of operator pain (long boot scripts, hand-
+maintained help, abusive input, missing roleplay verbs). Slices are
+shippable independently and have no internal dependencies beyond
+M.0 prepping the file layout.
+
+Direction lock-in: stay additive. Phase M doesn't refactor combat
+or chargen; it adds catalogs (help, emote), filters (visibility),
+and rate-limits (BadInputTracker, FloodContext). The work it would
+*want* to refactor (character_create.go, combat/manager.go) is
+deferred to whatever phase finally adopts a Flow engine /
+EffectsManager generalization.
+
+M.0. ~~**Split `cmd/server/main.go` into per-concern siblings.**
+    Pure refactor, no behavior change.~~ Landed 2026-05-17.
+    - main.go drops below the 800-line guideline; new siblings:
+      `registry.go`, `mssp.go`, `adapters.go`, `audit_metrics.go`,
+      `catalog_validate.go`, `lua_bindings.go`,
+      `subscribers_combat.go`, `tickers.go`,
+      `bootstrap_observability.go`, `shutdown_admin.go`.
+    - `cmd/server/main.go` becomes a thin orchestrator wiring
+      config → DB → repos → catalogs → registry → scheduler.
+    - Followups (none).
+
+M.1. ~~**HelpService with HELP_DIR override + auto-generated command
+    topics.**~~ Landed 2026-05-18.
+    - `internal/help` exposes `Catalog`, `Load`, `LoadFS`,
+      `MergeGenerated`. `SourceFS()` honours `HELP_DIR` so
+      operators can edit Markdown topics without rebuilding.
+    - `cmd.GenerateCommandTopics(registry)` walks every
+      registered `*telnet.Command` and emits a topic per
+      `Command.Help`/`Long`. Aliases become topic keywords;
+      authored topics win on collision (`MergeGenerated` skips
+      generated stubs when an authored topic claims the id).
+    - Followups (none).
+
+M.2. ~~**BadInputTracker + FloodContext + VisibilityFilter.**~~
+    Landed 2026-05-18.
+    - `telnet.BadInputTracker` counts unknown/refused verbs per
+      session and silently throttles the response after a burst
+      budget. Removes the timing side channel on privilege-denied
+      verbs (`code_review_open_items.md`).
+    - `telnet.FloodContext` is consulted by `Session.WriteRaw`
+      so a runaway broadcast loop can't drown a peer's pipe.
+    - `internal/visibility.CanSee` centralizes the wizinvis rule
+      that had drifted across half a dozen callsites. Closes the
+      "wizinvis-silent for say/shout/channels" followup
+      (`admin_movement_followups.md`).
+
+M.3. ~~**EmoteRegistry — YAML social-verb catalog + freeform
+    `emote`.**~~ Landed 2026-05-18.
+    - `internal/emote` catalog mirrors the effects/chargen/help
+      pattern (`default/socials.yaml` embedded, `EMOTE_DIR`
+      override, fail-loud Load).
+    - `cmd.NewSocials` emits one `*telnet.Command` per entry;
+      targeted forms render the three-way actor/target/others
+      split. Mob targets resolve via `MatchMob` (same precedence
+      as `attack`) so `smile scout` works.
+    - `cmd.NewEmote` (alias `:`) is the freeform escape hatch.
+    - Followups: `socials` listing verb, hot-reload, cooldowns
+      (none of which are blockers).
+
+M.4. **MSSP (Mud Server Status Protocol).** Small slice.
+    - Listen for telnet option `70` (MSSP), respond with a fresh
+      snapshot every time: `NAME`, `PLAYERS`, `UPTIME`, `CODEBASE`,
+      `CONTACT`, `WEBSITE`, etc. Auto-discoverable by
+      mud-listing sites.
+    - Pulls server-name/contact/website from `internal/config`
+      (new fields); player count from `session.Registry.Snapshot`.
+    - Blocked on: nothing. Cheap parity win vs. Tapestry.
+
+M.5. **`socials` listing verb.**
+    - Player-facing dump of the emote catalog grouped by
+      targetable / untargeted. Reads `emote.Catalog.All()`; no
+      new wiring beyond a registration line.
+    - Blocked on: nothing.
+
+M.6. **Hot-reload for socials + help.** Admin-only.
+    - `reload socials` re-runs `emote.Load(SourceFS())` and
+      replaces the catalog atomically. `reload help` does the
+      same for `help.Catalog`. Re-registers any new social
+      commands and de-registers removed ones.
+    - Blocked on: a clear story for safely mutating
+      `telnet.Registry` after boot. Needs a small
+      `Registry.Replace` or equivalent — the current API only
+      supports `Register`.
+
+M.7. **Decide §G #34 slice 3 (oedit / medit / zedit) —
+    close-or-defer.** Not a code slice; a planning call.
+    - Option A: if Phase N #N19 (Flow engine) lands, oedit/
+      medit become flows and slice 3 stays deferred indefinitely.
+    - Option B: if not, slice 3 is a logical Phase-G closer
+      (1–2 slices) before moving on.
+    - Action: pick one, update ROADMAP §34 status, leave PLAN
+      §G in a coherent state.
+
+After M: operators can author content (socials, help) and
+moderate behaviour (anti-abuse, visibility) without code
+changes. Mud-listing sites discover the server. The §G OLC track
+is in a known state instead of half-open.
+
+Closed 2026-05-18 (M.0–M.3); M.4+ open.
+
+---
+
+## Phase N — Strategic / future-scope (Tapestry parity)
+
+Phase N is **not committed work** — it's an option set generated
+by reading the Tapestry codebase end-to-end and listing every
+system they have that we don't (or do differently). Nothing here
+is sequenced; nothing here blocks Phase M. Promote an item out of
+Phase N into a real phase when you decide to actually build it.
+
+**Why this list exists:** WheelMUD and Tapestry started from
+different design centres — we're SQLite + repo pattern + race-
+tested concurrency + strict invariants; they're property-bag +
+YAML-first + 45-module JS scripting + OTEL tracing. Both stacks
+are coherent. The point of Phase N is *visibility*, not envy: when
+a Phase M.x slice could be designed to also close a strategic gap,
+knowing about the gap up front avoids painting ourselves into a
+corner.
+
+### High-leverage parity items
+
+N.1. **Pack/plugin system.** Drop `data/packs/<name>/` with a
+    manifest, load YAML catalogs from there at boot. Lets
+    community content land without recompile. Builds naturally
+    on the EmoteRegistry / help-catalog / chargen-catalog
+    loaders we already have — they're all already `fs.FS`-based.
+    Manifest needs: name, version, deps, catalogs (`socials`,
+    `help`, `chargen`, `world`, …). No script execution from
+    packs in V1 (avoid the Lua-from-packs security boundary).
+    Strategic: biggest single content-extensibility win.
+
+N.2. **WebSocket transport + minimal web client.** Biggest UX
+    gap vs. Tapestry. Telnet-only is increasingly niche.
+    Pattern: parallel listener on `WS_ADDR` that adapts to the
+    same `telnet.Session` plumbing (or a sibling Session type)
+    so the dispatcher / mode-stack / world-loop are transport-
+    agnostic. Browser client renders the same lines telnet would.
+    Strategic: opens a much larger player surface.
+
+N.3. **MSSP** — *promoted to §M.4 above.* Listed here for the
+    Tapestry-parity diff; track it in Phase M.
+
+N.4. **OpenTelemetry tracing.** GameLoop tick breakdown +
+    per-command spans. We already export Prometheus; OTEL is
+    the next axis. Useful for hunting long-tail tick stalls
+    (combat resolve + Lua callbacks). Jaeger / Loki / Grafana
+    stack is well-understood; the WheelMUD-side work is span
+    instrumentation in `internal/tick`, `internal/combat`,
+    `internal/lua`, plus the dispatcher.
+
+### Content-system items (each could be its own phase)
+
+N.5. **Sustenance / Rest / Consumables.** Hunger, thirst,
+    resting recovery, food/drink items. Feeds Phase K crafting
+    (cooking, brewing). Reuses `internal/effects` for status
+    application. No Tapestry-specific design lock-in needed.
+
+N.6. **Weather + weather zones service.** Today we have phase
+    ambients only. A real weather system means typed
+    `WeatherState` per zone with transitions, modifiers exposed
+    to combat/visibility, and YAML-authored climate profiles.
+
+N.7. **Alignment system.** Ranges + config-driven thresholds;
+    knock-on hooks in dialogue, shop pricing, faction reactions.
+    Cheap to add once you commit to it; *value* depends on
+    whether the game world cares about alignment narratively.
+
+N.8. **Essence / Rarity / Stacking for items.** Item taxonomy
+    today has slot/weight/damage but no rarity tier or stacking
+    semantics. Tapestry has all three. A rarity field is one
+    schema migration; stacking is harder because it interacts
+    with the items 3-location invariant.
+
+N.9. **Effects manager generalization.** §E #25 affects is
+    task-scoped; Tapestry's effect manager is a system. Generic
+    `Effect` with `Apply` / `Tick` / `Remove` hooks; status
+    affects, environmental effects, blessing/curse all become
+    instances. Touches `combat/manager.go` (881 LOC) —
+    co-schedule with that file's split.
+
+N.10. **Class paths / class-path processor for branching
+    subclasses.** Today a class is a leaf; Tapestry models
+    branches (e.g. Warder → Borderland Warder vs. Two Rivers
+    Warder). Schema delta + chargen flow rework.
+
+N.11. **Training / TrainerConfig generalization.** We have a
+    `train` cmd; Tapestry has a configured training service
+    with cap tiers and prereq trees. Pairs with N.10.
+
+N.12. **Door service + temporary exits.** We have doors; this
+    is adding portals / summoned exits / spell-conjured doors
+    that live for N ticks. Builds on the existing exit repo
+    plus a TTL on a new flag.
+
+N.13. **Portals as a scripting module.** Once N.12 lands,
+    Portals = Lua-exposed `summon_portal(room_a, room_b, ttl)`.
+
+N.14. **Mob AI manager + command queue + disposition
+    evaluator.** Generalized AI scheduler. Today our mobs do
+    paths + combat but not generic command queues. Pairs with
+    Lua surface expansion (§F #32 slice 6+).
+
+N.15. **Heartbeat phases (CombatPulse / AbilityResolution /
+    Pulse handlers).** Phase-based tick architecture. Ours is
+    bucket-based — refactor candidate, not a green-field add.
+
+N.16. **PropertyRegistry — typed dynamic property system.**
+    Strategic alternative to "one column per attribute"
+    schema. Pros: no migration for every new attribute; YAML
+    can author arbitrary props. Cons: loses SQLite's type
+    safety + grep-ability. **Evaluate before the next big
+    schema add**; do not refactor existing tables onto it
+    without a concrete win.
+
+N.17. **Tags as a first-class system with observers.**
+    Entities accumulate tags (`flammable`, `magical`,
+    `quest_item`); systems subscribe to tag changes. Common
+    MUD-engine idiom. Cheap to add, hard to retrofit later.
+
+N.18. **Theme registry — per-player colour themes.** Beyond
+    `colors` (which toggles 16/256/truecolor): named themes a
+    player picks (`theme dark-luxury`, `theme high-contrast`).
+
+N.19. **Flows / wizard / player-creator engine.** Tapestry's
+    Flow*.cs is a generic multi-step interactive flow with
+    persisted state between steps. Our chargen is hand-rolled
+    (1,415 LOC). If we adopt Flow:
+      - chargen becomes a Flow definition (YAML or Lua).
+      - oedit/medit/zedit (§G #34 slice 3) become Flows for
+        free — closes Phase M.7's "Option A" branch.
+      - Sustenance/quest dialogue trees could share the engine.
+    Highest-leverage refactor candidate on the list.
+
+### Platform items (likely separate effort)
+
+N.20. **CLI tooling.** `wheelmud init` / `wheelmud install
+    <pack>` / `wheelmud start`. Operator UX vs. raw `make
+    run/server`. Builds on N.1 once packs exist.
+
+### What we have that Tapestry doesn't (for symmetry)
+
+- SQLite + forward-only migrations + repo pattern with
+  sqlite+memory parity. Easier to reason about; easier for
+  them to swap backends.
+- Race-tested concurrency posture (`safego.Go`, `go test
+  -race`, fuzz on IAC/tokenize, integration tag). No equivalent
+  race/fuzz harness on the Tapestry side.
+- Strict path/BFS mob movement (§32a).
+- Group system, channeling driver, quest engine wired to event
+  bus — comparable to theirs, leaner here.
+- Lockstep schema discipline (CONVENTIONS.md write-paths,
+  items 3-location invariant). Tapestry hides this behind
+  PropertyRegistry.
+
+**Promotion rule:** when promoting a Phase N item to a real
+phase, delete its block here and add it to PLAN under the
+phase it landed in. Phase N should only ever hold work we've
+*not yet committed to do.*
+
+---
+
 ## Sequencing rules
 
 - ~~**Run #52 (CI matrix) right now**, before anything else.~~ Phase J

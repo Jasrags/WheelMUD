@@ -1122,6 +1122,14 @@ will need on top of those tables.
       per-zone room-flag override and harsher broadcast variants are
       deferred. Mob respawn via §9 zone reset already shipped
       (`internal/world/respawn.go::ZoneResetter.respawnMobs`).
+      **§19 deferred subitems:** consolidated in the
+      `combat_followups.md` memory under "#19 death / corpse / XP" —
+      drop-on-death zone-flag override, RecordXP/RecordXPDebt TOCTOU
+      (waiting on multi-session), combatBroadcastExcept adoption for
+      parry/stance/flee/mob-death lines, mob inventory seeding from
+      YAML (loot_table_id schema), per-attacker coin split, prompt
+      repaint timing on respawn, mgr.Get-based fight introspection in
+      tests. Pull from memory before promoting any to a phase slice.
 - [x] PvE vs PvP rules and safe zones — `pvp` flag on character
       (opt-in) plus `nopvp` room flag (always safe). Attack between
       two non-PvP players blocked at the verb level; one-side opt-in
@@ -1723,6 +1731,25 @@ will need on top of those tables.
       used to enumerate IPs. Pending: class / level / title columns
       (blocked on char-create populating those fields), AFK flag,
       and sort filters (`who level` / `who class <name>`).
+- [x] Emote / social verbs — **§M.3 EmoteRegistry landed 2026-05-18.**
+      `internal/emote` houses a YAML social-verb catalog (25 seed
+      entries: smile, wave, bow, …) embedded under `default/*.yaml`
+      with `EMOTE_DIR` override; strict Load fails boot on duplicate
+      id, alias collision, partial targeted set, unknown `{...}`
+      token, or `{target}` in an untargeted slot. `cmd.NewSocials`
+      emits one `*telnet.Command` per entry; targeted forms render
+      the three-way actor/target/others split. Mob targets resolve
+      via `MatchMob` ahead of `MatchPlayer` (same precedence as
+      `attack`) so `smile scout` works; targeting an out-of-room
+      player gets the same anti-enumeration wording as an unknown
+      name. Self-target falls back to the untargeted broadcast.
+      Wizinvis (`visibility.CanSee`) filters peer broadcasts and
+      target lookup. The room `silent` flag is text-gag only —
+      pantomime carries. `cmd.NewEmote` (alias `:`) is the freeform
+      escape hatch with `sanitizeChat` defending against cfmt
+      injection. §M.1 help auto-gen picks up each social's `Help`
+      field for free. Followups (deferred): `socials` listing verb
+      (§M.5), hot-reload (§M.6), cooldowns / adverbs / GMCP frame.
 - [ ] Ignore list / mute — per-character `ignored_names []string`
       capped at 50; tells/whispers/channel messages from ignored
       names are silently dropped on the receiver side. Admin
@@ -2047,6 +2074,20 @@ will need on top of those tables.
 
 ## 17. Admin & moderation
 
+- [x] Anti-abuse: BadInputTracker / FloodContext / VisibilityFilter —
+      **§M.2 landed 2026-05-18.** `telnet.BadInputTracker` (wired via
+      `Registry.SetBadInputTracker`) counts unknown / privilege-denied
+      verbs per session and silently throttles further responses once
+      a burst budget is exceeded — closes the timing side-channel on
+      privilege denial. `telnet.FloodContext` is consulted by
+      `Session.WriteRaw` so a runaway broadcast loop can't drown a
+      peer's pipe; bounded write-throttling keeps the connection
+      coherent. `internal/visibility.CanSee(viewer, target)` and
+      `visibility.VisiblePeers(viewer, peers)` centralize the
+      wizinvis rule that had drifted across half a dozen callsites
+      (say/shout/yell/movement/combat broadcast paths). Adopted by
+      every comm + social path; closes the "wizinvis-silent for
+      say/shout/channels" followup in `admin_movement_followups.md`.
 - [~] `goto`, `transfer`, `summon`, `wizinvis`, `snoop` — `goto
       <player|room>`, `transfer <player> [<room>]`, `summon
       <player>`, and `wizinvis` (zero-arg toggle) all landed for
@@ -2107,14 +2148,23 @@ will need on top of those tables.
 ## 18. Help & docs
 
 - [x] In-game `help` command listing registered commands
-- [ ] Topic-based help files (lore, mechanics, command detail) —
+- [x] Topic-based help files (lore, mechanics, command detail) —
       `help/*.md` embedded via `//go:embed`; front-matter sets
       `keywords`, `min_level`, `category`. Indexed at startup.
       Commands auto-register a help stub from `Command.Help` so
-      `help <verb>` always resolves.
-- [ ] `help <topic>` resolution with prefix matching — exact match
+      `help <verb>` always resolves. **§M.1 landed 2026-05-18** —
+      `internal/help` exposes `Catalog` / `Load` / `LoadFS` /
+      `MergeGenerated`; `SourceFS()` honours `HELP_DIR` so operators
+      iterate without rebuilding; `cmd.GenerateCommandTopics(registry)`
+      auto-emits one topic per `Command.Help`/`Long` with aliases as
+      keywords; authored topics win on collision (`MergeGenerated`
+      skips generated stubs). Boot reports
+      `help: generated topics merged added=N skipped=M`.
+- [x] `help <topic>` resolution with prefix matching — exact match
       → keyword match → unique prefix match → ambiguity list, same
-      ladder used by the command registry.
+      ladder used by the command registry. **Closed by §M.1** —
+      ladder lives in `help.Catalog.Lookup` and matches the registry
+      resolver wording.
 - [x] `news` / MOTD on login — `motd.md` embedded; `news` shows a
       list of dated entries from `news/*.md` with unread markers.
       Tracks per-character `last_news_seen`; login MOTD block notes
