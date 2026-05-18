@@ -1460,14 +1460,29 @@ M.3. ~~**EmoteRegistry — YAML social-verb catalog + freeform
     - Followups: `socials` listing verb, hot-reload, cooldowns
       (none of which are blockers).
 
-M.4. **MSSP (Mud Server Status Protocol).** Small slice.
-    - Listen for telnet option `70` (MSSP), respond with a fresh
-      snapshot every time: `NAME`, `PLAYERS`, `UPTIME`, `CODEBASE`,
-      `CONTACT`, `WEBSITE`, etc. Auto-discoverable by
-      mud-listing sites.
-    - Pulls server-name/contact/website from `internal/config`
-      (new fields); player count from `session.Registry.Snapshot`.
-    - Blocked on: nothing. Cheap parity win vs. Tapestry.
+M.4. ~~**MSSP (Mud Server Status Protocol).**~~ Shipped earlier as
+    Phase I #45 (2026-05-14); the §M.0 main.go split (2026-05-17)
+    moved the existing code into `cmd/server/mssp.go` as a sibling
+    file, which created the appearance that MSSP was Phase M scope
+    when it was just a refactor of code that already negotiated,
+    encoded, and served the full 27-variable block.
+    Closed-on-arrival in §M.4 (2026-05-18) with a doc + audit pass:
+    new MSSP sections in `docs/CODEMAPS/telnet.md` and
+    `docs/CONVENTIONS.md`; ROADMAP §1 already records the landing.
+    - Audit findings (deferred polish, not bugs):
+      - Wizinvis admins are counted in `PLAYERS`. Crawlers see
+        N + admins instead of the public-facing N.
+      - `FAMILY` / `GENRE` / `GAMEPLAY` / `LANGUAGE` / `CODEBASE`
+        are hardcoded literals in `msspVars`. A fork rebranding the
+        codebase would have to recompile. Move to `MSSPConfig`.
+      - `CRAWL DELAY: -1` is hardcoded; spec interpretation varies
+        across crawlers. Make config-driven with a sane default.
+      - No admin `mssp` verb to dump the variable block for
+        operator inspection without an actual crawler.
+      - `collectMSSPWorldStats` is a boot snapshot — a future
+        OLC slice that adds rooms/zones at runtime will silently
+        drift the counts. Invalidate-on-save or move to live
+        counts when that lands.
 
 M.5. **`socials` listing verb.**
     - Player-facing dump of the emote catalog grouped by

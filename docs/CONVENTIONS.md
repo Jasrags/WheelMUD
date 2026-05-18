@@ -109,6 +109,41 @@ these; update this file when a pattern changes.
   Builders should reserve verb names by inspecting `registry.go` or
   letting boot tell them.
 
+## MSSP (option 70)
+
+- Variable additions land in `cmd/server/mssp.go::msspVars`, NOT
+  in `telnet/mssp.go`. The telnet package renders the wire block
+  and stays content-free; protocol vs. content is the same split
+  as GMCP frame builders vs. handler functions.
+- `collectMSSPWorldStats` runs once at boot. Admin `spawn`
+  instantiates templates rather than creating new ones, so the
+  snapshot stays accurate — but a future OLC slice that adds
+  rooms/zones at runtime will silently drift the counts.
+  Invalidate on `BuilderZone.Save` (or switch to live counts)
+  when that lands.
+- The one-shot `msspSent` `CompareAndSwap` in
+  `telnet/iac.go::handleOptionNegotiation` is intentional —
+  removes amplification from a misbehaving crawler that re-sends
+  `DO MSSP` in a loop. Don't drop the guard without thinking
+  through the abuse vector.
+- `PLAYERS` is `len(srv.sessions.Snapshot())`. Bound sessions
+  only, so pre-auth login/character-select sessions are correctly
+  excluded — but wizinvis admins ARE counted. Public-facing
+  crawler listings will read `N + admins` instead of `N`. Track
+  in §M.4 audit follow-ups before tightening.
+- `appendMSSPField` doubles any 0xFF byte as `IAC IAC`. Any
+  caller writing variable values containing arbitrary bytes
+  (rare, but possible if a string field ever takes operator
+  input) MUST go through that helper rather than raw `append` —
+  bare 0xFF in the middle of a value terminates the SB block.
+- `MSSPConfig` env vars (`MSSP_CONTACT`, `MSSP_HOSTNAME`,
+  `MSSP_LOCATION`, `MSSP_WEBSITE`, `MSSP_STATUS`) override YAML.
+  `Status` defaults to `"Alpha"`; flip to `"Beta"`/`"Live"`
+  before public listing.
+- `FAMILY` / `GENRE` / `GAMEPLAY` / `LANGUAGE` / `CODEBASE` are
+  hardcoded today. A WheelMUD fork would have to recompile to
+  rebrand — track in §M.4 audit follow-ups (move to `MSSPConfig`).
+
 ## Session field ownership
 
 - `Session.Input` is owned by the read goroutine inside `RunSession`.

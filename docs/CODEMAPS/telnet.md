@@ -184,6 +184,45 @@ Verb-only today; argument-side completion is deferred.
 - `Session.WriteWrapped` short-circuits to `WriteString` when
   `Width <= 0` to avoid CRLF doubling.
 
+## MSSP (Mud Server Status Protocol, option 70)
+
+Crawler-discovery path. The server advertises `WILL MSSP` on
+connect; when a crawler answers `DO MSSP` we emit one full
+subnegotiation block of name/value pairs and never again on that
+session. The 27-variable payload covers required (NAME, PLAYERS,
+UPTIME), generic identity (HOSTNAME, LOCATION, WEBSITE, CONTACT),
+categorisation (FAMILY, GENRE, GAMEPLAY, STATUS, CODEBASE,
+VERSION), world stats (AREAS, ROOMS, MOBILES, OBJECTS), and
+protocol capabilities (ANSI, UTF-8, 256 COLORS, GMCP=1, …).
+
+```
+NegotiateTelnet              ─► WILL MSSP   (on connect, alongside ECHO/CHARSET/GMCP)
+client                       ─► DO MSSP
+handleOptionNegotiation:
+  case TELNET_OPT_MSSP:
+    s.MSSPProvider           — closure installed in cmd/server/main.go
+    s.msspSent.CompareAndSwap(false, true)  — one-shot replay guard
+    EncodeMSSP(provider())   — IAC SB MSSP (VAR <name> VAL <value>)+ IAC SE
+    s.WriteRaw(frame)        — same synchronous write path as GMCP
+```
+
+Wire encoder lives in `telnet/mssp.go::EncodeMSSP`;
+`appendMSSPField` doubles any bare 0xFF byte as `IAC IAC` (RFC
+855). Variable content lives outside the telnet package in
+`cmd/server/mssp.go::msspVars` so the protocol code stays
+content-free. World-count snapshot is taken once at boot via
+`collectMSSPWorldStats`; live player count comes from
+`session.Registry.Snapshot`. Identity strings (HOSTNAME, LOCATION,
+WEBSITE, CONTACT, STATUS) come from `MSSPConfig` in
+`internal/config` with `MSSP_*` env overrides.
+
+Tests:
+`telnet/mssp_test.go::TestEncodeMSSP` (5 wire cases),
+`telnet/charset_test.go::TestHandleOptionNegotiation_DOMsspWritesProviderBlock`
+(full negotiation through the IAC parser),
+`TestHandleOptionNegotiation_DOMsspIsOncePerSession`
+(replay-guard).
+
 ## Files
 
 | File | LOC | Purpose |
