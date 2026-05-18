@@ -23,6 +23,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/config"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/effects"
+	"github.com/Jasrags/WheelMUD/internal/emote"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/gmcp"
 	"github.com/Jasrags/WheelMUD/internal/group"
@@ -315,6 +316,18 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Effects catalog loaded", "effects", len(effectsCatalog.IDs()))
+
+	emoteFS, err := emote.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve emote source", "error", err)
+		os.Exit(1)
+	}
+	emoteCatalog, err := emote.Load(emoteFS)
+	if err != nil {
+		slog.Error("Failed to load emote catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Emote catalog loaded", "socials", len(emoteCatalog.IDs()))
 
 	// Cross-validate consumable EffectIDs against the loaded effects
 	// catalog so a typo in `effect_id_string:` fails the boot loudly
@@ -615,7 +628,7 @@ func main() {
 	// makeLuaWait's fire closure for the memory barrier.
 	srvShutdownCtx.Store(&ctx)
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, builderZones, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, builderZones, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, emoteCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)

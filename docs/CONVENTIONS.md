@@ -69,6 +69,42 @@ these; update this file when a pattern changes.
   transitively see each other through wizinvis); non-admins see only
   non-hidden peers.
 
+## Socials (§M.3 EmoteRegistry)
+
+- Catalog lives in `internal/emote/`: `Social` struct + `Catalog` with
+  `Load(fs.FS)` over `default/*.yaml`. `SourceFS` honours `EMOTE_DIR`
+  for on-disk overrides (mirrors `HELP_DIR`, `CHARGEN_DIR`).
+- Per-social commands are emitted by `cmd.NewSocials(catalog, sessions)`
+  and registered after the comm verbs in `cmd/server/registry.go`.
+  Freeform `emote <text>` (alias `:`) is `cmd.NewEmote(sessions)`.
+- YAML schema per entry: required `id`, `self`, `other`; optional
+  `aliases`, `help`. Targeted forms are all-three-or-none:
+  `target_self`, `target_view`, `target_other`. Only `{actor}` and
+  `{target}` token substitutions are recognized; an unknown `{...}`
+  fails the boot loudly.
+- Untargeted-only socials (no targeted forms) refuse a target arg with
+  "You can't <verb> at someone."; do NOT silently fall through to the
+  untargeted broadcast — the player asked for something the catalog
+  can't render.
+- Wizinvis filtering applies (same `visibility.CanSee` rule as say).
+  A hidden admin's social is invisible to non-admin peers; the actor
+  still sees their own self-line. `Sessions.FindByCharacterName`
+  results are also wizinvis-filtered so non-admins can't target a
+  hidden admin (anti-enumeration).
+- The room `silent` flag is text-gag only: speech-bearing verbs
+  (say/shout/yell/channels) get smothered, but socials and `emote`
+  carry through. Pantomime is still pantomime in a quiet room.
+- Help integration is automatic: `Social.Help` lands on
+  `Command.Help`, and §M.1's `cmd.GenerateCommandTopics` picks it up
+  without further wiring. Aliases become topic keywords.
+- Targeting yourself with a targetable social (`smile alice` while
+  you ARE alice) falls back to the untargeted broadcast. Don't render
+  "You smile at yourself" — most players didn't mean that.
+- Cross-registry name collisions (a YAML social named `say`) fail
+  the boot at `Registry.Register` because the comm verbs land first.
+  Builders should reserve verb names by inspecting `registry.go` or
+  letting boot tell them.
+
 ## Session field ownership
 
 - `Session.Input` is owned by the read goroutine inside `RunSession`.

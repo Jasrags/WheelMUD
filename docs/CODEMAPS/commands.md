@@ -42,6 +42,8 @@ alias-introduces-`;` bounded at depth 3.
 | `shout` / `yell` | — | Player | `shout.go` | Zone-wide broadcast |
 | `<channel>` | — | Player | `channel.go` | Dynamic verb per channel row (`ooc`, `gossip`, `newbie`, ...). No args toggles mute; args broadcast |
 | `channels` | `ch` | Player | `channel.go` | List channels with on/off mute state |
+| `emote` | `:` | Player | `emote.go` | Freeform third-person action; `:` is the classic shortcut |
+| `smile`/`wave`/`bow`/`nod`/... | per-entry | Player | `social.go` | Per-social verbs auto-registered from `internal/emote/default/socials.yaml` (`EMOTE_DIR` overrides). Untargeted by default; targeted forms render three-way (actor / target / others). |
 
 ### Movement & navigation
 

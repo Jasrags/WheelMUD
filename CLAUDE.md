@@ -103,6 +103,11 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
 - **`internal/chargen/`** — YAML catalog (backgrounds, classes, feats,
   skills, weaves) under `internal/chargen/default/*.yaml` (or
   `CHARGEN_DIR`). Cross-refs validated at Load.
+- **`internal/emote/`** — YAML social-verb catalog
+  (`internal/emote/default/socials.yaml` or `EMOTE_DIR`). Per-social
+  commands are emitted by `cmd.NewSocials` and registered alongside
+  the freeform `cmd.NewEmote` (alias `:`); both honour the §M.2
+  visibility filter. See `docs/CONVENTIONS.md` (Socials section).
 - **`internal/session/`** — process-level registry enforcing single-
   session-per-account. `Bind` displaces the prior session; `Unbind` is
   compare-and-delete.

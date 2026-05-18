@@ -11,6 +11,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/combat"
 	"github.com/Jasrags/WheelMUD/internal/dialogue"
 	"github.com/Jasrags/WheelMUD/internal/effects"
+	"github.com/Jasrags/WheelMUD/internal/emote"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/group"
 	"github.com/Jasrags/WheelMUD/internal/help"
@@ -28,7 +29,7 @@ import (
 	luastd "github.com/yuin/gopher-lua"
 )
 
-func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, builderZones repo.BuilderZoneRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, scheduler *tick.Scheduler, srvShutdownCtxPtr *atomic.Pointer[context.Context], shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
+func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo, mobs repo.MobInstanceRepo, mobTemplates repo.MobTemplateRepo, zones repo.ZoneRepo, characters repo.CharacterRepo, audits repo.AdminAuditRepo, shops repo.ShopRepo, bankers repo.BankerRepo, trainers repo.TrainerRepo, weaveTeachers repo.WeaveTeacherRepo, builderZones repo.BuilderZoneRepo, sessions *session.Registry, bus *eventbus.Bus, channels []repo.Channel, clock *world.Clock, newsCatalog *news.Catalog, helpCatalog *help.Catalog, chargenCatalog *chargen.Catalog, effectsCatalog *effects.Catalog, emoteCatalog *emote.Catalog, combatMgr *combat.Manager, groups *group.Manager, questCatalog *quest.Catalog, questEngine *quest.Engine, luaRunner *luaeng.Runner, scheduler *tick.Scheduler, srvShutdownCtxPtr *atomic.Pointer[context.Context], shutdownCtl cmd.ShutdownController) (*telnet.Registry, error) {
 	r := telnet.NewRegistry()
 	if err := r.Register(cmd.Quit, cmd.Colors); err != nil {
 		return nil, err
@@ -41,6 +42,14 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 		cmd.NewTell(sessions, bus),
 		cmd.NewReply(sessions, bus),
 	); err != nil {
+		return nil, err
+	}
+	for _, s := range cmd.NewSocials(emoteCatalog, sessions) {
+		if err := r.Register(s); err != nil {
+			return nil, fmt.Errorf("register social %q: %w", s.Name, err)
+		}
+	}
+	if err := r.Register(cmd.NewEmote(sessions)); err != nil {
 		return nil, err
 	}
 	for _, ch := range channels {

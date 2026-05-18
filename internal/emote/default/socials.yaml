@@ -1,0 +1,194 @@
+socials:
+  - id: smile
+    aliases: [sm]
+    help: smile [target] — a small, warm smile
+    self: You smile.
+    other: "{actor} smiles."
+    target_self: You smile at {target}.
+    target_view: "{actor} smiles at you."
+    target_other: "{actor} smiles at {target}."
+
+  - id: grin
+    help: grin [target] — a wide, toothy grin
+    self: You grin.
+    other: "{actor} grins."
+    target_self: You grin at {target}.
+    target_view: "{actor} grins at you."
+    target_other: "{actor} grins at {target}."
+
+  - id: laugh
+    aliases: [lol]
+    help: laugh [target] — a hearty laugh
+    self: You laugh.
+    other: "{actor} laughs."
+    target_self: You laugh at {target}.
+    target_view: "{actor} laughs at you."
+    target_other: "{actor} laughs at {target}."
+
+  - id: chuckle
+    help: chuckle [target] — a low, quiet chuckle
+    self: You chuckle.
+    other: "{actor} chuckles."
+    target_self: You chuckle at {target}.
+    target_view: "{actor} chuckles at you."
+    target_other: "{actor} chuckles at {target}."
+
+  - id: frown
+    help: frown [target] — knit your brows in displeasure
+    self: You frown.
+    other: "{actor} frowns."
+    target_self: You frown at {target}.
+    target_view: "{actor} frowns at you."
+    target_other: "{actor} frowns at {target}."
+
+  - id: scowl
+    help: scowl [target] — a dark, hostile expression
+    self: You scowl.
+    other: "{actor} scowls."
+    target_self: You scowl at {target}.
+    target_view: "{actor} scowls at you."
+    target_other: "{actor} scowls at {target}."
+
+  - id: sigh
+    help: sigh — a long, weary breath
+    self: You sigh.
+    other: "{actor} sighs."
+
+  - id: nod
+    help: nod [target] — nod in acknowledgement
+    self: You nod.
+    other: "{actor} nods."
+    target_self: You nod at {target}.
+    target_view: "{actor} nods at you."
+    target_other: "{actor} nods at {target}."
+
+  - id: shake
+    help: shake [target] — shake your head
+    self: You shake your head.
+    other: "{actor} shakes their head."
+    target_self: You shake your head at {target}.
+    target_view: "{actor} shakes their head at you."
+    target_other: "{actor} shakes their head at {target}."
+
+  - id: shrug
+    help: shrug — a noncommittal shrug
+    self: You shrug.
+    other: "{actor} shrugs."
+
+  - id: bow
+    help: bow [target] — bow respectfully
+    self: You bow.
+    other: "{actor} bows."
+    target_self: You bow to {target}.
+    target_view: "{actor} bows to you."
+    target_other: "{actor} bows to {target}."
+
+  - id: curtsey
+    aliases: [curtsy]
+    help: curtsey [target] — a graceful curtsey
+    self: You curtsey.
+    other: "{actor} curtseys."
+    target_self: You curtsey to {target}.
+    target_view: "{actor} curtseys to you."
+    target_other: "{actor} curtseys to {target}."
+
+  - id: wave
+    help: wave [target] — wave a greeting
+    self: You wave.
+    other: "{actor} waves."
+    target_self: You wave at {target}.
+    target_view: "{actor} waves at you."
+    target_other: "{actor} waves at {target}."
+
+  - id: salute
+    help: salute [target] — a crisp military salute
+    self: You salute.
+    other: "{actor} salutes."
+    target_self: You salute {target}.
+    target_view: "{actor} salutes you."
+    target_other: "{actor} salutes {target}."
+
+  - id: point
+    help: point [target] — point a finger
+    self: You point.
+    other: "{actor} points."
+    target_self: You point at {target}.
+    target_view: "{actor} points at you."
+    target_other: "{actor} points at {target}."
+
+  - id: beckon
+    help: beckon [target] — beckon someone closer
+    self: You beckon.
+    other: "{actor} beckons."
+    target_self: You beckon to {target}.
+    target_view: "{actor} beckons to you."
+    target_other: "{actor} beckons to {target}."
+
+  - id: clap
+    help: clap [target] — clap your hands
+    self: You clap your hands.
+    other: "{actor} claps their hands."
+    target_self: You clap for {target}.
+    target_view: "{actor} claps for you."
+    target_other: "{actor} claps for {target}."
+
+  - id: applaud
+    help: applaud [target] — enthusiastic applause
+    self: You applaud.
+    other: "{actor} applauds."
+    target_self: You applaud {target}.
+    target_view: "{actor} applauds you."
+    target_other: "{actor} applauds {target}."
+
+  - id: cheer
+    help: cheer [target] — raise a cheer
+    self: You cheer.
+    other: "{actor} cheers."
+    target_self: You cheer for {target}.
+    target_view: "{actor} cheers for you."
+    target_other: "{actor} cheers for {target}."
+
+  - id: hug
+    help: hug <target> — embrace someone
+    self: You wrap your arms around yourself.
+    other: "{actor} wraps their arms around themselves."
+    target_self: You hug {target}.
+    target_view: "{actor} hugs you."
+    target_other: "{actor} hugs {target}."
+
+  - id: pat
+    help: pat <target> — a friendly pat
+    self: You pat yourself on the back.
+    other: "{actor} pats themselves on the back."
+    target_self: You pat {target}.
+    target_view: "{actor} pats you."
+    target_other: "{actor} pats {target}."
+
+  - id: poke
+    help: poke <target> — a gentle poke
+    self: You poke yourself.
+    other: "{actor} pokes themselves."
+    target_self: You poke {target}.
+    target_view: "{actor} pokes you."
+    target_other: "{actor} pokes {target}."
+
+  - id: wink
+    help: wink [target] — a quick wink
+    self: You wink.
+    other: "{actor} winks."
+    target_self: You wink at {target}.
+    target_view: "{actor} winks at you."
+    target_other: "{actor} winks at {target}."
+
+  - id: blush
+    help: blush — colour rises in your cheeks
+    self: You blush.
+    other: "{actor} blushes."
+
+  - id: cry
+    help: cry [target] — weep openly
+    self: You cry.
+    other: "{actor} cries."
+    target_self: You cry on {target}'s shoulder.
+    target_view: "{actor} cries on your shoulder."
+    target_other: "{actor} cries on {target}'s shoulder."
