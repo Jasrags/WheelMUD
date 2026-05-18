@@ -135,6 +135,41 @@ func (r *Registry) registerLocked(c *Command) error {
 	return nil
 }
 
+// Unregister removes a command by exact name and clears every alias that
+// resolves to it. Returns ErrUnknownCommand if the name does not match
+// a registered command. Argument is case-insensitive.
+//
+// Safe to call concurrently with Dispatch — the dispatcher resolves the
+// *Command pointer under RLock and runs it without holding any lock, so
+// an Unregister concurrent with an in-flight dispatch completes the Run
+// normally and the next Dispatch on that verb returns ErrUnknownCommand.
+//
+// Added in §M.6 to support hot-reload (`reload socials` rebuilds the
+// per-social commands by Unregister + Register).
+func (r *Registry) Unregister(name string) error {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ErrUnknownCommand
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	idx := sort.Search(len(r.sorted), func(i int) bool { return r.sorted[i].Name >= name })
+	if idx >= len(r.sorted) || r.sorted[idx].Name != name {
+		return fmt.Errorf("%w: %q", ErrUnknownCommand, name)
+	}
+	cmd := r.sorted[idx]
+	r.sorted = append(r.sorted[:idx], r.sorted[idx+1:]...)
+	for _, a := range cmd.Aliases {
+		// Defensive: only delete if the alias still resolves to *this*
+		// command. A future API that allows alias reassignment would
+		// otherwise wipe an unrelated owner.
+		if owner, ok := r.aliases[a]; ok && owner == cmd {
+			delete(r.aliases, a)
+		}
+	}
+	return nil
+}
+
 func (r *Registry) lookupExactLocked(verb string) (*Command, bool) {
 	if c, ok := r.aliases[verb]; ok {
 		return c, true

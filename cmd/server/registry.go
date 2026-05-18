@@ -78,6 +78,16 @@ func buildRegistry(rooms repo.RoomRepo, exits repo.ExitRepo, items repo.ItemRepo
 	if err := r.Register(cmd.NewHelp(r, helpCatalog)); err != nil {
 		return nil, err
 	}
+	if err := r.Register(cmd.NewReload(cmd.ReloadDeps{
+		EmoteCatalog: emoteCatalog,
+		HelpCatalog:  helpCatalog,
+		Registry:     r,
+		Sessions:     sessions,
+		Mobs:         mobs,
+		Audits:       audits,
+	})); err != nil {
+		return nil, err
+	}
 	if err := r.Register(cmd.NewLook(rooms, exits, items, mobs, clock)); err != nil {
 		return nil, err
 	}

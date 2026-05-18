@@ -107,7 +107,13 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   (`internal/emote/default/socials.yaml` or `EMOTE_DIR`). Per-social
   commands are emitted by `cmd.NewSocials` and registered alongside
   the freeform `cmd.NewEmote` (alias `:`); both honour the §M.2
-  visibility filter. See `docs/CONVENTIONS.md` (Socials section).
+  visibility filter. §M.6 added `Catalog.Replace` for hot-reload
+  (mu-guarded). See `docs/CONVENTIONS.md` (Socials + Hot-reload
+  sections).
+- **`internal/cmd/reload.go`** — §M.6 admin verb backing
+  `reload socials` / `reload help`. Uses `telnet.Registry.Unregister`
+  (added §M.6) + `Register` to swap per-social verbs without a
+  restart; help reload re-runs `MergeGenerated`. Audits per success.
 - **`internal/session/`** — process-level registry enforcing single-
   session-per-account. `Bind` displaces the prior session; `Unbind` is
   compare-and-delete.

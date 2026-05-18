@@ -150,6 +150,7 @@ alias-introduces-`;` bounded at depth 3.
 | `cooldown <player> <skill> <seconds>` | `cooldown.go` | Stamp a cooldown on a target's skill via `RecordSkillCooldown`; audit on success (Phase E #26 slice B) |
 | `still` / `unstill` | `still.go` | Toggle channeler `Stilled` state on a target; suppresses slot refresh + madness accrual; audit on success (Phase E #27) |
 | `shutdown` / `reboot` | `shutdown.go` | `[<delay>] [<reason>]` (default 30s, ≤1h) or `cancel`/`abort`. Countdown broadcasts at T-{60,30,10,5..0}s. `reboot` re-execs via `syscall.Exec` after drain |
+| `reload <subsystem>` | `reload.go` | `reload socials` re-reads `EMOTE_DIR`, Unregisters + Registers each affected verb, re-merges auto-help. `reload help` re-reads `HELP_DIR` and re-attaches generated topics. Pre-validates non-social collisions; aborts cleanly on parse error. Audits per success with `added=N removed=N changed=N`. §M.6 |
 | `quit` | `quit.go` | Closes the session (returns `ErrSessionEnded`) — Player auth, listed here for completeness |
 
 ## Shared helpers

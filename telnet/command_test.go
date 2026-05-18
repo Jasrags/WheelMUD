@@ -695,3 +695,106 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+func TestRegistry_Unregister(t *testing.T) {
+	t.Run("happy path drops name and aliases", func(t *testing.T) {
+		r := NewRegistry()
+		if err := r.Register(cmd("look", noopRun, withAliases("l", "lk"))); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		if err := r.Unregister("look"); err != nil {
+			t.Fatalf("Unregister: %v", err)
+		}
+		if _, err := r.Lookup("look"); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("Lookup after Unregister: got %v want ErrUnknownCommand", err)
+		}
+		// Aliases must be wiped too.
+		if _, err := r.Lookup("l"); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("alias 'l' should be gone, got %v", err)
+		}
+		if _, err := r.Lookup("lk"); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("alias 'lk' should be gone, got %v", err)
+		}
+	})
+
+	t.Run("unknown name returns ErrUnknownCommand", func(t *testing.T) {
+		r := NewRegistry()
+		if err := r.Unregister("nope"); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("got %v want ErrUnknownCommand", err)
+		}
+	})
+
+	t.Run("empty name returns ErrUnknownCommand", func(t *testing.T) {
+		r := NewRegistry()
+		if err := r.Unregister(""); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("got %v want ErrUnknownCommand", err)
+		}
+	})
+
+	t.Run("case-insensitive lookup", func(t *testing.T) {
+		r := NewRegistry()
+		_ = r.Register(cmd("smile", noopRun))
+		if err := r.Unregister("SMILE"); err != nil {
+			t.Fatalf("uppercase Unregister: %v", err)
+		}
+	})
+
+	t.Run("allows re-Register of the same name", func(t *testing.T) {
+		r := NewRegistry()
+		_ = r.Register(cmd("smile", noopRun, withAliases("sm")))
+		if err := r.Unregister("smile"); err != nil {
+			t.Fatalf("Unregister: %v", err)
+		}
+		// Both the name and the freed alias must be available again.
+		if err := r.Register(cmd("smile", noopRun, withAliases("sm"))); err != nil {
+			t.Fatalf("re-Register: %v", err)
+		}
+	})
+
+	t.Run("concurrent Unregister vs Dispatch is race-free", func(t *testing.T) {
+		// Pin the locking story documented on Unregister: the
+		// dispatcher releases mu after lookup and holds the *Command
+		// pointer until Run returns. An in-flight dispatch must not
+		// race with the concurrent Unregister.
+		r := NewRegistry()
+		const verb = "spin"
+		started := make(chan struct{})
+		release := make(chan struct{})
+		_ = r.Register(cmd(verb, func(ctx *Context) error {
+			close(started)
+			<-release
+			return nil
+		}))
+		s, peer := newPipeSession(t)
+		s.AuthLevel = AuthGuest
+		// Drain the peer pipe so any post-dispatch write doesn't
+		// deadlock on net.Pipe back-pressure.
+		go func() {
+			buf := make([]byte, 256)
+			for {
+				if _, err := peer.Read(buf); err != nil {
+					return
+				}
+			}
+		}()
+		dispatched := make(chan error, 1)
+		go func() {
+			dispatched <- r.Dispatch(context.Background(), s, verb)
+		}()
+		<-started
+		// Unregister while the Run is blocked. Must not deadlock or
+		// race; the in-flight Run completes with the old *Command.
+		if err := r.Unregister(verb); err != nil {
+			t.Fatalf("Unregister mid-dispatch: %v", err)
+		}
+		close(release)
+		if err := <-dispatched; err != nil {
+			t.Fatalf("in-flight Dispatch returned: %v", err)
+		}
+		// Lookup confirms the verb is gone (Dispatch itself swallows
+		// ErrUnknownCommand after writing the "Unknown command" line).
+		if _, err := r.Lookup(verb); !errors.Is(err, ErrUnknownCommand) {
+			t.Fatalf("post-Unregister Lookup: got %v want ErrUnknownCommand", err)
+		}
+	})
+}

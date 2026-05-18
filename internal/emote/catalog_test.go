@@ -242,3 +242,96 @@ func TestCatalogAllIsCopy(t *testing.T) {
 		t.Fatalf("All() must not alias catalog storage; Get gave %q", got.ID)
 	}
 }
+
+func TestReplaceSwapsContents(t *testing.T) {
+	old, err := Load(fstest.MapFS{
+		"a.yaml": &fstest.MapFile{Data: []byte(`socials:
+  - id: smile
+    self: You smile.
+    other: "{actor} smiles."
+`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	new1, err := Load(fstest.MapFS{
+		"b.yaml": &fstest.MapFile{Data: []byte(`socials:
+  - id: wave
+    self: You wave.
+    other: "{actor} waves."
+`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.Replace(new1)
+	if _, ok := old.Get("smile"); ok {
+		t.Fatalf("Replace did not drop old id 'smile'")
+	}
+	if _, ok := old.Get("wave"); !ok {
+		t.Fatalf("Replace did not install new id 'wave'")
+	}
+	if len(old.All()) != 1 {
+		t.Fatalf("All() len=%d want 1", len(old.All()))
+	}
+}
+
+func TestReplaceNilClears(t *testing.T) {
+	cat, err := Load(fstest.MapFS{
+		"a.yaml": &fstest.MapFile{Data: []byte(`socials:
+  - id: smile
+    self: You smile.
+    other: "{actor} smiles."
+`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat.Replace(nil)
+	if len(cat.All()) != 0 {
+		t.Fatalf("Replace(nil) should empty catalog; len=%d", len(cat.All()))
+	}
+	if _, ok := cat.Get("smile"); ok {
+		t.Fatalf("Replace(nil) left 'smile' in place")
+	}
+}
+
+func TestReplaceConcurrentReads(t *testing.T) {
+	// Sanity: Replace + concurrent All() must not race or panic.
+	// The race detector catches map-vs-map data races; this test
+	// pins the contract that read methods are RLock-guarded.
+	cat, err := Load(fstest.MapFS{
+		"a.yaml": &fstest.MapFile{Data: []byte(`socials:
+  - id: smile
+    self: You smile.
+    other: "{actor} smiles."
+`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := Load(fstest.MapFS{
+		"b.yaml": &fstest.MapFile{Data: []byte(`socials:
+  - id: wave
+    self: You wave.
+    other: "{actor} waves."
+`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = cat.All()
+			_, _ = cat.Get("smile")
+			_ = cat.IDs()
+		}
+		close(done)
+	}()
+	for i := 0; i < 50; i++ {
+		cat.Replace(other)
+		cat.Replace(cat) // self-replace no-op
+	}
+	<-done
+}

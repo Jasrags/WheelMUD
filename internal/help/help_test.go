@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestLoad_EmbeddedTopics(t *testing.T) {
@@ -267,4 +268,115 @@ func ids(ts []*Topic) []string {
 		out[i] = t.ID
 	}
 	return out
+}
+
+func TestReloadFS_AddedRemovedChanged(t *testing.T) {
+	v1 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A1\n---\nfirst\n")},
+		"topics/bravo.md": &fstest.MapFile{Data: []byte("---\nid: bravo\ntitle: B\n---\nbody\n")},
+	}
+	cat, err := LoadFS(v1)
+	if err != nil {
+		t.Fatalf("LoadFS v1: %v", err)
+	}
+
+	// v2: alpha changed body, bravo unchanged, charlie added.
+	v2 := fstest.MapFS{
+		"topics/alpha.md":   &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A2\n---\nfirst\n")},
+		"topics/bravo.md":   &fstest.MapFile{Data: []byte("---\nid: bravo\ntitle: B\n---\nbody\n")},
+		"topics/charlie.md": &fstest.MapFile{Data: []byte("---\nid: charlie\ntitle: C\n---\nbody\n")},
+	}
+	added, removed, changed, err := cat.ReloadFS(v2)
+	if err != nil {
+		t.Fatalf("ReloadFS v2: %v", err)
+	}
+	if added != 1 {
+		t.Errorf("added=%d want 1", added)
+	}
+	if removed != 0 {
+		t.Errorf("removed=%d want 0", removed)
+	}
+	if changed != 1 {
+		t.Errorf("changed=%d want 1", changed)
+	}
+	// New content is live.
+	if got, ok := cat.LookupExact("alpha"); !ok || got.Title != "A2" {
+		t.Errorf("alpha post-reload Title=%q ok=%v want A2", got, ok)
+	}
+	if _, ok := cat.LookupExact("charlie"); !ok {
+		t.Errorf("charlie missing after reload")
+	}
+}
+
+func TestReloadFS_RemovesOldTopic(t *testing.T) {
+	v1 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A\n---\nbody\n")},
+		"topics/bravo.md": &fstest.MapFile{Data: []byte("---\nid: bravo\ntitle: B\n---\nbody\n")},
+	}
+	cat, err := LoadFS(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A\n---\nbody\n")},
+	}
+	added, removed, changed, err := cat.ReloadFS(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 0 || changed != 0 || removed != 1 {
+		t.Errorf("counts add=%d rm=%d ch=%d; want 0/1/0", added, removed, changed)
+	}
+	if _, ok := cat.LookupExact("bravo"); ok {
+		t.Errorf("bravo should be gone after reload")
+	}
+}
+
+func TestReloadFS_ParseErrorLeavesCatalogIntact(t *testing.T) {
+	v1 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A\n---\nbody\n")},
+	}
+	cat, err := LoadFS(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := fstest.MapFS{
+		"topics/oops.md": &fstest.MapFile{Data: []byte("no front matter here\n")},
+	}
+	_, _, _, err = cat.ReloadFS(bad)
+	if err == nil {
+		t.Fatalf("expected parse error on malformed reload")
+	}
+	// Pre-reload state must survive.
+	if _, ok := cat.LookupExact("alpha"); !ok {
+		t.Errorf("alpha should still exist after failed reload")
+	}
+}
+
+func TestReloadFS_ConcurrentReadsAreSafe(t *testing.T) {
+	v1 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A\n---\nbody\n")},
+	}
+	cat, err := LoadFS(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := fstest.MapFS{
+		"topics/alpha.md": &fstest.MapFile{Data: []byte("---\nid: alpha\ntitle: A\n---\nedited\n")},
+		"topics/beta.md":  &fstest.MapFile{Data: []byte("---\nid: beta\ntitle: B\n---\nnew\n")},
+	}
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = cat.All()
+			_, _ = cat.LookupExact("alpha")
+		}
+		close(done)
+	}()
+	for i := 0; i < 50; i++ {
+		if _, _, _, err := cat.ReloadFS(v2); err != nil {
+			t.Errorf("ReloadFS: %v", err)
+		}
+	}
+	<-done
 }

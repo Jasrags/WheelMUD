@@ -5,14 +5,16 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Catalog is the in-memory social-verb index. Built once at boot via
-// Load (or LoadFS via SourceFS). All fields are immutable after Load
-// returns, so callers may share a *Catalog freely across goroutines.
+// Load (or LoadFS via SourceFS); §M.6 added in-place mutation via
+// Replace for hot-reload, so all read paths now acquire mu.RLock.
 type Catalog struct {
+	mu     sync.RWMutex
 	byID   map[string]Social // id → Social
 	byName map[string]string // id OR alias (lowercased) → owning id
 	order  []string          // ids in load order, for stable iteration
@@ -25,6 +27,8 @@ func (c *Catalog) Get(id string) (Social, bool) {
 	if c == nil {
 		return Social{}, false
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	s, ok := c.byID[id]
 	return s, ok
 }
@@ -35,6 +39,8 @@ func (c *Catalog) All() []Social {
 	if c == nil {
 		return nil
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make([]Social, 0, len(c.order))
 	for _, id := range c.order {
 		out = append(out, c.byID[id])
@@ -47,12 +53,53 @@ func (c *Catalog) IDs() []string {
 	if c == nil {
 		return nil
 	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make([]string, 0, len(c.byID))
 	for id := range c.byID {
 		out = append(out, id)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Replace atomically swaps this catalog's contents for those of `other`.
+// Used by §M.6 hot-reload: the caller loads a fresh catalog via
+// Load(SourceFS()), validates it, then calls Replace on the live
+// catalog so all readers (NewSocialsList, future reload-aware
+// consumers) see the new state.
+//
+// The same `*Catalog` pointer survives — callers that captured it at
+// boot (e.g. internal/cmd/socials_list.go) continue to work without
+// any indirection layer. Callers that captured `Social` values by
+// snapshot (e.g. internal/cmd/social.go::buildSocialCommand) keep
+// their old values; the reload verb is responsible for Unregister +
+// Register'ing per-social commands to pick up the new contents.
+//
+// Nil `other` clears the catalog. Self-replace is a no-op.
+func (c *Catalog) Replace(other *Catalog) {
+	if c == nil || c == other {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if other == nil {
+		c.byID = map[string]Social{}
+		c.byName = map[string]string{}
+		c.order = nil
+		return
+	}
+	other.mu.RLock()
+	defer other.mu.RUnlock()
+	c.byID = make(map[string]Social, len(other.byID))
+	for k, v := range other.byID {
+		c.byID[k] = v
+	}
+	c.byName = make(map[string]string, len(other.byName))
+	for k, v := range other.byName {
+		c.byName[k] = v
+	}
+	c.order = append(c.order[:0], other.order...)
 }
 
 // Load parses every *.yaml file under root and returns a populated

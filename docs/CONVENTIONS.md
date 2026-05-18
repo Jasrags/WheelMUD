@@ -144,6 +144,49 @@ these; update this file when a pattern changes.
   hardcoded today. A WheelMUD fork would have to recompile to
   rebrand — track in §M.4 audit follow-ups (move to `MSSPConfig`).
 
+## Hot-reload (§M.6)
+
+- Two subsystems support runtime reload today: `reload socials`
+  (re-reads `EMOTE_DIR`) and `reload help` (re-reads `HELP_DIR`).
+  AuthAdmin; one `admin_audit` row per successful reload with
+  args `added=N removed=N changed=N`.
+- The §M.3 per-social commands capture `emote.Social` **by
+  value**, so `reload socials` cannot rely on in-place catalog
+  mutation alone — it must `telnet.Registry.Unregister` and
+  `Register` each affected verb. `NewSocialsList` captures the
+  `*emote.Catalog` pointer and does see in-place changes for
+  free, so the listing verb stays in sync without extra work.
+- `reload socials` pre-validates: any new ID or alias not
+  currently owned by the old catalog must be absent from the
+  registry. A collision with a non-social verb aborts the reload
+  cleanly before any mutation — never leave the registry in a
+  half-swapped state.
+- `reload socials` re-runs `cmd.GenerateCommandTopics(registry)`
+  → `helpCatalog.MergeGenerated` afterwards so new socials get
+  auto-help topics. The help-side merge count is logged at Debug,
+  not surfaced to the admin (they asked about socials).
+- `help.Catalog.ReloadFS` blows away every topic (authored and
+  generated) under `mu.Lock` and reinstalls the parsed authored
+  set. The reload verb is responsible for re-running
+  `MergeGenerated` afterwards. This mirrors the boot recipe and
+  keeps the catalog's "authored wins on collision" invariant
+  intact.
+- `emote.Catalog` now has a `sync.RWMutex` guarding reads. All
+  call sites (`Get`/`All`/`IDs`) acquire `RLock`. `Replace`
+  takes the write lock and copies the new catalog's
+  `byID`/`byName`/`order` into the receiver in place — the
+  same `*Catalog` pointer remains valid, so any boot-time
+  capture continues to work.
+- `telnet.Registry.Unregister` is the post-boot mutation primitive
+  added for §M.6. Safe to call concurrently with `Dispatch` — the
+  dispatcher resolves the `*Command` pointer under `RLock` and
+  runs it without holding any lock, so an in-flight dispatch
+  completes against the old command. Pinned by a race test in
+  `telnet/command_test.go::TestRegistry_Unregister`.
+- A failed reload (parse error, collision abort) does NOT audit.
+  The audit-row contract is "successful reload only" so an
+  operator can grep for actual changes.
+
 ## Session field ownership
 
 - `Session.Input` is owned by the read goroutine inside `RunSession`.

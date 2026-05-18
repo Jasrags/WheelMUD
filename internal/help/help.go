@@ -290,6 +290,84 @@ func (c *Catalog) MergeGenerated(gen []*Topic) (added, skipped int) {
 	return added, skipped
 }
 
+// ReloadFS re-parses topics from fsys and atomically replaces the
+// catalog's authored set. Generated topics (from cmd.GenerateCommandTopics
+// via MergeGenerated) are wiped — the caller is expected to re-run
+// MergeGenerated against the current registry afterwards, mirroring
+// the boot recipe.
+//
+// Returns (added, removed, changed, err) where:
+//   - `added` counts topic ids in fsys that were absent before
+//   - `removed` counts topic ids that were present before and are absent
+//     in fsys (includes generated topics that get re-merged later)
+//   - `changed` counts topic ids present in both whose Body, Title, or
+//     Keywords differ
+//
+// On parse / validation error the catalog is left untouched and the
+// counts are zero.
+//
+// Added in §M.6 to back the `reload help` admin verb.
+func (c *Catalog) ReloadFS(fsys fs.FS) (added, removed, changed int, err error) {
+	// Reuse LoadFS for parsing + validation so the reload path can't
+	// drift from the boot path's rules. The parse runs outside the
+	// catalog's mutex so a slow read doesn't block live lookups.
+	fresh, err := LoadFS(fsys)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Diff against the current state. Note: c.byID contains both
+	// authored and previously-generated topics. The caller's re-merge
+	// will re-insert any generated ones, so anything currently in
+	// c.byID that's absent from fresh.byID counts as removed for now
+	// — the caller's follow-up MergeGenerated will bring back any
+	// generated entries.
+	for id, t := range fresh.byID {
+		old, exists := c.byID[id]
+		if !exists {
+			added++
+			continue
+		}
+		if topicDiffers(old, t) {
+			changed++
+		}
+	}
+	for id := range c.byID {
+		if _, exists := fresh.byID[id]; !exists {
+			removed++
+		}
+	}
+
+	c.sorted = fresh.sorted
+	c.byID = fresh.byID
+	c.byKeyword = fresh.byKeyword
+	return added, removed, changed, nil
+}
+
+// topicDiffers returns true when two topics with the same ID have
+// different rendered content. Pointer equality is not enough — each
+// reload allocates fresh *Topic values.
+func topicDiffers(a, b *Topic) bool {
+	if a == nil || b == nil {
+		return a != b
+	}
+	if a.Title != b.Title || a.Body != b.Body {
+		return true
+	}
+	if len(a.Keywords) != len(b.Keywords) {
+		return true
+	}
+	for i := range a.Keywords {
+		if a.Keywords[i] != b.Keywords[i] {
+			return true
+		}
+	}
+	return false
+}
+
 func joinIDs(topics []*Topic) string {
 	ids := make([]string, len(topics))
 	for i, t := range topics {
