@@ -47,8 +47,9 @@ vars only — both work; env overrides file values. Env surface: `LISTEN_ADDR`
 metrics+pprof+healthz), `DB_DSN` (default `wheelmud.db`, `:memory:` works),
 `BACKUP_DIR` (empty disables snapshots), `LOG_LEVEL`, `WORLD_DIR` (default
 `./data/world`), `AUDIT_COMMANDS_ENABLED` + `AUDIT_COMMANDS_EXCLUDE`.
-Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR`)
-are env-only and switch each embedded-FS catalog to an on-disk override.
+Catalog dirs (`CHARGEN_DIR` / `QUEST_DIR` / `SCRIPT_DIR` / `EFFECTS_DIR`
+/ `HELP_DIR`) are env-only and switch each embedded-FS catalog to an
+on-disk override.
 
 ## Architecture (one-liner map)
 

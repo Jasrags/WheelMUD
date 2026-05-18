@@ -275,7 +275,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	helpCatalog, err := help.Load()
+	helpFS, err := help.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve help source", "error", err)
+		os.Exit(1)
+	}
+	helpCatalog, err := help.LoadFS(helpFS)
 	if err != nil {
 		slog.Error("Failed to load help catalog", "error", err)
 		os.Exit(1)
@@ -613,6 +618,17 @@ func main() {
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)
+	}
+
+	// §M.1: backfill the help catalog with auto-generated per-command
+	// topics so every registered verb has a `help <name>` entry even
+	// when no on-disk article exists. Authored topics keep their
+	// precedence (MergeGenerated skips on ID collision); aliases on the
+	// generated topic surface as keywords so `help <alias>` resolves
+	// through the same pipeline. Runs once at boot before the listener
+	// opens.
+	if added, skipped := helpCatalog.MergeGenerated(cmd.GenerateCommandTopics(registry)); added > 0 || skipped > 0 {
+		slog.Info("help: generated topics merged", "added", added, "skipped", skipped)
 	}
 
 	gameMode := mode.NewGame(registry, characters, rooms, defaultPromptTemplate)

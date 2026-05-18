@@ -23,8 +23,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 )
 
 //go:embed assets/topics/*.md
@@ -46,11 +48,13 @@ type Topic struct {
 	Body     string
 }
 
-// Catalog bundles the parsed topic set. Construct once with Load() at
-// startup and share across goroutines: every field is immutable after
-// Load returns.
+// Catalog bundles the parsed topic set. Construct once with Load() or
+// LoadFS() at startup and share across goroutines: every field is
+// immutable after Load returns, except that MergeGenerated may extend
+// the topic set during single-threaded boot (under mu).
 type Catalog struct {
-	sorted    []*Topic // sorted by ID; supports binary-search prefix scans
+	mu        sync.RWMutex // guards the maps + sorted slice during MergeGenerated
+	sorted    []*Topic     // sorted by ID; supports binary-search prefix scans
 	byID      map[string]*Topic
 	byKeyword map[string]*Topic
 }
@@ -64,8 +68,26 @@ var (
 // is missing required front-matter fields, or if two topics collide
 // on id, keyword, or id-vs-keyword: collisions would silently shadow
 // one topic and mask authoring mistakes.
+//
+// Equivalent to LoadFS(embeddedSub) where embeddedSub is fs.Sub of
+// the package's bundled assets. Preserved for backwards compatibility;
+// new boot paths should call LoadFS(SourceFS()) so the HELP_DIR
+// override is honored.
 func Load() (*Catalog, error) {
-	dirEntries, err := fs.ReadDir(assets, "assets/topics")
+	sub, err := fs.Sub(assets, "assets")
+	if err != nil {
+		return nil, fmt.Errorf("help: embedded sub: %w", err)
+	}
+	return LoadFS(sub)
+}
+
+// LoadFS parses topics from the given filesystem. The filesystem
+// must expose `topics/<id>.md` files at its root; SourceFS provides
+// that layout for both embedded and HELP_DIR-override modes. Returns
+// an error on parse failure or topic collision (id, keyword, or
+// cross-space).
+func LoadFS(fsys fs.FS) (*Catalog, error) {
+	dirEntries, err := fs.ReadDir(fsys, "topics")
 	if err != nil {
 		return nil, fmt.Errorf("help: read topics: %w", err)
 	}
@@ -74,7 +96,11 @@ func Load() (*Catalog, error) {
 		if de.IsDir() || !strings.HasSuffix(de.Name(), ".md") {
 			continue
 		}
-		t, err := parseTopic(de.Name())
+		raw, err := fs.ReadFile(fsys, "topics/"+de.Name())
+		if err != nil {
+			return nil, fmt.Errorf("help: %s: %w", de.Name(), err)
+		}
+		t, err := parseFrontMatter(string(raw))
 		if err != nil {
 			return nil, fmt.Errorf("help: %s: %w", de.Name(), err)
 		}
@@ -120,6 +146,8 @@ func validateAndIndex(topics []*Topic) (byID, byKeyword map[string]*Topic, err e
 // defensive copy so a caller's sort or append cannot corrupt the
 // binary-search invariant on c.sorted (mirrors Prefix("") behaviour).
 func (c *Catalog) All() []*Topic {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make([]*Topic, len(c.sorted))
 	copy(out, c.sorted)
 	return out
@@ -129,6 +157,8 @@ func (c *Catalog) All() []*Topic {
 // or prefix fallback. Used by help to give the command-registry exact
 // match the same precedence as a topic-id exact match.
 func (c *Catalog) LookupExact(q string) (*Topic, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	t, ok := c.byID[strings.ToLower(strings.TrimSpace(q))]
 	return t, ok
 }
@@ -137,6 +167,8 @@ func (c *Catalog) LookupExact(q string) (*Topic, bool) {
 // id, exact-id, or prefix fallback. Help calls this between the exact
 // pass and the unique-prefix pass.
 func (c *Catalog) LookupKeyword(q string) (*Topic, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	t, ok := c.byKeyword[strings.ToLower(strings.TrimSpace(q))]
 	return t, ok
 }
@@ -150,12 +182,16 @@ func (c *Catalog) Lookup(q string) (*Topic, error) {
 	if q == "" {
 		return nil, ErrUnknownTopic
 	}
+	c.mu.RLock()
 	if t, ok := c.byID[q]; ok {
+		c.mu.RUnlock()
 		return t, nil
 	}
 	if t, ok := c.byKeyword[q]; ok {
+		c.mu.RUnlock()
 		return t, nil
 	}
+	c.mu.RUnlock()
 	matches := c.Prefix(q)
 	switch len(matches) {
 	case 0:
@@ -171,6 +207,8 @@ func (c *Catalog) Lookup(q string) (*Topic, error) {
 // Empty p returns the full catalog. Mirrors telnet.Registry.Prefix.
 func (c *Catalog) Prefix(p string) []*Topic {
 	p = strings.ToLower(p)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if p == "" {
 		out := make([]*Topic, len(c.sorted))
 		copy(out, c.sorted)
@@ -187,22 +225,77 @@ func (c *Catalog) Prefix(p string) []*Topic {
 	return out
 }
 
+// MergeGenerated extends the catalog with auto-derived topics — for
+// example, per-command topics from cmd.GenerateCommandTopics. Topics
+// whose ID matches an existing authored topic are skipped (authored
+// wins so a hand-written article overrides the generated default).
+// Topics whose ID collides with an existing keyword (in either
+// direction) are also skipped to preserve the byID/byKeyword
+// disjoint invariant from validateAndIndex.
+//
+// Returns (added, skipped). Skipped topics are logged at Debug so
+// authors can audit which generated topics were shadowed.
+//
+// Intended for single-threaded boot use only: callers should
+// MergeGenerated AFTER LoadFS and BEFORE the listener opens. The
+// mutex guards reads against any concurrent caller that may have
+// raced to start, but the catalog is not designed for steady-state
+// reload — that's a future followup.
+func (c *Catalog) MergeGenerated(gen []*Topic) (added, skipped int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, t := range gen {
+		if t == nil || t.ID == "" {
+			continue
+		}
+		if _, dup := c.byID[t.ID]; dup {
+			slog.Debug("help: generated topic shadowed by authored", "id", t.ID)
+			skipped++
+			continue
+		}
+		if _, dup := c.byKeyword[t.ID]; dup {
+			slog.Debug("help: generated topic id collides with keyword", "id", t.ID)
+			skipped++
+			continue
+		}
+		// A keyword on the generated topic that collides with an
+		// existing id or keyword is dropped from the topic; the
+		// topic itself still lands as long as its ID is clean. This
+		// matches the "additive, non-disruptive" intent — a
+		// generated keyword shouldn't displace authored routing.
+		clean := make([]string, 0, len(t.Keywords))
+		for _, kw := range t.Keywords {
+			if _, dup := c.byID[kw]; dup {
+				continue
+			}
+			if _, dup := c.byKeyword[kw]; dup {
+				continue
+			}
+			clean = append(clean, kw)
+		}
+		t.Keywords = clean
+		c.byID[t.ID] = t
+		for _, kw := range t.Keywords {
+			c.byKeyword[kw] = t
+		}
+		// Insert into sorted slice maintaining order. Linear scan is
+		// fine — MergeGenerated runs once at boot with O(commands)
+		// topics, not in a hot path.
+		idx := sort.Search(len(c.sorted), func(i int) bool { return c.sorted[i].ID >= t.ID })
+		c.sorted = append(c.sorted, nil)
+		copy(c.sorted[idx+1:], c.sorted[idx:])
+		c.sorted[idx] = t
+		added++
+	}
+	return added, skipped
+}
+
 func joinIDs(topics []*Topic) string {
 	ids := make([]string, len(topics))
 	for i, t := range topics {
 		ids[i] = t.ID
 	}
 	return strings.Join(ids, ", ")
-}
-
-// parseTopic loads one topic file and splits its YAML-ish front-matter
-// from the body.
-func parseTopic(filename string) (*Topic, error) {
-	raw, err := assets.ReadFile("assets/topics/" + filename)
-	if err != nil {
-		return nil, err
-	}
-	return parseFrontMatter(string(raw))
 }
 
 // parseFrontMatter parses a YAML-ish front-matter block from raw.
