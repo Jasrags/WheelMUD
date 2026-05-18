@@ -59,7 +59,12 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   → `tick.Scheduler` + `tick.Buckets` + `persist.Manager` → optional
   `backup` + `metrics` → TCP accept loop. New long-lived deps belong on
   the `server` struct. `buildVersion`/`buildCommit`/`buildDate` come
-  from goreleaser ldflags.
+  from goreleaser ldflags. main.go is intentionally a thin orchestrator;
+  per-concern helpers live in sibling files (`registry.go`,
+  `lua_bindings.go`, `subscribers_combat.go`, `tickers.go`,
+  `bootstrap_observability.go`, `shutdown_admin.go`, `mssp.go`,
+  `adapters.go`, `audit_metrics.go`, `catalog_validate.go`) — see
+  `docs/CODEMAPS/architecture.md` for the index.
 - **`telnet/`** — protocol primitives + per-connection driver. See
   `docs/CODEMAPS/telnet.md` and `docs/CONVENTIONS.md` (write paths,
   session field ownership, option negotiation, GMCP).

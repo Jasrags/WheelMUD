@@ -381,5 +381,33 @@ shutdown countdown, and chargen review broadcasts.
   `telnet.RunSession`.
 - `telnet.RunSession` — drives the read + dispatch goroutines.
 
+### `cmd/server/` sibling files
+
+main.go is the orchestrator; each concern lives in its own sibling:
+
+- `registry.go` — `buildRegistry`: every verb registration in one
+  file, grouped by subsystem (comm, movement, combat, OLC, …).
+- `lua_bindings.go` — all `makeLua*` factories, wait-slot
+  acquire/release, target/wait-ctx resolution, `defangScriptSource`.
+- `subscribers_combat.go` — `setupCombatSubscribers`: every combat
+  event subscriber (Hit/Miss/Death/XPAwarded/Flee/Stance/Parry +
+  CharacterDied/Respawned + script Damage/Heal + affects Expired/
+  TickDamaged).
+- `tickers.go` — `setupTickers`: corpse decay + affects + channeling
+  + stamina regen ticker wiring (subscribes onto `tick.Buckets`).
+- `bootstrap_observability.go` — `setupMetrics` (Prom + pprof +
+  healthz HTTP) + `setupBackup` (VACUUM-INTO manager).
+- `shutdown_admin.go` — `RequestShutdown` / `RequestReboot` /
+  `RequestAbort` + `scheduleStop` + countdown broadcaster +
+  `broadcast` helper.
+- `mssp.go` — `msspWorldStats` type + `collectMSSPWorldStats` +
+  `msspVars`.
+- `adapters.go` — `characterAffectsLoader`,
+  `characterChannelingLoader`, `eventbusAdapter`, `combatActorName`,
+  `variantHit/MissSelfFormat`.
+- `audit_metrics.go` — `buildCommandAuditFn` + `buildCommandMetricFn`.
+- `catalog_validate.go` — `buildQuestRefSets`,
+  `validateDialogueScriptRefs`, `validateConsumableEffectRefs`.
+
 For the authoritative current architecture see `CLAUDE.md` and
 `docs/PLAN.md` at the repo root. Roadmap ledger: `ROADMAP.md`.
