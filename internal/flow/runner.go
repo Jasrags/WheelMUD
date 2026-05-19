@@ -1,8 +1,10 @@
 package flow
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Runner drives a single Flow instance against a single State. Not
@@ -28,6 +30,8 @@ type Runner struct {
 	renderer   Renderer
 	actions    *ActionRegistry
 	validators *ValidatorRegistry
+	persister  Persister
+	now        func() time.Time // injectable clock for deterministic tests
 }
 
 // NewRunner constructs a Runner. Returns an error if the flow is
@@ -58,7 +62,23 @@ func NewRunner(flow *Flow, state *State, renderer Renderer, actions *ActionRegis
 		renderer:   renderer,
 		actions:    actions,
 		validators: validators,
+		now:        func() time.Time { return time.Now().UTC() },
 	}, nil
+}
+
+// SetPersister attaches an optional storage hook. Safe to call before
+// Start; a nil Persister disables the save/delete path. Tests use
+// this to inject a fake persister without a constructor explosion.
+func (r *Runner) SetPersister(p Persister) {
+	r.persister = p
+}
+
+// SetClock overrides the timestamp source for StartedAt / UpdatedAt.
+// Test-only — production callers leave this alone.
+func (r *Runner) SetClock(now func() time.Time) {
+	if now != nil {
+		r.now = now
+	}
 }
 
 // State exposes the runner's underlying State for inspection. Tests
@@ -92,6 +112,36 @@ func (r *Runner) Start() error {
 	if step == nil {
 		// Defensive — Validate should have caught this.
 		return fmt.Errorf("flow %q: entry step %q not found", r.flow.ID, r.flow.Entry)
+	}
+	now := r.now()
+	if r.state.StartedAt.IsZero() {
+		r.state.StartedAt = now
+	}
+	if err := r.persistSave(now); err != nil {
+		return err
+	}
+	return r.renderer.Write(step.Prompt(r.state))
+}
+
+// Resume re-renders the current step's prompt against a hydrated
+// State. The mode adapter calls this on reconnect when it found an
+// existing flow_state row for (AccountID, FlowID). State.Current must
+// already point at the step the player was awaiting input for —
+// supplied by Persister-backed hydration before Resume is called.
+//
+// Distinct from Start: Resume never advances state, never invokes an
+// action, and never calls Persister.Save (the persisted row is
+// already correct; only a real Submit changes it).
+func (r *Runner) Resume() error {
+	if r.state.Current == "" {
+		return fmt.Errorf("flow %q: Resume on non-hydrated state (Current is empty)", r.flow.ID)
+	}
+	if r.state.Completed || r.state.Cancelled {
+		return fmt.Errorf("flow %q: Resume on terminated state", r.flow.ID)
+	}
+	step := r.flow.Step(r.state.Current)
+	if step == nil {
+		return fmt.Errorf("flow %q: Resume current step %q not in catalog", r.flow.ID, r.state.Current)
 	}
 	return r.renderer.Write(step.Prompt(r.state))
 }
@@ -165,16 +215,49 @@ func (r *Runner) Submit(input string) (done bool, err error) {
 	r.state.Current = next
 	if next == "" {
 		r.state.Completed = true
+		r.persistDelete()
 		return true, nil
 	}
 	nextStep := r.flow.Step(next)
 	if nextStep == nil {
 		return false, fmt.Errorf("flow %q: step %q advanced to unknown step %q", r.flow.ID, step.StepID(), next)
 	}
+	// Save AFTER advancing Current so the persisted row points at the
+	// step the runner is now awaiting input for — that's where Resume
+	// will re-render.
+	if err := r.persistSave(r.now()); err != nil {
+		return false, err
+	}
 	if err := r.renderer.Write(nextStep.Prompt(r.state)); err != nil {
 		return false, fmt.Errorf("flow %q: render step %q: %w", r.flow.ID, next, err)
 	}
 	return false, nil
+}
+
+// persistSave routes through the optional Persister. Skipped when no
+// persister is wired or when the state is anonymous (AccountID == 0,
+// i.e. tests). UpdatedAt is refreshed on every call so the repo can
+// drive LRU eviction.
+func (r *Runner) persistSave(now time.Time) error {
+	if r.persister == nil || r.state.AccountID == 0 {
+		return nil
+	}
+	r.state.UpdatedAt = now
+	if err := r.persister.Save(context.Background(), r.state); err != nil {
+		return fmt.Errorf("flow %q: persist save: %w", r.flow.ID, err)
+	}
+	return nil
+}
+
+// persistDelete drops the persisted row. Errors are swallowed — the
+// flow already succeeded/cancelled and the next eviction sweep will
+// clean up. Skipped when no persister is wired or the state is
+// anonymous.
+func (r *Runner) persistDelete() {
+	if r.persister == nil || r.state.AccountID == 0 {
+		return
+	}
+	_ = r.persister.Delete(context.Background(), r.state.AccountID, r.flow.ID)
 }
 
 // reprompt renders the validation-error message followed by the
@@ -195,4 +278,5 @@ func (r *Runner) Cancel() {
 		return
 	}
 	r.state.Cancelled = true
+	r.persistDelete()
 }

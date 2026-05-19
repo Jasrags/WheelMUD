@@ -9,6 +9,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/creature"
 	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
+	"github.com/Jasrags/WheelMUD/internal/flow"
 	"github.com/Jasrags/WheelMUD/internal/repo"
 )
 
@@ -128,4 +129,26 @@ func (a eventbusAdapter) Publish(ctx context.Context, ev any) {
 		return
 	}
 	a.bus.Publish(ctx, ev)
+}
+
+// flowRepoPersister bridges repo.FlowStateRepo to flow.Persister so
+// the engine never sees the repo type. Save translates the engine
+// struct into a repo struct; Delete is a thin passthrough. §O.2.
+type flowRepoPersister struct {
+	repo repo.FlowStateRepo
+}
+
+func (p flowRepoPersister) Save(ctx context.Context, s *flow.State) error {
+	return p.repo.Save(ctx, repo.FlowState{
+		AccountID:   s.AccountID,
+		FlowID:      s.FlowID,
+		CurrentStep: string(s.Current),
+		Values:      s.Values,
+		StartedAt:   s.StartedAt,
+		UpdatedAt:   s.UpdatedAt,
+	})
+}
+
+func (p flowRepoPersister) Delete(ctx context.Context, accountID int64, flowID string) error {
+	return p.repo.Delete(ctx, accountID, flowID)
 }

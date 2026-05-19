@@ -198,6 +198,7 @@ func main() {
 	trainers := repo.NewSQLiteTrainerRepo(conn)
 	weaveTeachers := repo.NewSQLiteWeaveTeacherRepo(conn)
 	builderZones := repo.NewSQLiteBuilderZoneRepo(conn)
+	flowStates := repo.NewSQLiteFlowStateRepo(conn)
 
 	// Boot-time data integrity audit: a character row with auth_level
 	// outside [0, AuthLevelMax] would later trip the post-load scan
@@ -362,6 +363,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// flowPersister bridges the flow.Persister contract to the SQLite
+	// repo. Lives here so `internal/flow` stays free of `internal/repo`
+	// imports; the engine and the repo never see each other directly.
+	flowPersister := flowRepoPersister{repo: flowStates}
+	// flowLoader is the §O.2 resume hook the mode adapter calls during
+	// NewFlow. Returns (state, true, nil) on hit, (zero, false, nil)
+	// on miss; any other error path is logged at the adapter and the
+	// flow starts fresh.
+	flowLoader := func(ctx context.Context, accountID int64, flowID string) (flow.State, bool, error) {
+		fs, err := flowStates.Load(ctx, accountID, flowID)
+		if errors.Is(err, repo.ErrFlowStateNotFound) {
+			return flow.State{}, false, nil
+		}
+		if err != nil {
+			return flow.State{}, false, err
+		}
+		return flow.State{
+			FlowID:    fs.FlowID,
+			AccountID: fs.AccountID,
+			Current:   flow.StepID(fs.CurrentStep),
+			Values:    fs.Values,
+			StartedAt: fs.StartedAt,
+			UpdatedAt: fs.UpdatedAt,
+		}, true, nil
+	}
+
 	// pushFlow is the boot-time closure plumbed into cmd.NewWizdemo
 	// and cmd.NewFlowVerb. It resolves a flow id against the loaded
 	// catalog and pushes a mode.Flow onto the session. Lives here so
@@ -375,12 +402,47 @@ func main() {
 		if fl == nil {
 			return s.WriteString("{{No such flow: " + display.Defang(flowID, "?") + "}}::yellow\r\n")
 		}
-		m, err := mode.NewFlow(s, fl, flowActions, flowValidators, nil)
+		m, err := mode.NewFlow(s, fl, flowActions, flowValidators, flowPersister, flowLoader, nil)
 		if err != nil {
 			return s.WriteString("{{flow init failed: " + display.Defang(err.Error(), "unknown") + "}}::red\r\n")
 		}
 		return s.PushMode(m)
 	}
+
+	// §O.2 post-auth resume: after authentication lands the player at
+	// AccountMenu / CharacterCreate, any resumable flow row for the
+	// account gets pushed on top. Cancel/complete from the flow pops
+	// back to the menu. Loop is forward-looking — today wizdemo is
+	// the only resumable flow; chargen (O.7) will join later.
+	mode.SetFlowResumer(func(ctx context.Context, s *telnet.Session) {
+		if s.AccountID == 0 {
+			return
+		}
+		rows, err := flowStates.ListByAccount(ctx, s.AccountID)
+		if err != nil {
+			slog.Warn("flow resume: list failed",
+				"account", s.AccountID, "error", err)
+			return
+		}
+		for _, row := range rows {
+			fl := flowCatalog.Get(row.FlowID)
+			if fl == nil || !fl.Resumable {
+				// Catalog drift or flag flipped — drop the orphan.
+				_ = flowStates.Delete(ctx, s.AccountID, row.FlowID)
+				continue
+			}
+			m, err := mode.NewFlow(s, fl, flowActions, flowValidators, flowPersister, flowLoader, nil)
+			if err != nil {
+				slog.Warn("flow resume: NewFlow failed",
+					"flow", row.FlowID, "account", s.AccountID, "error", err)
+				continue
+			}
+			if err := s.PushMode(m); err != nil {
+				slog.Warn("flow resume: push failed",
+					"flow", row.FlowID, "account", s.AccountID, "error", err)
+			}
+		}
+	})
 
 	// Cross-validate consumable EffectIDs against the loaded effects
 	// catalog so a typo in `effect_id_string:` fails the boot loudly

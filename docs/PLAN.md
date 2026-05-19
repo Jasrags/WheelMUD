@@ -1598,6 +1598,24 @@ O.2. **Persistence.** New `flow_state` table + migration; save
     stuck wizard can't pile up rows.
     - ~400 LOC + migration.
     - Blocked on: O.0, O.1.
+    - **Landed 2026-05-18.** Migration 0057 creates the
+      `flow_state` table (composite PK `(account_id, flow_id)`,
+      `(account_id, updated_at DESC)` index for LRU eviction);
+      `repo.FlowStateRepo` (memory + sqlite, shared test suite)
+      enforces `MaxFlowStatesPerAccount = 4` with oldest-wins
+      eviction at insert time. Engine gained an optional
+      `flow.Persister` interface; the Runner Saves after every
+      transition and Deletes on Completed/Cancelled. `mode.NewFlow`
+      takes a Persister + FlowLoader pair and, when the Flow is
+      `Resumable`, hydrates state from the loader and calls
+      `Runner.Resume()` instead of `Start()`. `postAuth` fires a
+      package-level `flowResumer` hook (paired with
+      `loginPublisher`) after `ReplaceMode` to push any
+      resumable row on top of the AccountMenu / CharacterCreate.
+      `wizdemo.yaml` flipped `resumable: true` to exercise the
+      whole path. Engine package stays free of `repo` imports —
+      the bridge lives in `cmd/server/adapters.go`
+      (`flowRepoPersister`).
 
 O.3. **Extended step kinds.** `number`, `multi-select`,
     `point_buy`, `conditional` (branching on prior step output),

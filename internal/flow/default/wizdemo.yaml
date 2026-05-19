@@ -1,6 +1,6 @@
 id: wizdemo
 entry: name
-resumable: false
+resumable: true
 steps:
   - id: name
     kind: text

@@ -5,10 +5,31 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Jasrags/WheelMUD/internal/flow"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
+
+// waitContains polls the safeBuf for up to ~500ms waiting for the
+// expected substring. net.Pipe Write blocks until Read returns, but
+// the drainer goroutine's append to safeBuf happens AFTER the Read
+// returns, so the test thread can observe an empty buffer if it
+// checks immediately. The existing flow_test cases tolerated this
+// race because subsequent Handle() calls synchronized on the next
+// Write; the §O.2 resume tests assert immediately after PushMode
+// with no follow-up Submit, so they need an explicit wait.
+func waitContains(t *testing.T, buf *safeBuf, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if s := buf.String(); strings.Contains(s, want) {
+			return s
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return buf.String()
+}
 
 // flowFixture builds a session + drained peer + a basic flow with
 // optional registries. Tests call enter() with whatever flow shape
@@ -57,7 +78,7 @@ func (f *flowFixture) enter(t *testing.T, fl *flow.Flow,
 	actions *flow.ActionRegistry, validators *flow.ValidatorRegistry,
 	onDone func(*flow.State)) *Flow {
 	t.Helper()
-	m, err := NewFlow(f.s, fl, actions, validators, onDone)
+	m, err := NewFlow(f.s, fl, actions, validators, nil, nil, onDone)
 	if err != nil {
 		t.Fatalf("NewFlow: %v", err)
 	}
@@ -92,8 +113,8 @@ func TestFlowMode_HappyPathCompletesAndPops(t *testing.T) {
 	ctx := context.Background()
 
 	// Entry prompt rendered by OnEnter.
-	if !strings.Contains(f.captured.String(), "Name?") {
-		t.Fatalf("entry prompt missing: %q", f.captured.String())
+	if got := waitContains(t, f.captured, "Name?"); !strings.Contains(got, "Name?") {
+		t.Fatalf("entry prompt missing: %q", got)
 	}
 
 	// Submit each step's input.
@@ -107,8 +128,8 @@ func TestFlowMode_HappyPathCompletesAndPops(t *testing.T) {
 	if !committed {
 		t.Fatal("onDone never invoked")
 	}
-	if !strings.Contains(f.captured.String(), "Flow complete.") {
-		t.Fatalf("completion banner missing: %q", f.captured.String())
+	if got := waitContains(t, f.captured, "Flow complete."); !strings.Contains(got, "Flow complete.") {
+		t.Fatalf("completion banner missing: %q", got)
 	}
 	// Stack popped — game mode is back on top.
 	if cur, ok := f.s.CurrentMode().(*stubMode); !ok || cur.name != "game" {
@@ -136,8 +157,8 @@ func TestFlowMode_ValidationErrorReprompts(t *testing.T) {
 		t.Fatalf("Handle whitespace: unexpected mode error: %v", err)
 	}
 	// Re-prompt happened via the engine; Required. + Name? both visible.
-	if !strings.Contains(f.captured.String(), "Required.") {
-		t.Fatalf("missing validation message: %q", f.captured.String())
+	if got := waitContains(t, f.captured, "Required."); !strings.Contains(got, "Required.") {
+		t.Fatalf("missing validation message: %q", got)
 	}
 	// Mode did NOT pop — still on the flow mode.
 	if _, ok := f.s.CurrentMode().(*Flow); !ok {
@@ -155,8 +176,9 @@ func TestFlowMode_CancelPops(t *testing.T) {
 	if err := m.Handle(ctx, f.s, "/cancel"); err != nil {
 		t.Fatalf("Handle /cancel: %v", err)
 	}
-	if !strings.Contains(f.captured.String(), "Flow cancelled.") {
-		t.Fatalf("cancel banner missing: %q", f.captured.String())
+	got := waitContains(t, f.captured, "Flow cancelled.")
+	if !strings.Contains(got, "Flow cancelled.") {
+		t.Fatalf("cancel banner missing: %q", got)
 	}
 	if cur, ok := f.s.CurrentMode().(*stubMode); !ok || cur.name != "game" {
 		t.Fatalf("expected stubMode game after cancel, got %T", f.s.CurrentMode())
@@ -173,8 +195,8 @@ func TestFlowMode_BackRerendersCurrentStep(t *testing.T) {
 	if err := m.Handle(ctx, f.s, "/back"); err != nil {
 		t.Fatalf("Handle /back: %v", err)
 	}
-	if !strings.Contains(f.captured.String(), "Name?") {
-		t.Fatalf("re-render missing prompt: %q", f.captured.String())
+	if got := waitContains(t, f.captured, "Name?"); !strings.Contains(got, "Name?") {
+		t.Fatalf("re-render missing prompt: %q", got)
 	}
 	// Mode stays put.
 	if _, ok := f.s.CurrentMode().(*Flow); !ok {
@@ -192,7 +214,7 @@ func TestFlowMode_HelpDisplaysCheatSheet(t *testing.T) {
 	if err := m.Handle(ctx, f.s, "/help"); err != nil {
 		t.Fatalf("Handle /help: %v", err)
 	}
-	got := f.captured.String()
+	got := waitContains(t, f.captured, "/cancel")
 	for _, want := range []string{"/cancel", "/back", "/help"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("/help output missing %q in %q", want, got)
@@ -210,8 +232,9 @@ func TestFlowMode_UnknownSlashCommand(t *testing.T) {
 	if err := m.Handle(ctx, f.s, "/garbage"); err != nil {
 		t.Fatalf("Handle /garbage: %v", err)
 	}
-	if !strings.Contains(f.captured.String(), "Unknown flow command") {
-		t.Fatalf("missing unknown-cmd message: %q", f.captured.String())
+	got := waitContains(t, f.captured, "Unknown flow command")
+	if !strings.Contains(got, "Unknown flow command") {
+		t.Fatalf("missing unknown-cmd message: %q", got)
 	}
 	if _, ok := f.s.CurrentMode().(*Flow); !ok {
 		t.Fatal("CurrentMode should remain *Flow after /garbage")
@@ -238,11 +261,161 @@ func TestFlowMode_HardAbortPopsRed(t *testing.T) {
 	if err := m.Handle(ctx, f.s, "alice"); err != nil {
 		t.Fatalf("Handle: unexpected mode error: %v", err)
 	}
-	if !strings.Contains(f.captured.String(), "flow aborted") {
-		t.Fatalf("missing aborted banner: %q", f.captured.String())
+	if got := waitContains(t, f.captured, "flow aborted"); !strings.Contains(got, "flow aborted") {
+		t.Fatalf("missing aborted banner: %q", got)
 	}
 	if cur, ok := f.s.CurrentMode().(*stubMode); !ok || cur.name != "game" {
 		t.Fatalf("expected stubMode game after abort, got %T", f.s.CurrentMode())
+	}
+}
+
+// fakeLoader returns the seeded state once per (account, flow) key,
+// recording the lookup so tests can assert it was hit.
+type fakeLoader struct {
+	state flow.State
+	ok    bool
+	err   error
+	calls int
+}
+
+func (f *fakeLoader) Load(_ context.Context, _ int64, _ string) (flow.State, bool, error) {
+	f.calls++
+	return f.state, f.ok, f.err
+}
+
+// fakeModePersister captures Save/Delete calls.
+type fakeModePersister struct {
+	saves   int
+	deletes int
+}
+
+func (p *fakeModePersister) Save(_ context.Context, _ *flow.State) error { p.saves++; return nil }
+func (p *fakeModePersister) Delete(_ context.Context, _ int64, _ string) error {
+	p.deletes++
+	return nil
+}
+
+func TestFlowMode_Resume_HydratesAndRendersCurrentStep(t *testing.T) {
+	f := newFlowFixture(t)
+	fl := &flow.Flow{
+		ID:        "test",
+		Entry:     "name",
+		Resumable: true,
+		Steps: []flow.Step{
+			&flow.TextStep{ID: "name", PromptText: "Name?", StoreAs: "name", Next: "confirm"},
+			&flow.ConfirmStep{ID: "confirm", PromptText: "Commit?", OnYes: "", OnNo: ""},
+		},
+	}
+	if err := fl.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	loader := &fakeLoader{
+		state: flow.State{
+			FlowID:    "test",
+			AccountID: 7,
+			Current:   "confirm",
+			Values:    map[string]string{"name": "Moiraine"},
+		},
+		ok: true,
+	}
+	persister := &fakeModePersister{}
+	m, err := NewFlow(f.s, fl, nil, nil, persister, loader.Load, nil)
+	if err != nil {
+		t.Fatalf("NewFlow: %v", err)
+	}
+	if !m.IsResuming() {
+		t.Fatal("NewFlow should mark resuming when loader returned a hydrated row")
+	}
+	if loader.calls != 1 {
+		t.Fatalf("loader called %d times, want 1", loader.calls)
+	}
+	if err := f.s.PushMode(m); err != nil {
+		t.Fatalf("push flow: %v", err)
+	}
+	// OnEnter should re-render the confirm step's prompt, not the
+	// entry step's.
+	got := waitContains(t, f.captured, "Commit?")
+	if strings.Contains(got, "Name?") {
+		t.Errorf("resume rendered entry prompt: %q", got)
+	}
+	if !strings.Contains(got, "Commit?") {
+		t.Errorf("resume did not re-render confirm prompt: %q", got)
+	}
+}
+
+func TestFlowMode_Resume_SkippedWhenFlowNotResumable(t *testing.T) {
+	f := newFlowFixture(t)
+	fl := makeDemoFlow(t) // not Resumable
+	loader := &fakeLoader{
+		state: flow.State{FlowID: "test", AccountID: 7, Current: "confirm"},
+		ok:    true,
+	}
+	m, err := NewFlow(f.s, fl, nil, nil, nil, loader.Load, nil)
+	if err != nil {
+		t.Fatalf("NewFlow: %v", err)
+	}
+	if m.IsResuming() {
+		t.Fatal("non-resumable Flow should not resume")
+	}
+	if loader.calls != 0 {
+		t.Fatalf("loader called for non-resumable flow: %d times", loader.calls)
+	}
+}
+
+func TestFlowMode_Resume_FreshStartOnLoaderMiss(t *testing.T) {
+	f := newFlowFixture(t)
+	fl := &flow.Flow{
+		ID:        "test",
+		Entry:     "name",
+		Resumable: true,
+		Steps: []flow.Step{
+			&flow.TextStep{ID: "name", PromptText: "Name?", Next: ""},
+		},
+	}
+	_ = fl.Validate()
+	loader := &fakeLoader{ok: false}
+	m, err := NewFlow(f.s, fl, nil, nil, nil, loader.Load, nil)
+	if err != nil {
+		t.Fatalf("NewFlow: %v", err)
+	}
+	if m.IsResuming() {
+		t.Fatal("miss should not resume")
+	}
+	if err := f.s.PushMode(m); err != nil {
+		t.Fatal(err)
+	}
+	got := waitContains(t, f.captured, "Name?")
+	if !strings.Contains(got, "Name?") {
+		t.Fatalf("entry prompt missing after miss: %q", got)
+	}
+}
+
+func TestFlowMode_Resume_DiscardsRowOnCatalogDrift(t *testing.T) {
+	f := newFlowFixture(t)
+	fl := &flow.Flow{
+		ID:        "test",
+		Entry:     "name",
+		Resumable: true,
+		Steps: []flow.Step{
+			&flow.TextStep{ID: "name", PromptText: "Name?", Next: ""},
+		},
+	}
+	_ = fl.Validate()
+	// Persisted state points at a step that's been removed from YAML.
+	loader := &fakeLoader{
+		state: flow.State{FlowID: "test", AccountID: 7, Current: "ghost"},
+		ok:    true,
+	}
+	persister := &fakeModePersister{}
+	m, err := NewFlow(f.s, fl, nil, nil, persister, loader.Load, nil)
+	if err != nil {
+		t.Fatalf("NewFlow: %v", err)
+	}
+	if m.IsResuming() {
+		t.Fatal("dangling-step row should NOT resume")
+	}
+	if persister.deletes != 1 {
+		t.Errorf("expected 1 delete to clear the orphan row, got %d", persister.deletes)
 	}
 }
 

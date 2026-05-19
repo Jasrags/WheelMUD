@@ -11,6 +11,7 @@ package mode
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/Jasrags/WheelMUD/internal/display"
@@ -27,9 +28,17 @@ import (
 // sessions. The underlying Runner is itself single-goroutine; all
 // access happens on the dispatcher goroutine.
 type Flow struct {
-	runner *flow.Runner
-	onDone func(*flow.State)
+	runner   *flow.Runner
+	onDone   func(*flow.State)
+	resuming bool // §O.2: skip Start and Resume() on OnEnter instead
 }
+
+// FlowLoader is the optional storage hook NewFlow calls before
+// Start to attempt resume. Returns ok=false when no row exists
+// (start fresh); any non-nil err is a soft failure — NewFlow logs
+// and starts fresh rather than aborting. Implemented at the call
+// site as a thin wrapper over repo.FlowStateRepo.Load.
+type FlowLoader func(ctx context.Context, accountID int64, flowID string) (state flow.State, ok bool, err error)
 
 // NewFlow builds a session-bound Flow mode. `actions` and
 // `validators` may be nil — in that case any step referencing a
@@ -37,27 +46,69 @@ type Flow struct {
 // clear "unregistered" message. `onDone` is invoked after a normal
 // flow completion with the final State; nil is a no-op (the
 // typical case for ephemeral flows like wizdemo).
+//
+// `persister` is the §O.2 storage hook. When non-nil AND the Flow is
+// `Resumable`, NewFlow attempts to load a prior state for
+// (s.AccountID, fl.ID); on hit the runner's state is hydrated and
+// OnEnter invokes Runner.Resume() instead of Start(). On miss the
+// flow starts fresh. nil persister behaves identically to the §O.1
+// in-memory path.
 func NewFlow(
 	s *telnet.Session,
 	fl *flow.Flow,
 	actions *flow.ActionRegistry,
 	validators *flow.ValidatorRegistry,
+	persister flow.Persister,
+	loader FlowLoader,
 	onDone func(*flow.State),
 ) (*Flow, error) {
 	state := &flow.State{FlowID: fl.ID, AccountID: s.AccountID}
+	resuming := false
+	if fl.Resumable && loader != nil && s.AccountID != 0 {
+		loaded, ok, err := loader(context.Background(), s.AccountID, fl.ID)
+		if err != nil {
+			// Hard read error — log and proceed fresh rather than
+			// abort flow init. A bad row can't permanently lock a
+			// player out of starting a new flow instance.
+			slog.Warn("flow: resume load failed; starting fresh",
+				"flow", fl.ID, "account", s.AccountID, "error", err)
+		} else if ok && loaded.Current != "" && !loaded.Completed && !loaded.Cancelled {
+			// Verify the persisted step still exists in the YAML.
+			// Catalog drift (step renamed/removed) drops the row.
+			if fl.Step(loaded.Current) != nil {
+				*state = loaded
+				state.FlowID = fl.ID
+				state.AccountID = s.AccountID
+				resuming = true
+			} else if persister != nil {
+				slog.Warn("flow: resume current step missing from catalog; discarding",
+					"flow", fl.ID, "account", s.AccountID, "step", loaded.Current)
+				_ = persister.Delete(context.Background(), s.AccountID, fl.ID)
+			}
+		}
+	}
 	r, err := flow.NewRunner(fl, state, &sessionRenderer{s: s}, actions, validators)
 	if err != nil {
 		return nil, err
 	}
-	return &Flow{runner: r, onDone: onDone}, nil
+	r.SetPersister(persister)
+	return &Flow{runner: r, onDone: onDone, resuming: resuming}, nil
 }
 
+// IsResuming reports whether NewFlow hydrated state from a prior
+// session. Test-only — production callers don't branch on this.
+func (m *Flow) IsResuming() bool { return m.resuming }
+
 // OnEnter activates the runner — Start() renders the entry step's
-// prompt to the session. Session.PushMode rolls back on a non-nil
-// return; if Start fails, the player never lands in the flow mode.
+// prompt, or Resume() re-renders the current step when this Flow
+// was constructed against a hydrated state.
 func (m *Flow) OnEnter(_ *telnet.Session) error {
+	if m.resuming {
+		return m.runner.Resume()
+	}
 	return m.runner.Start()
 }
+
 
 // OnExit is a no-op for now. A future slice that wants to emit a
 // "back to game" banner can hook in here.

@@ -27,7 +27,10 @@
 // only bridge to a Session.
 package flow
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // StepID is the unique identifier of a step inside a Flow. Empty
 // StepID ("") signals flow completion when returned from a Step.Handle
@@ -147,6 +150,17 @@ type State struct {
 	// step never completes; downstream consumers should treat this
 	// as a user-initiated abort.
 	Cancelled bool
+
+	// StartedAt is stamped on the first Runner.Start and persisted
+	// through Persister.Save. Drives forensic introspection in the
+	// future `flow ls` admin verb.
+	StartedAt time.Time
+
+	// UpdatedAt is refreshed on every Persister.Save call. Drives
+	// LRU eviction in the repo layer when an account exceeds
+	// MaxFlowStatesPerAccount, and downgrade detection in §O.9 hot-
+	// reload (rows older than the YAML mtime are stale).
+	UpdatedAt time.Time
 }
 
 // SetValue is the canonical write path for Values. Treats nil

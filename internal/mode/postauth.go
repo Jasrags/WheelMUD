@@ -67,6 +67,26 @@ func SetLoginPublisher(f LoginEventFunc) {
 	loginPublisher.Store(&f)
 }
 
+// FlowResumerFunc is the §O.2 hook fired by postAuth after the
+// AccountMenu / CharacterCreate has been put on the stack. Its job is
+// to push any resumable flow_state row for the account on top of the
+// menu so the player lands back in their in-flight wizard. Lives as a
+// package-level atomic pointer for the same reason as
+// loginPublisher: too many call sites of postAuth-equivalents to
+// thread through cleanly, and tests never set it.
+type FlowResumerFunc func(ctx context.Context, s *telnet.Session)
+
+var flowResumer atomic.Pointer[FlowResumerFunc]
+
+// SetFlowResumer installs the §O.2 resume hook. Nil clears.
+func SetFlowResumer(f FlowResumerFunc) {
+	if f == nil {
+		flowResumer.Store(nil)
+		return
+	}
+	flowResumer.Store(&f)
+}
+
 // MOTDFunc is the hook fired once per successful login (immediately
 // after Login.handlePassword / Create.handleConfirm succeed) by
 // postAuth. It receives the watermark used to compute the unread
@@ -151,7 +171,11 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 		create.SetSettings(settings)
 		create.SetItems(deps.items)
 		create.SetBuilders(deps.builders)
-		return s.ReplaceMode(create)
+		if err := s.ReplaceMode(create); err != nil {
+			return err
+		}
+		invokeFlowResumer(ctx, s)
+		return nil
 	}
 	menu := NewAccountMenu(chars, characters, game)
 	menu.SetMOTD(motd)
@@ -164,7 +188,21 @@ func postAuth(ctx context.Context, s *telnet.Session, characters repo.CharacterR
 	menu.SetSettings(settings)
 	menu.SetLogins(deps.logins)
 	menu.SetBuilders(deps.builders)
-	return s.ReplaceMode(menu)
+	if err := s.ReplaceMode(menu); err != nil {
+		return err
+	}
+	invokeFlowResumer(ctx, s)
+	return nil
+}
+
+// invokeFlowResumer runs the §O.2 hook if installed. Errors inside
+// the resumer are the resumer's responsibility — login succeeds
+// regardless so a flow_state failure can't lock a player out of
+// their account menu.
+func invokeFlowResumer(ctx context.Context, s *telnet.Session) {
+	if fn := flowResumer.Load(); fn != nil {
+		(*fn)(ctx, s)
+	}
 }
 
 // remoteHost extracts the host portion of a RemoteAddress string

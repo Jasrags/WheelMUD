@@ -119,16 +119,38 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   / `ConfirmStep`), Go-only `ActionRegistry` + `ValidatorRegistry`,
   pluggable `Renderer` (no telnet dep — adapter lives at the edge).
   Validators return `*ValidationError` for re-prompt; other errors
-  abort the flow. State is plain-data for the O.2 persistence layer
-  to JSON-marshal later. §O.1 added a YAML catalog
+  abort the flow. State is plain-data for the §O.2 persistence
+  layer. §O.1 added a YAML catalog
   (`internal/flow/default/*.yaml` + `FLOW_DIR` override) with a
   tagged-union `kind:` discriminator parsed by a custom
-  `UnmarshalYAML`.
+  `UnmarshalYAML`. §O.2 added an optional `flow.Persister`
+  interface that the Runner Saves through on every transition and
+  Deletes on Completed/Cancelled; `Runner.Resume()` re-renders the
+  current step against a hydrated `State` instead of re-running
+  Start. `State` carries `StartedAt` / `UpdatedAt` for repo-side
+  LRU eviction. Engine package stays free of `repo` imports.
 - **`internal/mode/flow.go`** — §O.1 mode adapter wrapping a
   `*flow.Runner` as a mode-stack participant. Slash-prefix
   meta-commands (`/cancel`, `/back`, `/help`) parse here before
   input hits the step. `sessionRenderer` is the
-  `flow.Renderer`→`telnet.Session` bridge.
+  `flow.Renderer`→`telnet.Session` bridge. §O.2 — `NewFlow`
+  accepts a `flow.Persister` + `FlowLoader` func; when the Flow
+  is `Resumable` and the loader returns a row, the runner is
+  hydrated and `OnEnter` calls `Resume()` instead of `Start()`.
+  Catalog drift (persisted step missing from YAML) drops the
+  orphan row + starts fresh.
+- **`internal/repo/flow_state*.go`** — §O.2 storage layer. Composite
+  PK `(account_id, flow_id)` so each account has at most one
+  in-flight instance of each flow. `MaxFlowStatesPerAccount = 4`
+  enforced inside Save: at-cap inserts evict the row with the
+  oldest `updated_at` in the same tx. Migration 0057.
+- **`mode.SetFlowResumer`** (in `internal/mode/postauth.go`) —
+  package-level atomic hook fired by `postAuth` after the
+  AccountMenu / CharacterCreate `ReplaceMode` lands. main.go
+  installs a closure that lists `flow_state` rows for the
+  account, drops orphans (catalog drift or `resumable: false`),
+  and pushes a `mode.Flow` for each survivor. Mirrors the
+  `loginPublisher` pattern. Tests leave it nil.
 - **`internal/session/`** — process-level registry enforcing single-
   session-per-account. `Bind` displaces the prior session; `Unbind` is
   compare-and-delete.
