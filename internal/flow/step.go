@@ -61,3 +61,39 @@ type Step interface {
 	// the registry.
 	ActionRef() string
 }
+
+// AutoRuntime exposes the slice of the Runner that AutoAdvancer
+// steps legitimately need — currently the ActionRegistry, for
+// ActionStep to resolve its registered side-effect. The interface
+// keeps step impls from importing the full Runner type while still
+// letting them reach the registries by name.
+//
+// Implemented by *Runner; tests can satisfy it with a stub.
+type AutoRuntime interface {
+	Actions() *ActionRegistry
+}
+
+// AutoAdvancer is the optional interface a Step implements to skip
+// the render-and-wait phase. The Runner calls Auto immediately after
+// advancing into such a step instead of writing Prompt and reading
+// the next Submit. Conditional and action steps (§O.3) use this to
+// chain without user input.
+//
+// Auto-advance chains are bounded by MaxAutoChain so a YAML mistake
+// (conditional → conditional → … → loop) can't lock the dispatcher.
+// Hitting the cap aborts the flow with a clear error pointing at the
+// chain head.
+//
+// An AutoAdvancer's Auto MUST be deterministic from (rt, state) and
+// must not call into the Renderer; the Runner owns I/O. Returning an
+// empty StepID signals normal flow completion. `rt` is the bridge to
+// registries — Auto MUST NOT retain it past the call.
+type AutoAdvancer interface {
+	Auto(rt AutoRuntime, state *State) (StepID, error)
+}
+
+// MaxAutoChain caps how many consecutive AutoAdvancer steps the
+// Runner walks in one advance() call. 32 is well above any realistic
+// authored chain (chargen's deepest conditional ladder is < 5) and
+// well below what would visibly stall the dispatcher.
+const MaxAutoChain = 32

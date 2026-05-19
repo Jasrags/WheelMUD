@@ -1624,6 +1624,25 @@ O.3. **Extended step kinds.** `number`, `multi-select`,
     the runner.
     - ~300 LOC.
     - Blocked on: O.0.
+    - **Landed 2026-05-18.** Five new step kinds (`number`,
+      `multi_select`, `point_buy`, `conditional`, `action`) land
+      one-file-per-kind in `internal/flow/step_*.go`. Compound
+      outputs (multi_select, point_buy) JSON-encode under
+      `store_as` so `State.Values` keeps its `map[string]string`
+      shape. Engine extension: optional `AutoAdvancer` interface +
+      `AutoRuntime` accessor; `Runner.advanceTo` walks chains of
+      no-prompt steps (conditional, action) up to `MaxAutoChain = 32`
+      and aborts with a clear error on cycles. ActionStep resolves
+      its `Action` ref against the runner's ActionRegistry via
+      AutoRuntime so the step type stays free of runner-internal
+      references. YAML loader gained five new switch cases; the
+      "unknown kind" error message now lists all eight kinds.
+      Per-step table-driven tests (number, multi_select, point_buy,
+      conditional, action) plus runner-level chain + cap tests in
+      `auto_advance_test.go`. `wizdemo2.yaml` exercises one of each
+      new kind and is reachable via the existing `flow wizdemo2`
+      admin verb (resumable: true so it doubles as an O.2 × O.3
+      integration smoke).
 
 O.4. **First production consumer: `oedit`.** Closes §G #34 slice
     3 part 1. Item-template editor as a flow YAML.

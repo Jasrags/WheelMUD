@@ -57,10 +57,40 @@ func (r *rawStep) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf("decode confirm step: %w", err)
 		}
 		r.Step = &s
+	case "number":
+		var s NumberStep
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("decode number step: %w", err)
+		}
+		r.Step = &s
+	case "multi_select":
+		var s MultiSelectStep
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("decode multi_select step: %w", err)
+		}
+		r.Step = &s
+	case "point_buy":
+		var s PointBuyStep
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("decode point_buy step: %w", err)
+		}
+		r.Step = &s
+	case "conditional":
+		var s ConditionalStep
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("decode conditional step: %w", err)
+		}
+		r.Step = &s
+	case "action":
+		var s ActionStep
+		if err := node.Decode(&s); err != nil {
+			return fmt.Errorf("decode action step: %w", err)
+		}
+		r.Step = &s
 	case "":
 		return fmt.Errorf("step missing required `kind:` field")
 	default:
-		return fmt.Errorf("unknown step kind %q (want one of: text, choice, confirm)", probe.Kind)
+		return fmt.Errorf("unknown step kind %q (want one of: text, choice, confirm, number, multi_select, point_buy, conditional, action)", probe.Kind)
 	}
 	return nil
 }

@@ -77,6 +77,87 @@ steps:
 	}
 }
 
+// TestLoad_O3StepKinds exercises every §O.3 step kind through the YAML
+// loader so a missing UnmarshalYAML case (or a renamed field tag)
+// fails this test loudly rather than waiting for a real consumer.
+func TestLoad_O3StepKinds(t *testing.T) {
+	yaml := `id: o3demo
+entry: n
+steps:
+  - id: n
+    kind: number
+    prompt: "Age?"
+    min: 16
+    max: 99
+    store_as: age
+    next: ms
+  - id: ms
+    kind: multi_select
+    prompt: "Feats:"
+    options:
+      - { label: A, value: a }
+      - { label: B, value: b }
+    min_picks: 1
+    max_picks: 2
+    store_as: feats
+    next: pb
+  - id: pb
+    kind: point_buy
+    prompt: "Allocate:"
+    items:
+      - { key: x, label: X, min: 0, max: 2 }
+      - { key: y, label: Y, min: 0, max: 2 }
+    budget: 3
+    costs: [0, 1, 2]
+    store_as: scores
+    next: cond
+  - id: cond
+    kind: conditional
+    condition: age
+    cases:
+      "16": young
+    default: old
+  - id: young
+    kind: action
+    action: dummy
+    next: ""
+  - id: old
+    kind: action
+    action: dummy
+    next: ""
+`
+	cat, err := Load(fstest.MapFS{"o3.yaml": &fstest.MapFile{Data: []byte(yaml)}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	fl := cat.Get("o3demo")
+	if fl == nil {
+		t.Fatal("o3demo flow missing")
+	}
+	type stepCase struct {
+		id      StepID
+		typeFmt string
+		assert  func(s Step) bool
+	}
+	cases := []stepCase{
+		{"n", "*NumberStep", func(s Step) bool { _, ok := s.(*NumberStep); return ok }},
+		{"ms", "*MultiSelectStep", func(s Step) bool { _, ok := s.(*MultiSelectStep); return ok }},
+		{"pb", "*PointBuyStep", func(s Step) bool { _, ok := s.(*PointBuyStep); return ok }},
+		{"cond", "*ConditionalStep", func(s Step) bool { _, ok := s.(*ConditionalStep); return ok }},
+		{"young", "*ActionStep", func(s Step) bool { _, ok := s.(*ActionStep); return ok }},
+	}
+	for _, c := range cases {
+		got := fl.Step(c.id)
+		if got == nil {
+			t.Errorf("step %q missing", c.id)
+			continue
+		}
+		if !c.assert(got) {
+			t.Errorf("step %q: want %s, got %T", c.id, c.typeFmt, got)
+		}
+	}
+}
+
 func TestLoad_UnknownStepKind(t *testing.T) {
 	yaml := `id: x
 entry: a

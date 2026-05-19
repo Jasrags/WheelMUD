@@ -86,6 +86,11 @@ func (r *Runner) SetClock(now func() time.Time) {
 // Completed through this accessor.
 func (r *Runner) State() *State { return r.state }
 
+// Actions satisfies AutoRuntime so AutoAdvancer steps (notably
+// ActionStep, §O.3) can resolve registry refs without a back-channel
+// reference to the full Runner type.
+func (r *Runner) Actions() *ActionRegistry { return r.actions }
+
 // CurrentStep returns the active step (Flow.Step(State.Current)) or
 // nil if the flow has not started, has completed, or has been
 // cancelled. Used by the §O.1 mode adapter to re-render the active
@@ -97,9 +102,10 @@ func (r *Runner) CurrentStep() Step {
 	return r.flow.Step(r.state.Current)
 }
 
-// Start activates the flow's Entry step and renders its prompt.
-// Idempotent: calling Start a second time on the same runner is an
-// error (Current is non-empty).
+// Start activates the flow's Entry step and renders its prompt
+// (or auto-advances through any AutoAdvancer chain at the head of
+// the flow). Idempotent: calling Start a second time on the same
+// runner is an error (Current is non-empty).
 func (r *Runner) Start() error {
 	if r.state.Current != "" {
 		return fmt.Errorf("flow %q: already started at %q", r.flow.ID, r.state.Current)
@@ -107,9 +113,7 @@ func (r *Runner) Start() error {
 	if r.state.Completed || r.state.Cancelled {
 		return fmt.Errorf("flow %q: already terminated", r.flow.ID)
 	}
-	r.state.Current = r.flow.Entry
-	step := r.flow.Step(r.flow.Entry)
-	if step == nil {
+	if r.flow.Step(r.flow.Entry) == nil {
 		// Defensive — Validate should have caught this.
 		return fmt.Errorf("flow %q: entry step %q not found", r.flow.ID, r.flow.Entry)
 	}
@@ -117,10 +121,10 @@ func (r *Runner) Start() error {
 	if r.state.StartedAt.IsZero() {
 		r.state.StartedAt = now
 	}
-	if err := r.persistSave(now); err != nil {
+	if _, err := r.advanceTo(r.flow.Entry); err != nil {
 		return err
 	}
-	return r.renderer.Write(step.Prompt(r.state))
+	return nil
 }
 
 // Resume re-renders the current step's prompt against a hydrated
@@ -211,27 +215,57 @@ func (r *Runner) Submit(input string) (done bool, err error) {
 		}
 	}
 
-	// Stage 4: advance.
-	r.state.Current = next
-	if next == "" {
-		r.state.Completed = true
-		r.persistDelete()
-		return true, nil
+	// Stage 4: advance to `next`, walking any AutoAdvancer chain and
+	// rendering the prompt of the first non-auto step. Returns
+	// done=true if the chain (or `next` itself) terminates the flow.
+	return r.advanceTo(next)
+}
+
+// advanceTo applies a new Current = `to` transition, persists, and
+// then either renders the resolved step's prompt or — if the step is
+// an AutoAdvancer — invokes Auto() and recurses up to MaxAutoChain
+// times. An empty `to` finalises the flow (Completed=true).
+//
+// Returns done=true when the flow has terminated normally. Any non-
+// nil error aborts the flow; the caller (Start/Submit) propagates it
+// to the dispatcher. Renderer write errors bubble through here too.
+func (r *Runner) advanceTo(to StepID) (done bool, err error) {
+	for i := 0; i <= MaxAutoChain; i++ {
+		r.state.Current = to
+		if to == "" {
+			r.state.Completed = true
+			r.persistDelete()
+			return true, nil
+		}
+		step := r.flow.Step(to)
+		if step == nil {
+			return false, fmt.Errorf("flow %q: advanced to unknown step %q", r.flow.ID, to)
+		}
+		// Persist after Current is set so a mid-chain disconnect
+		// resumes at the most recent step rather than the chain head.
+		if err := r.persistSave(r.now()); err != nil {
+			return false, err
+		}
+		// AutoAdvancer steps skip render-and-wait and chain forward.
+		if auto, ok := step.(AutoAdvancer); ok {
+			if i == MaxAutoChain {
+				return false, fmt.Errorf("flow %q: auto-advance chain exceeded MaxAutoChain (%d) at step %q", r.flow.ID, MaxAutoChain, to)
+			}
+			next, err := auto.Auto(r, r.state)
+			if err != nil {
+				return false, fmt.Errorf("flow %q: step %q auto: %w", r.flow.ID, to, err)
+			}
+			to = next
+			continue
+		}
+		// Render-and-wait step — exit the chain loop.
+		if err := r.renderer.Write(step.Prompt(r.state)); err != nil {
+			return false, fmt.Errorf("flow %q: render step %q: %w", r.flow.ID, to, err)
+		}
+		return false, nil
 	}
-	nextStep := r.flow.Step(next)
-	if nextStep == nil {
-		return false, fmt.Errorf("flow %q: step %q advanced to unknown step %q", r.flow.ID, step.StepID(), next)
-	}
-	// Save AFTER advancing Current so the persisted row points at the
-	// step the runner is now awaiting input for — that's where Resume
-	// will re-render.
-	if err := r.persistSave(r.now()); err != nil {
-		return false, err
-	}
-	if err := r.renderer.Write(nextStep.Prompt(r.state)); err != nil {
-		return false, fmt.Errorf("flow %q: render step %q: %w", r.flow.ID, next, err)
-	}
-	return false, nil
+	// Unreachable: the loop returns explicitly on every termination.
+	return false, fmt.Errorf("flow %q: advance loop fell through", r.flow.ID)
 }
 
 // persistSave routes through the optional Persister. Skipped when no

@@ -362,6 +362,16 @@ func main() {
 		slog.Error("flow: register wizdemo.commit", "error", err)
 		os.Exit(1)
 	}
+	// §O.3 — wizdemo2 exercises every new step kind (number,
+	// multi_select, point_buy, conditional, action). One shared commit
+	// action covers both terminal branches of the conditional.
+	if err := flowActions.Register("wizdemo2.commit", func(s *flow.State) error {
+		slog.Info("wizdemo2 commit", "values", s.Values, "account", s.AccountID)
+		return nil
+	}); err != nil {
+		slog.Error("flow: register wizdemo2.commit", "error", err)
+		os.Exit(1)
+	}
 
 	// flowPersister bridges the flow.Persister contract to the SQLite
 	// repo. Lives here so `internal/flow` stays free of `internal/repo`

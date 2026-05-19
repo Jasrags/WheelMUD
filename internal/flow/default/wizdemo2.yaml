@@ -1,0 +1,51 @@
+id: wizdemo2
+entry: age
+resumable: true
+steps:
+  - id: age
+    kind: number
+    prompt: "How old?"
+    min: 1
+    max: 999
+    store_as: age
+    next: feats
+
+  - id: feats
+    kind: multi_select
+    prompt: "Pick up to two feats:"
+    options:
+      - { label: Toughness,    value: toughness }
+      - { label: Dodge,        value: dodge }
+      - { label: PowerAttack,  value: power_attack }
+    min_picks: 1
+    max_picks: 2
+    store_as: feats
+    next: abilities
+
+  - id: abilities
+    kind: point_buy
+    prompt: "Allocate ability scores (budget 3 across two stats, range 0-2 each):"
+    items:
+      - { key: str, label: STR, min: 0, max: 2 }
+      - { key: dex, label: DEX, min: 0, max: 2 }
+    budget: 3
+    costs: [0, 1, 2]
+    store_as: abilities
+    next: branch
+
+  - id: branch
+    kind: conditional
+    condition: age
+    cases:
+      "1": baby
+    default: adult
+
+  - id: baby
+    kind: action
+    action: wizdemo2.commit
+    next: ""
+
+  - id: adult
+    kind: action
+    action: wizdemo2.commit
+    next: ""

@@ -116,11 +116,17 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   restart; help reload re-runs `MergeGenerated`. Audits per success.
 - **`internal/flow/`** — Phase O.0 engine core. Generic multi-step
   Flow runner with typed `Step` interface (`TextStep` / `ChoiceStep`
-  / `ConfirmStep`), Go-only `ActionRegistry` + `ValidatorRegistry`,
-  pluggable `Renderer` (no telnet dep — adapter lives at the edge).
+  / `ConfirmStep`, plus §O.3 `NumberStep` / `MultiSelectStep` /
+  `PointBuyStep` / `ConditionalStep` / `ActionStep`), Go-only
+  `ActionRegistry` + `ValidatorRegistry`, pluggable `Renderer`
+  (no telnet dep — adapter lives at the edge).
   Validators return `*ValidationError` for re-prompt; other errors
   abort the flow. State is plain-data for the §O.2 persistence
-  layer. §O.1 added a YAML catalog
+  layer. §O.3 added `AutoAdvancer` (optional `Auto(rt, state)` on a
+  Step) — Runner.advanceTo walks no-prompt chains (conditional,
+  action) up to `MaxAutoChain = 32`, aborting on cycles. Compound
+  step outputs (multi_select, point_buy) JSON-encode under
+  `store_as` so `State.Values` keeps its `map[string]string` shape. §O.1 added a YAML catalog
   (`internal/flow/default/*.yaml` + `FLOW_DIR` override) with a
   tagged-union `kind:` discriminator parsed by a custom
   `UnmarshalYAML`. §O.2 added an optional `flow.Persister`
