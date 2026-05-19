@@ -1,0 +1,30 @@
+id: wizdemo
+entry: name
+resumable: false
+steps:
+  - id: name
+    kind: text
+    prompt: "What is your name?"
+    validator: wizdemo.min3
+    store_as: name
+    next: colour
+  - id: colour
+    kind: choice
+    prompt: "Pick a colour:"
+    store_as: colour
+    next: confirm
+    options:
+      - { label: Red,   value: red }
+      - { label: Blue,  value: blue }
+      - { label: Green, value: green, next: shade }
+  - id: shade
+    kind: text
+    prompt: "Excellent — what shade of green?"
+    store_as: shade
+    next: confirm
+  - id: confirm
+    kind: confirm
+    prompt: "Commit these answers?"
+    action: wizdemo.commit
+    on_yes: ""
+    on_no: ""

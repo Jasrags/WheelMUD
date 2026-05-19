@@ -13,13 +13,13 @@ import "strings"
 // Mandatory fields: ID, PromptText, OnYes. OnNo defaults to staying
 // on the step if blank, but most consumers should set it explicitly.
 type ConfirmStep struct {
-	ID         StepID
-	PromptText string
+	ID         StepID `yaml:"id"`
+	PromptText string `yaml:"prompt"`
 
-	Action string
+	Action string `yaml:"action"`
 
-	OnYes StepID
-	OnNo  StepID
+	OnYes StepID `yaml:"on_yes"`
+	OnNo  StepID `yaml:"on_no"`
 }
 
 func (s *ConfirmStep) StepID() StepID       { return s.ID }

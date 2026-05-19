@@ -44,6 +44,8 @@ alias-introduces-`;` bounded at depth 3.
 | `channels` | `ch` | Player | `channel.go` | List channels with on/off mute state |
 | `emote` | `:` | Player | `emote.go` | Freeform third-person action; `:` is the classic shortcut |
 | `smile`/`wave`/`bow`/`nod`/... | per-entry | Player | `social.go` | Per-social verbs auto-registered from `internal/emote/default/socials.yaml` (`EMOTE_DIR` overrides). Untargeted by default; targeted forms render three-way (actor / target / others). |
+| `wizdemo` | — | Player | `wizdemo.go` | Walks the §O.1 flow-engine demo wizard (text + choice + confirm). Pushes a `mode.Flow` onto the stack; slash-prefix meta-commands (`/cancel`, `/back`, `/help`) inside the flow |
+| `flow <id>` | — | Admin | `flow.go` | No-arg lists loaded flow ids from `internal/flow/default/*.yaml` (`FLOW_DIR` override). With id, pushes a `mode.Flow` for that flow. Tab-completes ids |
 
 ### Movement & navigation
 

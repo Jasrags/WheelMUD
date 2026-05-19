@@ -120,8 +120,15 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   pluggable `Renderer` (no telnet dep — adapter lives at the edge).
   Validators return `*ValidationError` for re-prompt; other errors
   abort the flow. State is plain-data for the O.2 persistence layer
-  to JSON-marshal later. No live consumer yet (O.1 adds mode
-  integration + YAML loader + a `wizdemo` test verb).
+  to JSON-marshal later. §O.1 added a YAML catalog
+  (`internal/flow/default/*.yaml` + `FLOW_DIR` override) with a
+  tagged-union `kind:` discriminator parsed by a custom
+  `UnmarshalYAML`.
+- **`internal/mode/flow.go`** — §O.1 mode adapter wrapping a
+  `*flow.Runner` as a mode-stack participant. Slash-prefix
+  meta-commands (`/cancel`, `/back`, `/help`) parse here before
+  input hits the step. `sessionRenderer` is the
+  `flow.Renderer`→`telnet.Session` bridge.
 - **`internal/session/`** — process-level registry enforcing single-
   session-per-account. `Bind` displaces the prior session; `Unbind` is
   compare-and-delete.

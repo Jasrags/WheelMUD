@@ -66,6 +66,17 @@ func NewRunner(flow *Flow, state *State, renderer Renderer, actions *ActionRegis
 // Completed through this accessor.
 func (r *Runner) State() *State { return r.state }
 
+// CurrentStep returns the active step (Flow.Step(State.Current)) or
+// nil if the flow has not started, has completed, or has been
+// cancelled. Used by the §O.1 mode adapter to re-render the active
+// step's prompt on `/back`.
+func (r *Runner) CurrentStep() Step {
+	if r.state.Current == "" {
+		return nil
+	}
+	return r.flow.Step(r.state.Current)
+}
+
 // Start activates the flow's Entry step and renders its prompt.
 // Idempotent: calling Start a second time on the same runner is an
 // error (Current is non-empty).

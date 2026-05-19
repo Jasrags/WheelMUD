@@ -11,9 +11,9 @@ import (
 // in state.Values[StoreAs] when selected; Next is the per-option
 // branching target (empty Next falls back to ChoiceStep.Next).
 type ChoiceOption struct {
-	Label string
-	Value string
-	Next  StepID
+	Label string `yaml:"label"`
+	Value string `yaml:"value"`
+	Next  StepID `yaml:"next"`
 }
 
 // ChoiceStep presents a numbered list of options and accepts either
@@ -27,15 +27,15 @@ type ChoiceOption struct {
 // valid). Next is the fallback for options that leave their own
 // Next blank.
 type ChoiceStep struct {
-	ID         StepID
-	PromptText string
-	Options    []ChoiceOption
+	ID         StepID         `yaml:"id"`
+	PromptText string         `yaml:"prompt"`
+	Options    []ChoiceOption `yaml:"options"`
 
-	Validator string
-	Action    string
+	Validator string `yaml:"validator"`
+	Action    string `yaml:"action"`
 
-	StoreAs string
-	Next    StepID
+	StoreAs string `yaml:"store_as"`
+	Next    StepID `yaml:"next"`
 }
 
 func (s *ChoiceStep) StepID() StepID       { return s.ID }

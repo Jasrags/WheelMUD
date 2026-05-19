@@ -24,6 +24,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/effects"
 	"github.com/Jasrags/WheelMUD/internal/emote"
+	"github.com/Jasrags/WheelMUD/internal/flow"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
 	"github.com/Jasrags/WheelMUD/internal/gmcp"
 	"github.com/Jasrags/WheelMUD/internal/group"
@@ -329,6 +330,53 @@ func main() {
 	}
 	slog.Info("Emote catalog loaded", "socials", len(emoteCatalog.IDs()))
 
+	flowFS, err := flow.SourceFS()
+	if err != nil {
+		slog.Error("Failed to resolve flow source", "error", err)
+		os.Exit(1)
+	}
+	flowCatalog, err := flow.Load(flowFS)
+	if err != nil {
+		slog.Error("Failed to load flow catalog", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Flow catalog loaded", "flows", len(flowCatalog.IDs()))
+
+	flowActions := flow.NewActionRegistry()
+	flowValidators := flow.NewValidatorRegistry()
+	if err := flowValidators.Register("wizdemo.min3", func(_ *flow.State, in string) error {
+		if len(strings.TrimSpace(in)) < 3 {
+			return &flow.ValidationError{Message: "Need at least 3 characters."}
+		}
+		return nil
+	}); err != nil {
+		slog.Error("flow: register wizdemo.min3", "error", err)
+		os.Exit(1)
+	}
+	if err := flowActions.Register("wizdemo.commit", func(s *flow.State) error {
+		slog.Info("wizdemo commit", "values", s.Values, "account", s.AccountID)
+		return nil
+	}); err != nil {
+		slog.Error("flow: register wizdemo.commit", "error", err)
+		os.Exit(1)
+	}
+
+	// pushFlow is the boot-time closure plumbed into cmd.NewWizdemo
+	// and cmd.NewFlowVerb. It resolves a flow id against the loaded
+	// catalog and pushes a mode.Flow onto the session. Lives here so
+	// `internal/cmd` has no `internal/mode` import.
+	pushFlow := func(s *telnet.Session, flowID string) error {
+		fl := flowCatalog.Get(flowID)
+		if fl == nil {
+			return s.WriteString("{{No such flow: }}::yellow{{" + flowID + "}}::yellow\r\n")
+		}
+		m, err := mode.NewFlow(s, fl, flowActions, flowValidators, nil)
+		if err != nil {
+			return s.WriteString("{{flow init failed: }}::red{{" + err.Error() + "}}::red\r\n")
+		}
+		return s.PushMode(m)
+	}
+
 	// Cross-validate consumable EffectIDs against the loaded effects
 	// catalog so a typo in `effect_id_string:` fails the boot loudly
 	// instead of fizzling silently at quaff time.
@@ -628,7 +676,7 @@ func main() {
 	// makeLuaWait's fire closure for the memory barrier.
 	srvShutdownCtx.Store(&ctx)
 
-	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, builderZones, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, emoteCatalog, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
+	registry, err := buildRegistry(rooms, exits, items, mobs, mobTemplates, zones, characters, audits, shops, bankers, trainers, weaveTeachers, builderZones, sessions, bus, channels, clock, newsCatalog, helpCatalog, chargenCatalog, effectsCatalog, emoteCatalog, flowCatalog, pushFlow, combatMgr, groups, questCatalog, questEngine, luaRunner, scheduler, &srvShutdownCtx, srv)
 	if err != nil {
 		slog.Error("Failed to build command registry", "error", err)
 		os.Exit(1)

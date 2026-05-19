@@ -187,6 +187,48 @@ these; update this file when a pattern changes.
   The audit-row contract is "successful reload only" so an
   operator can grep for actual changes.
 
+## Flow engine (§O.0 + §O.1)
+
+- `internal/flow/` is the generic multi-step Flow engine: `Flow`,
+  `Step` (interface, with `TextStep` / `ChoiceStep` / `ConfirmStep`
+  impls), `State`, `Runner`, `Renderer`, `ActionRegistry`,
+  `ValidatorRegistry`. Transport-agnostic by design — the
+  package has zero `telnet` imports. The mode adapter lives in
+  `internal/mode/flow.go` and wraps `*telnet.Session` as a
+  `flow.Renderer`.
+- YAML catalogs live under `internal/flow/default/*.yaml` with
+  `FLOW_DIR` env override (mirrors `HELP_DIR` / `EMOTE_DIR` /
+  `CHARGEN_DIR`). One file = one flow. Step polymorphism uses a
+  tagged-union `kind:` discriminator parsed by a custom
+  `UnmarshalYAML` on `rawStep`; adding a new step kind is one
+  switch case + a struct + tests.
+- Validation has two layers: registry-based (`ValidatorFn`
+  referenced from `step.Validator`, runs *before* `Step.Handle`)
+  and intrinsic (each step's `Handle` parses + validates input
+  for its own shape — choice index range, yes/no parsing, blank
+  rejection). Both signal re-prompt the same way: return a typed
+  `*flow.ValidationError`. Any other error aborts the flow.
+- The slash-prefix meta-commands `/cancel`, `/back`, `/help`
+  (and aliases `/quit` / `/abort`) are parsed by `mode.Flow`
+  before input reaches the step. `/back` re-renders the current
+  step's prompt (NOT history-based navigation — full back-nav
+  with action undo lands in §O.3 when conditional branching
+  arrives).
+- `internal/cmd` has no `internal/mode` or `internal/flow`
+  import. The push pattern uses an injected closure
+  (`cmd.PushFlowFn`) wired in `cmd/server/main.go`, mirroring
+  `cmd.PushREditFn` from §G #34. This keeps the cmd-package
+  build graph thin and the mode adapter as the single bridge.
+- `Flow.Validate()` is the boot-time well-formedness check
+  (entry resolves, no duplicate step ids, no blank ids). The
+  catalog loader runs it on every parsed flow; unresolved step
+  references fail the boot loudly.
+- The §O.0 step kinds don't expose a "back" step automatically;
+  a flow YAML can opt into a back-navigation path by giving a
+  step's `next:` field a prior step's id. This is rarely what
+  authors want — the slash-prefix `/back` (re-render only) is
+  the canonical recovery path.
+
 ## Session field ownership
 
 - `Session.Input` is owned by the read goroutine inside `RunSession`.

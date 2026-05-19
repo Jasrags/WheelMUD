@@ -10,30 +10,30 @@ import "strings"
 // the input is consumed for side-effect only (the action handles
 // it); otherwise the input lands in state.Values[StoreAs].
 type TextStep struct {
-	ID         StepID
-	PromptText string
+	ID         StepID `yaml:"id"`
+	PromptText string `yaml:"prompt"`
 
 	// Validator is the optional ValidatorRegistry key the Runner
 	// invokes before Handle.
-	Validator string
+	Validator string `yaml:"validator"`
 
 	// Action is the optional ActionRegistry key the Runner invokes
 	// after Handle succeeds.
-	Action string
+	Action string `yaml:"action"`
 
 	// StoreAs keys state.Values for the validated input. Empty
 	// means do not persist the input — the action is expected to
 	// consume it.
-	StoreAs string
+	StoreAs string `yaml:"store_as"`
 
 	// Next is the StepID to advance to on success. Empty Next
 	// signals flow completion.
-	Next StepID
+	Next StepID `yaml:"next"`
 
 	// AllowEmpty toggles the intrinsic "non-empty" check. By
 	// default, blank input re-prompts with a "Required." message;
 	// setting AllowEmpty=true lets a step skip with no value.
-	AllowEmpty bool
+	AllowEmpty bool `yaml:"allow_empty"`
 }
 
 func (s *TextStep) StepID() StepID         { return s.ID }
