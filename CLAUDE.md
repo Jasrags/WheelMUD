@@ -114,6 +114,14 @@ Detailed structure lives in `docs/CODEMAPS/architecture.md`. Quick index:
   `reload socials` / `reload help`. Uses `telnet.Registry.Unregister`
   (added §M.6) + `Register` to swap per-social verbs without a
   restart; help reload re-runs `MergeGenerated`. Audits per success.
+- **`internal/flow/`** — Phase O.0 engine core. Generic multi-step
+  Flow runner with typed `Step` interface (`TextStep` / `ChoiceStep`
+  / `ConfirmStep`), Go-only `ActionRegistry` + `ValidatorRegistry`,
+  pluggable `Renderer` (no telnet dep — adapter lives at the edge).
+  Validators return `*ValidationError` for re-prompt; other errors
+  abort the flow. State is plain-data for the O.2 persistence layer
+  to JSON-marshal later. No live consumer yet (O.1 adds mode
+  integration + YAML loader + a `wizdemo` test verb).
 - **`internal/session/`** — process-level registry enforcing single-
   session-per-account. `Bind` displaces the prior session; `Unbind` is
   compare-and-delete.
