@@ -13,6 +13,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/flow"
 	"github.com/Jasrags/WheelMUD/telnet"
 )
@@ -85,11 +86,12 @@ func (m *Flow) Handle(_ context.Context, s *telnet.Session, line string) error {
 	}
 	done, err := m.runner.Submit(line)
 	if err != nil {
-		if flow.IsValidationError(err) {
-			// Runner already wrote the validation message + re-rendered.
-			return nil
-		}
-		_ = s.WriteString("{{flow aborted: }}::red{{" + err.Error() + "}}::red\r\n")
+		// Runner.Submit consumes *ValidationError internally (writes
+		// the re-prompt via the renderer and returns nil). The only
+		// non-nil err here is a hard abort — render a red banner with
+		// the defanged error and pop. defang prevents an error
+		// message containing `{{` / `}}` from breaking the cfmt span.
+		_ = s.WriteString("{{flow aborted: " + display.Defang(err.Error(), "unknown") + "}}::red\r\n")
 		return s.PopMode()
 	}
 	if done {

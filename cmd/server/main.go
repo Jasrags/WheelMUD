@@ -23,6 +23,7 @@ import (
 	"github.com/Jasrags/WheelMUD/internal/config"
 	"github.com/Jasrags/WheelMUD/internal/db"
 	"github.com/Jasrags/WheelMUD/internal/effects"
+	"github.com/Jasrags/WheelMUD/internal/display"
 	"github.com/Jasrags/WheelMUD/internal/emote"
 	"github.com/Jasrags/WheelMUD/internal/flow"
 	"github.com/Jasrags/WheelMUD/internal/eventbus"
@@ -365,14 +366,18 @@ func main() {
 	// and cmd.NewFlowVerb. It resolves a flow id against the loaded
 	// catalog and pushes a mode.Flow onto the session. Lives here so
 	// `internal/cmd` has no `internal/mode` import.
+	// pushFlow defangs both `flowID` (operator-controlled but routed
+	// through user input on the `flow <id>` admin verb) and the
+	// init-failure error message so a value containing `{{` / `}}`
+	// can't break the cfmt span and corrupt the rest of the line.
 	pushFlow := func(s *telnet.Session, flowID string) error {
 		fl := flowCatalog.Get(flowID)
 		if fl == nil {
-			return s.WriteString("{{No such flow: }}::yellow{{" + flowID + "}}::yellow\r\n")
+			return s.WriteString("{{No such flow: " + display.Defang(flowID, "?") + "}}::yellow\r\n")
 		}
 		m, err := mode.NewFlow(s, fl, flowActions, flowValidators, nil)
 		if err != nil {
-			return s.WriteString("{{flow init failed: }}::red{{" + err.Error() + "}}::red\r\n")
+			return s.WriteString("{{flow init failed: " + display.Defang(err.Error(), "unknown") + "}}::red\r\n")
 		}
 		return s.PushMode(m)
 	}

@@ -97,11 +97,17 @@ func (r *Runner) Start() error {
 }
 
 // Submit feeds one line of input to the active step. Returns
-// done=true and nil err when the flow has completed normally. A
-// *ValidationError from validator or Handle re-prompts the same
-// step (returns done=false, nil err); the caller can keep calling
-// Submit with new input. Any other error aborts the flow and is
-// returned untouched — caller should treat the runner as dead.
+// done=true and nil err when the flow has completed normally.
+//
+// *ValidationError is consumed internally: when a validator or
+// Step.Handle returns one, Submit calls reprompt (which writes the
+// error message + re-renders the prompt via the Renderer) and
+// returns (false, nil) on a successful re-prompt. Callers therefore
+// never see a *ValidationError in the returned err — the only
+// non-nil err is a hard abort. If reprompt's underlying
+// Renderer.Write fails, Submit returns that write error
+// (non-ValidationError) and the caller should treat the flow as
+// dead.
 //
 // Submit on a completed or cancelled flow returns an error; the
 // caller should check r.State().Completed / Cancelled before
