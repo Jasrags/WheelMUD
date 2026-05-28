@@ -8,7 +8,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/prometheus/client_golang v1.23.2
 	github.com/yuin/gopher-lua v1.1.2
-	golang.org/x/crypto v0.50.0
+	golang.org/x/crypto v0.52.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.0
 )
@@ -28,7 +28,7 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
