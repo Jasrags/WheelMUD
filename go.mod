@@ -3,7 +3,7 @@ module github.com/Jasrags/WheelMUD
 go 1.25.0
 
 require (
-	github.com/gookit/color v1.3.2
+	github.com/gookit/color v1.6.1
 	github.com/i582/cfmt v1.4.0
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/prometheus/client_golang v1.23.2
@@ -27,6 +27,7 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
