@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/gookit/color v1.3.2
 	github.com/i582/cfmt v1.4.0
-	github.com/mattn/go-runewidth v0.0.23
+	github.com/mattn/go-runewidth v0.0.24
 	github.com/prometheus/client_golang v1.23.2
 	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/crypto v0.50.0
